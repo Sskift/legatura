@@ -26,14 +26,16 @@
   ],
   "referenceAcceptanceScenario": {
     "id": "local-1-plus-3",
-    "topology": "One persistent master coordinates three replaceable local workers across two independent Modules and one Contract-dependent Module.",
+    "topology": "One persistent master coordinates three replaceable local workers in an incrementally adopted brownfield repository whose app and apk Modules are independent and whose relay Module consumes both public Contracts.",
     "faults": [
       "One worker terminates after producing a partial report.",
       "Two workers attempt conflicting writes or incompatible Contract changes."
     ],
     "mustDemonstrate": [
+      "The brownfield repository is adopted without treating unmodeled areas as governed or requiring whole-repository understanding.",
       "Each Work Unit has one primary Module, a bounded Context Capsule, and a capability-bound workspace lease.",
       "The master recovers from durable structured state without replaying worker transcripts.",
+      "Top-level coordination state contains no transcript, log, or source bodies and grows independently of referenced artifact payload bytes.",
       "Independent work proceeds concurrently while path and Contract conflicts are stopped before composition.",
       "A worker loss cannot produce Accepted state and retry does not duplicate acceptance.",
       "The composed Accepted Change Packages pass one Full Gate against the exact integration content."
@@ -50,7 +52,7 @@
       "id": "S1",
       "name": "Self-Proving Project Model",
       "status": "active",
-      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015"]
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017"]
     },
     {
       "id": "S2",
@@ -221,7 +223,12 @@
           }
         ]
       },
-      "nonGoals": ["Issue tracker synchronization", "Automatic Outcome completion", "A generic portfolio planning tool"]
+      "nonGoals": [
+        "Issue tracker synchronization",
+        "Automatic Outcome completion",
+        "A generic portfolio planning tool",
+        "Independently exercising browser rendering; that belongs to LGT-014"
+      ]
     },
     {
       "id": "LGT-011",
@@ -285,7 +292,10 @@
           "No snapshot-test wall is introduced."
         ]
       },
-      "nonGoals": ["Pixel-perfect visual regression testing"]
+      "nonGoals": [
+        "Pixel-perfect visual regression testing",
+        "Owning or recomputing Project Model facts instead of rendering their authoritative projection"
+      ]
     },
     {
       "id": "LGT-015",
@@ -304,20 +314,59 @@
       "nonGoals": ["Reducing command count as an end in itself"]
     },
     {
+      "id": "LGT-016",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "A brownfield repository can adopt Legatura incrementally, leaving unknown areas provisional or opaque while governing one bounded Module and Contract Change without whole-repository modeling.",
+      "dependsOn": ["LGT-011"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["brownfield-adoption-not-proven"],
+        "exitCriteria": [
+          "An app, apk, and relay reference repository declares exact ownership and public Contracts while unrelated internals remain explicitly provisional or opaque.",
+          "One bounded Change reaches an Accepted Change Package without loading dependency implementation internals unless a recorded Context Expansion recomputes impact.",
+          "Adoption reports missing governance as Knowledge Gaps instead of inventing completeness."
+        ]
+      },
+      "nonGoals": ["Automatically inferring a complete architecture", "Requiring browser onboarding"]
+    },
+    {
+      "id": "LGT-017",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "A planned or conditional Outcome can be refined before activation through append-only Plan-authority history, while activation freezes its statement and stable Criteria and terminal history remains immutable.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["planned-outcome-refinement-not-supported"],
+        "exitCriteria": [
+          "Every pre-activation semantic revision records prior and current digests, rationale, and Plan authority without deleting the earlier meaning.",
+          "Activating an Outcome freezes its statement and stable Criteria; active, achieved, and retired semantics cannot be rewritten.",
+          "A revision cannot authorize implementation against the amended Plan within the same Change."
+        ]
+      },
+      "nonGoals": ["Rewriting active or terminal Outcomes", "Treating task reprioritization as Outcome refinement"]
+    },
+    {
       "id": "LGT-020",
       "stage": "S2",
       "status": "planned",
       "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
-      "dependsOn": ["LGT-011", "LGT-012", "LGT-013", "LGT-014"],
+      "dependsOn": ["LGT-011", "LGT-013", "LGT-017"],
       "acceptance": {
         "claimRefs": [],
         "gapRefs": ["worker-and-identity-trust-opaque"],
         "exitCriteria": [
           "Worker inputs, capabilities, expansions, observations, and outputs are durably represented.",
-          "The interface has at least two independent adapters before being called stable."
+          "A deterministic conformance harness rejects lifecycle, capability, expansion, or report semantics that violate the Interface.",
+          "Provider-specific details are absent from the Kernel-facing Work Specification, Worker Report, and Execution Record."
         ]
       },
-      "nonGoals": ["Worker scheduling", "Provider-specific transcript storage"]
+      "nonGoals": [
+        "Worker scheduling",
+        "Provider-specific transcript storage",
+        "Proving adapter independence; that belongs to LGT-023"
+      ]
     },
     {
       "id": "LGT-021",
@@ -330,6 +379,7 @@
         "gapRefs": [],
         "exitCriteria": [
           "Initial context is bounded and independently reproducible.",
+          "Dependency implementation paths are absent from initial context; reading them requires a recorded expansion that recomputes impact.",
           "Out-of-capsule reads cannot become silent coordination knowledge."
         ]
       },
@@ -345,7 +395,8 @@
         "claimRefs": [],
         "gapRefs": ["worker-and-identity-trust-opaque"],
         "exitCriteria": [
-          "Out-of-scope writes are prevented at the execution boundary.",
+          "At least one declared local execution profile independently proves that an out-of-scope write is blocked at the execution boundary.",
+          "Observed-only profiles are labeled as such and cannot satisfy an enforced capability Claim.",
           "The system never describes same-user process conventions as an OS sandbox."
         ]
       },
@@ -361,6 +412,7 @@
         "claimRefs": [],
         "gapRefs": [],
         "exitCriteria": [
+          "The deterministic scripted adapter and real agent adapter both pass the LGT-020 conformance harness.",
           "Adapter failure, timeout, truncation, or disappearance fails closed.",
           "Provider-specific details do not leak into the Kernel acceptance model."
         ]
@@ -372,7 +424,7 @@
       "stage": "S2",
       "status": "planned",
       "outcome": "One real bounded worker can complete intent-to-acceptance locally through the existing Kernel without acquiring decision authority.",
-      "dependsOn": ["LGT-023"],
+      "dependsOn": ["LGT-016", "LGT-023"],
       "acceptance": {
         "claimRefs": [],
         "gapRefs": ["worker-and-identity-trust-opaque"],
@@ -410,7 +462,7 @@
         "claimRefs": [],
         "gapRefs": [],
         "exitCriteria": [
-          "Coordinator state remains bounded as worker transcript size grows.",
+          "Coordinator state contains no transcript, log, or source bodies and its serialized size is independent of referenced artifact payload bytes.",
           "Every summarized fact can be traced to an immutable detailed artifact."
         ]
       },
@@ -442,7 +494,7 @@
         "claimRefs": [],
         "gapRefs": [],
         "exitCriteria": [
-          "The top-level snapshot is sufficient to choose the next dispatch or escalation.",
+          "For ready, blocked, conflicting, and decision-pending reference states, the top-level snapshot identifies the next dispatch or exact escalation without artifact expansion.",
           "Detailed source, logs, and conversations are loaded only by referenced drill-down."
         ]
       },
@@ -539,6 +591,7 @@
         "gapRefs": [],
         "exitCriteria": [
           "All reference scenario mustDemonstrate statements are supported by exact Evidence.",
+          "The app, apk, and relay reference repository completes independent work concurrently and rejects one incompatible Contract composition.",
           "Removing worker transcripts does not prevent recovery, coordination explanation, or acceptance audit.",
           "No worker or Coordinator can self-ratify."
         ]

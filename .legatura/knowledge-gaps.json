@@ -71,6 +71,22 @@
       "owner": "governance-maintainer",
       "statement": "Workers have no capability sandbox and authority identities are local unauthenticated assertions.",
       "expansionTrigger": "Before remote workers, multi-user acceptance, or signed attestations."
+    },
+    {
+      "id": "brownfield-adoption-not-proven",
+      "status": "open",
+      "affects": ["project-model", "local-workbench"],
+      "owner": "governance-maintainer",
+      "statement": "Legatura self-hosts its Project Model, but no real brownfield app, apk, and relay repository proves incremental adoption without whole-repository modeling.",
+      "expansionTrigger": "Before Legatura is presented as a reusable framework for an existing software repository."
+    },
+    {
+      "id": "planned-outcome-refinement-not-supported",
+      "status": "open",
+      "affects": ["project-model", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "The Kernel permanently freezes every declared Outcome statement, so speculative planned or conditional meanings cannot yet be revised through append-only history before activation.",
+      "expansionTrigger": "Before a planned or conditional Outcome needs semantic refinement or any S2 Outcome is activated."
     }
   ]
 }
