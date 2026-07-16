@@ -1,8 +1,13 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import {
+  ARCHITECTURE_PROFILE_LIMITS,
+  compileArchitectureProfile
+} from "./architecture-profile.mjs";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   assertIntegrityFailureEvidenceCurrent,
+  compileClaimGateRoutes,
   compileChangeAgainstGovernance,
   parseChangePlanRefs,
   validateIntegrityFailureEvidence
@@ -40,6 +45,10 @@ const STATES = ["Candidate", "Submitted", "EvidenceReady", "Accepted", "Integrat
 const STABLE_OBSERVATION_LIMIT = 3;
 const CHANGE_SUMMARY_TEXT_LIMIT = 240;
 const CHANGE_SUMMARY_PLAN_REF_LIMIT = 8;
+const EVIDENCE_ASSESSMENT_COLLECTION_LIMIT = 256;
+const EVIDENCE_ASSESSMENT_WORK_LIMIT = 32768;
+const ARCHITECTURE_PROFILE_QUERY_FACT_LIMIT = 32768;
+const ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT = 32768;
 
 export function createKernel({ repoPath, clock, commandRunner } = {}) {
   if (typeof repoPath !== "string" || !repoPath.trim()) {
@@ -106,6 +115,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         projectModelGitDigest: project.digest,
         changeStoreDigest
       }),
+      changeStoreDigest,
       inspection: project.inspection,
       records
     };
@@ -122,6 +132,11 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function listChanges() {
     const snapshot = await inspectChangeQuery();
     return snapshot.records.map((record) => summarizeChangeForRead(record, snapshot));
+  }
+
+  async function inspectArchitectureProfile() {
+    const snapshot = await inspectChangeQuery();
+    return compileArchitectureProfileFromSnapshot(snapshot);
   }
 
   async function observeCurrentChangeScope(change, git, currentPlan) {
@@ -817,6 +832,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
 
   return {
     inspectProject,
+    inspectArchitectureProfile: (...args) => (
+      serializeOperation(() => inspectArchitectureProfile(...args))
+    ),
     listChanges: (...args) => serializeOperation(() => listChanges(...args)),
     createChange: (...args) => serializeOperation(() => createChange(...args)),
     getChange: (...args) => serializeOperation(() => getChange(...args)),
@@ -923,6 +941,925 @@ function compileChangeStoreDigest(records) {
   return canonicalDigest(entries.sort((left, right) => left.changeId.localeCompare(right.changeId)));
 }
 
+function compileArchitectureProfileFromSnapshot(snapshot) {
+  assertArchitectureProfileListBound(
+    snapshot.records,
+    ARCHITECTURE_PROFILE_LIMITS.changes,
+    "changeStore.records"
+  );
+  preflightArchitectureProfileSnapshotFacts(snapshot.records);
+  const model = publicProjectModel(snapshot.inspection);
+  const routeWorkBudget = {
+    observed: 0,
+    routeCache: new Map(),
+    claimDescriptorCache: new Map()
+  };
+  const { modelClaimRefs } = compileArchitectureProfileModelMembership(model);
+  const currentClaimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
+    model,
+    routeWorkBudget,
+    "model.claimDescriptors"
+  );
+  const currentClaimRouteDigests = compileArchitectureProfileRouteDigestIndex(
+    model,
+    modelClaimRefs,
+    routeWorkBudget,
+    "model.claimGateRoutes"
+  );
+  const changeFacts = [];
+  const evidenceWorkBudget = { observed: 0 };
+  let associationCount = 0;
+  for (const record of snapshot.records) {
+    const fact = normalizeArchitectureProfileChangeFact(
+      record,
+      snapshot,
+      modelClaimRefs,
+      currentClaimDescriptors,
+      currentClaimRouteDigests,
+      evidenceWorkBudget,
+      routeWorkBudget
+    );
+    associationCount += fact.evidence.reduce((count, item) => (
+      count + item.claimAssociations.length
+    ), 0);
+    if (associationCount > ARCHITECTURE_PROFILE_LIMITS.evidence) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_FACTS_UNBOUNDED",
+        "Architecture Profile normalized associations exceeded a query-level hard bound.",
+        413,
+        {
+          location: "changeFacts.evidence.claimAssociations",
+          limit: ARCHITECTURE_PROFILE_LIMITS.evidence,
+          observed: associationCount
+        }
+      );
+    }
+    changeFacts.push(fact);
+  }
+  return compileArchitectureProfile({
+    model,
+    source: {
+      snapshotDigest: snapshot.digest,
+      projectModelDigest: snapshot.inspection.digest,
+      gitContentDigest: snapshot.inspection.git.contentDigest,
+      changeStoreDigest: snapshot.changeStoreDigest
+    },
+    changeFacts
+  });
+}
+
+function preflightArchitectureProfileSnapshotFacts(records) {
+  let contributionCount = 0;
+  let evidenceCount = 0;
+  let residualCount = 0;
+  const queryFactBudget = { observed: 0 };
+  for (const record of records) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_FACT_INVALID",
+        "Architecture Profile compilation requires object-shaped Change records.",
+        422
+      );
+    }
+    assertArchitectureProfileRecordBounds(record, "current-record", queryFactBudget);
+    const packageContent = record.acceptance?.package;
+    if (packageContent && typeof packageContent === "object" && !Array.isArray(packageContent)) {
+      assertArchitectureProfileRecordBounds(
+        { ...packageContent, id: packageContent.changeId ?? record.id },
+        "sealed-package",
+        queryFactBudget
+      );
+    }
+    const currentContributions = Array.isArray(record.outcomeAlignment?.contributions)
+      ? record.outcomeAlignment.contributions.length
+      : 0;
+    const packageContributions = Array.isArray(packageContent?.outcomeAlignment?.contributions)
+      ? packageContent.outcomeAlignment.contributions.length
+      : 0;
+    const currentEvidence = Array.isArray(record.evidence) ? record.evidence : [];
+    const packageEvidence = Array.isArray(packageContent?.evidence) ? packageContent.evidence : [];
+    assertArchitectureProfileCountBound(
+      currentContributions + packageContributions,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `change.${readString(record.id) ?? "unknown"}.contributions`
+    );
+    assertArchitectureProfileCountBound(
+      currentEvidence.length + packageEvidence.length,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `change.${readString(record.id) ?? "unknown"}.evidence`
+    );
+    contributionCount += currentContributions + packageContributions;
+    evidenceCount += currentEvidence.length + packageEvidence.length;
+    residualCount += [...currentEvidence, ...packageEvidence].reduce((count, item) => (
+      count + (Array.isArray(item?.residualUncertainty)
+        ? item.residualUncertainty.length
+        : item?.residualUncertainty === undefined || item?.residualUncertainty === null ? 0 : 1)
+    ), 0);
+    assertArchitectureProfileCountBound(
+      contributionCount,
+      ARCHITECTURE_PROFILE_LIMITS.contributions,
+      "changeFacts.contributions"
+    );
+    assertArchitectureProfileCountBound(
+      evidenceCount,
+      ARCHITECTURE_PROFILE_LIMITS.evidence,
+      "changeFacts.evidence"
+    );
+    assertArchitectureProfileCountBound(
+      residualCount,
+      ARCHITECTURE_PROFILE_LIMITS.residuals,
+      "changeFacts.evidence.residualUncertainty"
+    );
+  }
+}
+
+function compileArchitectureProfileModelMembership(model) {
+  // This is a bounded membership index over the compiler's declared route inputs,
+  // not a second eligibility evaluator; compileArchitectureProfile revalidates every edge.
+  const contracts = Array.isArray(model.contracts) ? model.contracts : [];
+  const gates = Array.isArray(model.gates) ? model.gates : [];
+  const modules = Array.isArray(model.modules) ? model.modules : [];
+  assertArchitectureProfileCountBound(
+    contracts.length,
+    ARCHITECTURE_PROFILE_LIMITS.contracts,
+    "model.contracts"
+  );
+  assertArchitectureProfileCountBound(
+    gates.length,
+    ARCHITECTURE_PROFILE_LIMITS.gates,
+    "model.gates"
+  );
+  assertArchitectureProfileCountBound(
+    modules.length,
+    ARCHITECTURE_PROFILE_LIMITS.modules,
+    "model.modules"
+  );
+  const modelClaimRefs = new Set();
+  for (const [contractIndex, contract] of contracts.entries()) {
+    const claims = Array.isArray(contract?.claims) ? contract.claims : [];
+    assertArchitectureProfileCountBound(
+      claims.length,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `model.contracts.${contractIndex}.claims`
+    );
+    for (const claim of claims) {
+      const claimRef = readString(claim?.id);
+      if (claimRef) modelClaimRefs.add(claimRef);
+    }
+    assertArchitectureProfileCountBound(
+      modelClaimRefs.size,
+      ARCHITECTURE_PROFILE_LIMITS.claims,
+      "model.claims"
+    );
+  }
+  const currentClaimRouteKeys = new Set();
+  let commandCount = 0;
+  for (const [gateIndex, gate] of gates.entries()) {
+    const commands = Array.isArray(gate?.commands) ? gate.commands : gate?.command ? [gate] : [];
+    assertArchitectureProfileCountBound(
+      commands.length,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `model.gates.${gateIndex}.commands`
+    );
+    commandCount += commands.length;
+    assertArchitectureProfileCountBound(
+      commandCount,
+      ARCHITECTURE_PROFILE_LIMITS.routes,
+      "model.gateCommands"
+    );
+    for (const [commandIndex, command] of commands.entries()) {
+      assertArchitectureProfileOptionalListBound(
+        command?.claimRefs,
+        `model.gates.${gateIndex}.commands.${commandIndex}.claimRefs`
+      );
+      const claimRefs = normalizeStringList(command?.claimRefs);
+      assertArchitectureProfileCountBound(
+        claimRefs.length,
+        ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+        `model.gates.${gateIndex}.commands.${commandIndex}.claimRefs`
+      );
+      for (const claimRef of claimRefs) {
+        if (!modelClaimRefs.has(claimRef)) continue;
+        currentClaimRouteKeys.add(architectureProfileRouteKey(
+          claimRef,
+          gate?.id,
+          command?.id
+        ));
+      }
+      assertArchitectureProfileCountBound(
+        currentClaimRouteKeys.size,
+        ARCHITECTURE_PROFILE_LIMITS.routes,
+        "model.claimGateRoutes"
+      );
+    }
+  }
+  const modelRouteWork = (modelClaimRefs.size * (commandCount + modules.length))
+    + (currentClaimRouteKeys.size * modules.length);
+  assertArchitectureProfileCountBound(
+    modelRouteWork,
+    ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT,
+    "model.claimGateRouteWork"
+  );
+  return { modelClaimRefs };
+}
+
+function compileArchitectureProfileSourceRouteDigests(source, assessment, budget, location) {
+  const sourceClaimRefs = new Set((assessment.coverage?.eligibleClaimAssociations ?? [])
+    .filter((association) => association?.kind !== "builtin")
+    .map((association) => readString(association?.sourceClaimRef))
+    .filter(Boolean));
+  if (sourceClaimRefs.size === 0) return new Map();
+  return compileArchitectureProfileRouteDigestIndex(
+    readGovernanceBaseline(source),
+    sourceClaimRefs,
+    budget,
+    location
+  );
+}
+
+function compileArchitectureProfileSourceClaimDescriptors(source, assessment, budget, location) {
+  const endpointClaimRefs = new Set((assessment.coverage?.eligibleClaimAssociations ?? [])
+    .flatMap((association) => [
+      readString(association?.targetClaimRef),
+      readString(association?.sourceClaimRef)
+    ])
+    .filter(Boolean));
+  if (endpointClaimRefs.size === 0) return new Map();
+  const descriptors = compileArchitectureProfileClaimDescriptorIndex(
+    readGovernanceBaseline(source),
+    budget,
+    location
+  );
+  return new Map([...descriptors].filter(([claimRef]) => endpointClaimRefs.has(claimRef)));
+}
+
+function compileArchitectureProfileClaimDescriptorIndex(model, budget, location) {
+  const modelBindingDigest = requireArchitectureProfileDigest(model?.digest, `${location}.modelDigest`);
+  const cacheKey = `claims\u0000${modelBindingDigest}`;
+  const cached = budget.claimDescriptorCache.get(cacheKey);
+  if (cached) return cached;
+  const contracts = Array.isArray(model?.contracts) ? model.contracts : [];
+  assertArchitectureProfileCountBound(
+    contracts.length,
+    ARCHITECTURE_PROFILE_LIMITS.contracts,
+    `${location}.contracts`
+  );
+  const descriptors = new Map();
+  let claimCount = 0;
+  for (const [contractIndex, contract] of contracts.entries()) {
+    const claims = Array.isArray(contract?.claims) ? contract.claims : [];
+    assertArchitectureProfileCountBound(
+      claims.length,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `${location}.contracts.${contractIndex}.claims`
+    );
+    claimCount += claims.length;
+    assertArchitectureProfileCountBound(
+      claimCount,
+      ARCHITECTURE_PROFILE_LIMITS.claims,
+      `${location}.claims`
+    );
+    const contractRef = requireArchitectureProfileString(
+      readModelReference(contract),
+      `${location}.contracts.${contractIndex}.id`
+    );
+    const ownerModuleRef = requireArchitectureProfileString(
+      readModelReference(contract?.owner),
+      `${location}.contracts.${contractIndex}.owner`
+    );
+    for (const [claimIndex, claim] of claims.entries()) {
+      const descriptor = {
+        id: requireArchitectureProfileString(
+          readModelReference(claim),
+          `${location}.contracts.${contractIndex}.claims.${claimIndex}.id`
+        ),
+        statement: requireArchitectureProfileString(
+          claim?.statement,
+          `${location}.contracts.${contractIndex}.claims.${claimIndex}.statement`
+        ),
+        contractRef,
+        ownerModuleRef
+      };
+      if (descriptors.has(descriptor.id)) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_FACT_INVALID",
+          "Architecture Profile Claim identity must resolve to one authoritative descriptor.",
+          422,
+          { location, claimRef: descriptor.id }
+        );
+      }
+      descriptors.set(descriptor.id, {
+        ...descriptor,
+        digest: canonicalDigest(descriptor)
+      });
+    }
+  }
+  consumeArchitectureProfileRouteWork(
+    budget,
+    contracts.length + claimCount,
+    location
+  );
+  budget.claimDescriptorCache.set(cacheKey, descriptors);
+  return descriptors;
+}
+
+function compileArchitectureProfileRouteDigestIndex(model, claimRefs, budget, location) {
+  const exactClaimRefs = [...new Set([...claimRefs].map(readString).filter(Boolean))].sort();
+  assertArchitectureProfileCountBound(
+    exactClaimRefs.length,
+    ARCHITECTURE_PROFILE_LIMITS.claims,
+    `${location}.claims`
+  );
+  if (exactClaimRefs.length === 0) return new Map();
+  const modelBindingDigest = requireArchitectureProfileDigest(model?.digest, `${location}.modelDigest`);
+  const cacheKey = `routes\u0000${modelBindingDigest}\u0000${canonicalDigest(exactClaimRefs)}`;
+  const cached = budget.routeCache.get(cacheKey);
+  if (cached) return cached;
+  const modules = Array.isArray(model?.modules) ? model.modules : [];
+  const gates = Array.isArray(model?.gates) ? model.gates : [];
+  assertArchitectureProfileCountBound(
+    modules.length,
+    ARCHITECTURE_PROFILE_LIMITS.modules,
+    `${location}.modules`
+  );
+  assertArchitectureProfileCountBound(
+    gates.length,
+    ARCHITECTURE_PROFILE_LIMITS.gates,
+    `${location}.gates`
+  );
+  const requestedClaims = new Set(exactClaimRefs);
+  let commandCount = 0;
+  let commandClaimRefCount = 0;
+  let matchedRouteCount = 0;
+  for (const [gateIndex, gate] of gates.entries()) {
+    const commands = Array.isArray(gate?.commands) ? gate.commands : gate?.command ? [gate] : [];
+    assertArchitectureProfileCountBound(
+      commands.length,
+      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+      `${location}.gates.${gateIndex}.commands`
+    );
+    commandCount += commands.length;
+    assertArchitectureProfileCountBound(
+      commandCount,
+      ARCHITECTURE_PROFILE_LIMITS.routes,
+      `${location}.commands`
+    );
+    for (const [commandIndex, command] of commands.entries()) {
+      const claimRefLocation = `${location}.gates.${gateIndex}.commands.${commandIndex}.claimRefs`;
+      assertArchitectureProfileOptionalListBound(command?.claimRefs, claimRefLocation);
+      const normalizedClaimRefs = normalizeStringList(command?.claimRefs);
+      commandClaimRefCount += normalizedClaimRefs.length;
+      assertArchitectureProfileCountBound(
+        commandClaimRefCount,
+        ARCHITECTURE_PROFILE_LIMITS.relations,
+        `${location}.commandClaimRefs`
+      );
+      matchedRouteCount += normalizedClaimRefs.filter((claimRef) => (
+        requestedClaims.has(claimRef)
+      )).length;
+      assertArchitectureProfileCountBound(
+        matchedRouteCount,
+        ARCHITECTURE_PROFILE_LIMITS.routes,
+        `${location}.matchedRoutes`
+      );
+    }
+  }
+
+  const routeWork = exactClaimRefs.length
+      * (modules.length + gates.length + commandCount + commandClaimRefCount)
+    + (matchedRouteCount * (modules.length + 8));
+  consumeArchitectureProfileRouteWork(budget, routeWork, location);
+
+  const index = new Map();
+  for (const claimRef of exactClaimRefs) {
+    for (const route of compileClaimGateRoutes(model, claimRef)) {
+      const key = architectureProfileRouteKey(claimRef, route?.gateId, route?.commandId);
+      const digest = canonicalDigest(route);
+      if (index.has(key) && index.get(key) !== digest) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_FACT_INVALID",
+          "Architecture Profile route identity resolves to conflicting semantics.",
+          422,
+          { location, claimRef, gateId: route?.gateId ?? null, commandId: route?.commandId ?? null }
+        );
+      }
+      index.set(key, digest);
+      assertArchitectureProfileCountBound(
+        index.size,
+        ARCHITECTURE_PROFILE_LIMITS.routes,
+        `${location}.routes`
+      );
+    }
+  }
+  budget.routeCache.set(cacheKey, index);
+  return index;
+}
+
+function consumeArchitectureProfileRouteWork(budget, units, location) {
+  budget.observed += units;
+  assertArchitectureProfileCountBound(
+    budget.observed,
+    ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT,
+    `${location}.work`
+  );
+}
+
+function normalizeArchitectureProfileChangeFact(
+  record,
+  snapshot,
+  modelClaimRefs,
+  currentClaimDescriptors,
+  currentClaimRouteDigests,
+  evidenceWorkBudget,
+  routeWorkBudget
+) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_FACT_INVALID",
+      "Architecture Profile compilation requires object-shaped Change records.",
+      422
+    );
+  }
+  const packageProjection = record.acceptance?.package
+    && typeof record.acceptance.package === "object"
+    && !Array.isArray(record.acceptance.package)
+    ? { ...record.acceptance.package, id: record.acceptance.package.changeId ?? record.id }
+    : null;
+  const seal = inspectHistoricalSeal(record);
+  const sealedPackage = seal.packageIntact ? packageProjection : null;
+
+  const currentContributions = normalizeArchitectureProfileContributions(
+    record.outcomeAlignment?.contributions,
+    { origin: "current-record" }
+  );
+  const sealedContributions = sealedPackage
+    ? normalizeArchitectureProfileContributions(
+        sealedPackage.outcomeAlignment?.contributions,
+        { origin: "sealed-package", acceptanceDigest: seal.acceptanceDigest }
+      )
+    : [];
+  assertArchitectureProfileListBound(
+    [...currentContributions, ...sealedContributions],
+    ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+    `change.${readString(record.id) ?? "unknown"}.contributions`
+  );
+
+  const currentAssessment = compileCurrentEvidenceAssessmentForProfile(
+    record,
+    snapshot.inspection,
+    {
+      allowInvalidProjection: seal.packageIntact && !seal.recordProjectionIntact,
+      workBudget: evidenceWorkBudget
+    }
+  );
+  const currentEvidence = normalizeArchitectureProfileEvidence({
+    source: record,
+    assessment: currentAssessment,
+    modelClaimRefs,
+    currentClaimDescriptors,
+    sourceClaimDescriptors: compileArchitectureProfileSourceClaimDescriptors(
+      record,
+      currentAssessment,
+      routeWorkBudget,
+      `change.${readString(record.id) ?? "unknown"}.currentClaimDescriptors`
+    ),
+    currentClaimRouteDigests,
+    sourceClaimRouteDigests: compileArchitectureProfileSourceRouteDigests(
+      record,
+      currentAssessment,
+      routeWorkBudget,
+      `change.${readString(record.id) ?? "unknown"}.currentRoutes`
+    ),
+    origin: "current-record",
+    forceInvalid: seal.present && !seal.intact
+  });
+  const sealedEvidence = sealedPackage
+    ? (() => {
+        const sealedAssessment = compileEvidenceAssessment(sealedPackage, {
+          digest: sealedPackage.projectModelDigest,
+          git: sealedPackage.currentGit,
+          validation: { valid: true }
+        }, { workBudget: evidenceWorkBudget });
+        return normalizeArchitectureProfileEvidence({
+          source: sealedPackage,
+          assessment: sealedAssessment,
+          modelClaimRefs,
+          currentClaimDescriptors,
+          sourceClaimDescriptors: compileArchitectureProfileSourceClaimDescriptors(
+            sealedPackage,
+            sealedAssessment,
+            routeWorkBudget,
+            `change.${readString(record.id) ?? "unknown"}.sealedClaimDescriptors`
+          ),
+          currentClaimRouteDigests,
+          sourceClaimRouteDigests: compileArchitectureProfileSourceRouteDigests(
+            sealedPackage,
+            sealedAssessment,
+            routeWorkBudget,
+            `change.${readString(record.id) ?? "unknown"}.sealedRoutes`
+          ),
+          origin: "sealed-package",
+          acceptanceDigest: seal.acceptanceDigest,
+          historical: true
+        });
+      })()
+    : [];
+  assertArchitectureProfileListBound(
+    [...currentEvidence, ...sealedEvidence],
+    ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+    `change.${readString(record.id) ?? "unknown"}.evidence`
+  );
+
+  return {
+    schemaVersion: 1,
+    sourceSnapshotDigest: snapshot.digest,
+    id: requireArchitectureProfileString(record.id, "change.id"),
+    state: requireArchitectureProfileString(record.state, `change.${record.id}.state`),
+    primaryModuleRef: requireArchitectureProfileString(
+      record.primaryModule,
+      `change.${record.id}.primaryModule`
+    ),
+    contributions: [...currentContributions, ...sealedContributions],
+    evidence: [...currentEvidence, ...sealedEvidence]
+  };
+}
+
+function normalizeArchitectureProfileContributions(value, { origin, acceptanceDigest } = {}) {
+  const contributions = Array.isArray(value) ? value : [];
+  return contributions.map((contribution) => ({
+    contributionRef: requireArchitectureProfileString(
+      contribution?.contributionId,
+      "contribution.contributionId"
+    ),
+    origin,
+    ...(acceptanceDigest ? { acceptanceDigest } : {}),
+    outcomeRef: requireArchitectureProfileString(contribution?.outcomeRef, "contribution.outcomeRef"),
+    criterionRef: requireArchitectureProfileString(
+      contribution?.criterionRef,
+      "contribution.criterionRef"
+    ),
+    moduleRef: requireArchitectureProfileString(contribution?.moduleRef, "contribution.moduleRef"),
+    claimRefs: normalizeStringList(contribution?.claimRefs),
+    bindingDigest: requireArchitectureProfileDigest(
+      contribution?.bindingDigest,
+      "contribution.bindingDigest"
+    )
+  }));
+}
+
+function normalizeArchitectureProfileEvidence({
+  source,
+  assessment,
+  modelClaimRefs,
+  currentClaimDescriptors,
+  sourceClaimDescriptors,
+  currentClaimRouteDigests,
+  sourceClaimRouteDigests,
+  origin,
+  acceptanceDigest,
+  forceInvalid = false,
+  historical = false
+}) {
+  const currentIds = new Set(assessment.evidenceCurrency.currentIds);
+  const staleIds = new Set(assessment.evidenceCurrency.staleIds);
+  const associationIndex = indexArchitectureProfileClaimAssociations(
+    assessment.coverage.eligibleClaimAssociations
+  );
+  const changeClaimStatements = new Map((Array.isArray(source?.claims) ? source.claims : [])
+    .map((claim) => [readString(claim?.id), readString(claim?.statement)])
+    .filter(([claimRef, statement]) => claimRef && statement));
+  return (Array.isArray(source.evidence) ? source.evidence : []).map((item, index) => {
+    const evidenceRef = readString(item?.id) ?? `invalid-evidence-${index + 1}`;
+    const evidenceDigest = canonicalDigest(item);
+    let currency = currentIds.has(evidenceRef)
+      ? historical ? "sealed-historical" : "current"
+      : staleIds.has(evidenceRef) ? "stale" : "invalid";
+    if (forceInvalid) currency = "invalid";
+    const claimEnvelopeRefs = readArchitectureProfileClaimEnvelopeRefs(item)
+      .filter((claimRef) => modelClaimRefs.has(claimRef));
+    const claimAssociations = ["current", "sealed-historical"].includes(currency)
+      ? (associationIndex.get(`${evidenceRef}\u0000${evidenceDigest}`) ?? [])
+          .filter((association) => (
+            modelClaimRefs.has(association.targetClaimRef)
+            && modelClaimRefs.has(association.sourceClaimRef)
+            && claimEnvelopeRefs.includes(association.sourceClaimRef)
+            && architectureProfileAssociationClaimsAreCurrent(
+              association,
+              changeClaimStatements,
+              currentClaimDescriptors,
+              sourceClaimDescriptors
+            )
+            && architectureProfileAssociationHasCurrentRoute(
+              association,
+              currentClaimRouteDigests,
+              sourceClaimRouteDigests
+            )))
+          .map(projectArchitectureProfileClaimAssociation)
+      : [];
+    return {
+      evidenceRef,
+      evidenceDigest,
+      origin,
+      ...(acceptanceDigest ? { acceptanceDigest } : {}),
+      currency,
+      ...(readString(item?.observation?.status)
+        ? { observationStatus: readString(item.observation.status) }
+        : {}),
+      provenance: projectArchitectureProfileProvenance(item?.provenance),
+      claimEnvelopeRefs,
+      claimAssociations,
+      residualUncertainty: item?.residualUncertainty ?? []
+    };
+  });
+}
+
+function architectureProfileAssociationClaimsAreCurrent(
+  association,
+  changeClaimStatements,
+  currentClaimDescriptors,
+  sourceClaimDescriptors
+) {
+  const currentTarget = currentClaimDescriptors.get(association.targetClaimRef);
+  const sourceTarget = sourceClaimDescriptors.get(association.targetClaimRef);
+  const currentSource = currentClaimDescriptors.get(association.sourceClaimRef);
+  const sourceSource = sourceClaimDescriptors.get(association.sourceClaimRef);
+  return Boolean(
+    currentTarget
+      && sourceTarget
+      && currentSource
+      && sourceSource
+      && currentTarget.digest === sourceTarget.digest
+      && currentSource.digest === sourceSource.digest
+      && changeClaimStatements.get(association.targetClaimRef) === sourceTarget.statement
+  );
+}
+
+function compileCurrentEvidenceAssessmentForProfile(
+  change,
+  inspection,
+  { allowInvalidProjection = false, workBudget } = {}
+) {
+  try {
+    return compileEvidenceAssessment(change, inspection, { workBudget });
+  } catch (error) {
+    // A mutable projection cannot suppress an independently intact sealed package.
+    // Resource/internal failures still abort instead of masquerading as invalid Evidence.
+    const expectedInvalidRecord = [
+      "GOVERNANCE_BASELINE_MISSING",
+      "GOVERNANCE_BASELINE_TAMPERED"
+    ].includes(error?.code) || (allowInvalidProjection
+      && error?.statusCode !== 413
+      && !(Number.isInteger(error?.statusCode) && error.statusCode >= 500)
+      && !(error instanceof RangeError));
+    if (!expectedInvalidRecord) {
+      throw error;
+    }
+    return {
+      evidenceCurrency: {
+        currentIds: [],
+        staleIds: [],
+        invalidIds: normalizeStringList((Array.isArray(change?.evidence) ? change.evidence : [])
+          .map((item, index) => readString(item?.id) ?? `invalid-evidence-${index + 1}`)),
+        coverageBindings: []
+      },
+      coverage: { eligibleClaimAssociations: [] }
+    };
+  }
+}
+
+function indexArchitectureProfileClaimAssociations(value) {
+  const index = new Map();
+  for (const association of Array.isArray(value) ? value : []) {
+    const key = `${association.evidenceRef}\u0000${association.evidenceDigest}`;
+    if (!index.has(key)) index.set(key, []);
+    index.get(key).push(association);
+  }
+  return index;
+}
+
+function architectureProfileAssociationHasCurrentRoute(
+  association,
+  currentClaimRouteDigests,
+  sourceClaimRouteDigests
+) {
+  if (association.kind === "builtin") return true;
+  const key = architectureProfileRouteKey(
+    association.sourceClaimRef,
+    association.gateId,
+    association.commandId
+  );
+  const currentDigest = currentClaimRouteDigests.get(key);
+  return Boolean(currentDigest && sourceClaimRouteDigests.get(key) === currentDigest);
+}
+
+function architectureProfileRouteKey(claimRef, gateId, commandId) {
+  return `${readString(claimRef) ?? ""}\u0000${readString(gateId) ?? ""}\u0000${readString(commandId) ?? ""}`;
+}
+
+function projectArchitectureProfileClaimAssociation(association) {
+  return {
+    kind: association.kind,
+    targetClaimRef: association.targetClaimRef,
+    sourceClaimRef: association.sourceClaimRef,
+    obligationRef: association.obligationRef,
+    obligationDigest: association.obligationDigest,
+    ...(association.sourceId ? { sourceId: association.sourceId } : {}),
+    ...(association.gateId ? { gateId: association.gateId } : {}),
+    ...(association.commandId ? { commandId: association.commandId } : {}),
+    ...(association.authorityDecisionDigest
+      ? { authorityDecisionDigest: association.authorityDecisionDigest }
+      : {})
+  };
+}
+
+function projectArchitectureProfileProvenance(value) {
+  const provenance = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  return {
+    kind: readString(provenance.kind) ?? "invalid-evidence",
+    ...(readString(provenance.sourceId) ? { sourceId: readString(provenance.sourceId) } : {}),
+    ...(readString(provenance.gateId) ? { gateId: readString(provenance.gateId) } : {}),
+    ...(readString(provenance.commandId) ? { commandId: readString(provenance.commandId) } : {}),
+    ...(isCanonicalDigest(provenance.projectModelDigest)
+      ? { projectModelDigest: provenance.projectModelDigest }
+      : {}),
+    ...(isCanonicalDigest(provenance.git?.contentDigest)
+      ? { gitContentDigest: provenance.git.contentDigest }
+      : {}),
+    ...(isCanonicalDigest(provenance.verificationSubjectDigest)
+      ? { verificationSubjectDigest: provenance.verificationSubjectDigest }
+      : {})
+  };
+}
+
+function readArchitectureProfileClaimEnvelopeRefs(evidence) {
+  const explicit = normalizeStringList(evidence?.claim?.refs);
+  if (explicit.length > 0) return explicit;
+  return evidence?.provenance?.kind === "builtin-oracle"
+    ? normalizeStringList(evidence?.claim?.id)
+    : [];
+}
+
+function assertArchitectureProfileRecordBounds(record, origin, queryFactBudget) {
+  const changeRef = readString(record?.id) ?? readString(record?.changeId) ?? "unknown";
+  const root = `${origin}.${changeRef}`;
+  consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+  for (const [field, value] of [
+    ["claims", record?.claims],
+    ["verificationObligations", record?.verificationObligations],
+    ["outcomeAlignment.contributions", record?.outcomeAlignment?.contributions],
+    ["evidence", record?.evidence],
+    ["gateRuns", record?.gateRuns],
+    ["history", record?.history],
+    ["authorityDecision.approvedObligationIds", record?.authorityDecision?.approvedObligationIds]
+  ]) {
+    assertArchitectureProfileOptionalListBound(value, `${root}.${field}`);
+    consumeArchitectureProfileQueryFacts(queryFactBudget, Array.isArray(value) ? value.length : 0);
+  }
+  for (const [index, contribution] of (record?.outcomeAlignment?.contributions ?? []).entries()) {
+    consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+    assertArchitectureProfileOptionalListBound(
+      contribution?.claimRefs,
+      `${root}.outcomeAlignment.contributions.${index}.claimRefs`
+    );
+    consumeArchitectureProfileQueryFacts(
+      queryFactBudget,
+      Array.isArray(contribution?.claimRefs) ? contribution.claimRefs.length : 0
+    );
+  }
+  for (const [index, obligation] of (record?.verificationObligations ?? []).entries()) {
+    consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+    for (const [field, value] of [
+      ["mapping.routes", obligation?.mapping?.routes],
+      ["mapping.sourceRoutes", obligation?.mapping?.sourceRoutes],
+      ["mapping.sourceClaimIds", obligation?.mapping?.sourceClaimIds],
+      ["mapping.sourceIds", obligation?.mapping?.sourceIds],
+      ["evidenceSourceRefs", obligation?.evidenceSourceRefs],
+      ["gateClaimRefs", obligation?.gateClaimRefs],
+      ["supportedBy", obligation?.supportedBy]
+    ]) {
+      assertArchitectureProfileOptionalListBound(
+        value,
+        `${root}.verificationObligations.${index}.${field}`
+      );
+      consumeArchitectureProfileQueryFacts(queryFactBudget, Array.isArray(value) ? value.length : 0);
+    }
+  }
+  for (const [index, evidence] of (record?.evidence ?? []).entries()) {
+    consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+    for (const [field, value] of [
+      ["claim.refs", evidence?.claim?.refs],
+      ["directSupportBindings", evidence?.directSupportBindings],
+      ["supportBindings", evidence?.supportBindings]
+    ]) {
+      assertArchitectureProfileOptionalListBound(value, `${root}.evidence.${index}.${field}`);
+      consumeArchitectureProfileQueryFacts(queryFactBudget, Array.isArray(value) ? value.length : 0);
+    }
+    if (Array.isArray(evidence?.residualUncertainty)) {
+      assertArchitectureProfileListBound(
+        evidence.residualUncertainty,
+        ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+        `${root}.evidence.${index}.residualUncertainty`
+      );
+      consumeArchitectureProfileQueryFacts(queryFactBudget, evidence.residualUncertainty.length);
+    } else if (evidence?.residualUncertainty !== undefined
+      && evidence?.residualUncertainty !== null) {
+      consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+    }
+  }
+  let gateRunFactCount = 0;
+  for (const [index, run] of (record?.gateRuns ?? []).entries()) {
+    consumeArchitectureProfileQueryFacts(queryFactBudget, 1);
+    for (const [field, value] of [
+      ["evidenceBindings", run?.evidenceBindings],
+      ["commandResults", run?.commandResults],
+      ["evidenceIds", run?.evidenceIds]
+    ]) {
+      assertArchitectureProfileOptionalListBound(value, `${root}.gateRuns.${index}.${field}`);
+      gateRunFactCount += Array.isArray(value) ? value.length : 0;
+      consumeArchitectureProfileQueryFacts(queryFactBudget, Array.isArray(value) ? value.length : 0);
+      assertArchitectureProfileCountBound(
+        gateRunFactCount,
+        EVIDENCE_ASSESSMENT_WORK_LIMIT,
+        `${root}.gateRuns.derivedFacts`
+      );
+    }
+  }
+}
+
+function consumeArchitectureProfileQueryFacts(budget, units) {
+  budget.observed += units;
+  assertArchitectureProfileCountBound(
+    budget.observed,
+    ARCHITECTURE_PROFILE_QUERY_FACT_LIMIT,
+    "changeStore.queryDerivedFacts"
+  );
+}
+
+function assertArchitectureProfileOptionalListBound(value, location) {
+  if (value === undefined || value === null) return;
+  if (!Array.isArray(value)) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_FACT_INVALID",
+      "Architecture Profile source facts require array-shaped reference collections.",
+      422,
+      { location }
+    );
+  }
+  assertArchitectureProfileListBound(value, ARCHITECTURE_PROFILE_LIMITS.refsPerFact, location);
+}
+
+function assertArchitectureProfileListBound(value, limit, location) {
+  if (!Array.isArray(value)) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_FACT_INVALID",
+      "Architecture Profile source facts require bounded arrays.",
+      422,
+      { location }
+    );
+  }
+  if (value.length > limit) {
+    throwArchitectureProfileFactsUnbounded(location, limit, value.length);
+  }
+}
+
+function assertArchitectureProfileCountBound(observed, limit, location) {
+  if (observed > limit) throwArchitectureProfileFactsUnbounded(location, limit, observed);
+}
+
+function throwArchitectureProfileFactsUnbounded(location, limit, observed) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_FACTS_UNBOUNDED",
+      "Architecture Profile source facts exceeded a declared hard bound.",
+      413,
+      { location, limit, observed }
+    );
+}
+
+function isCanonicalDigest(value) {
+  return DIGEST_PATTERN.test(readString(value) ?? "");
+}
+
+function requireArchitectureProfileString(value, location) {
+  const exact = readString(value);
+  if (exact) return exact;
+  throw kernelError(
+    "ARCHITECTURE_PROFILE_FACT_INVALID",
+    "Architecture Profile source facts require non-empty exact references.",
+    422,
+    { location }
+  );
+}
+
+function requireArchitectureProfileDigest(value, location) {
+  if (isCanonicalDigest(value)) return value;
+  throw kernelError(
+    "ARCHITECTURE_PROFILE_FACT_INVALID",
+    "Architecture Profile source facts require canonical sha256 bindings.",
+    422,
+    { location }
+  );
+}
+
 function compileChangeObservationSafely(change, snapshot) {
   try {
     return compileChangeObservation(change, snapshot);
@@ -976,8 +1913,8 @@ function summarizeChangeObservation(observation) {
 }
 
 function compileChangeObservation(change, snapshot) {
-  const observed = projectChangeOntoInspection(change, snapshot.inspection);
-  const expectedSubjectDigest = verificationSubjectDigest(observed);
+  const assessment = compileEvidenceAssessment(change, snapshot.inspection);
+  const expectedSubjectDigest = assessment.verificationSubjectDigest;
   const persistedSubjectDigest = verificationSubjectDigest(change);
   const seal = inspectHistoricalSeal(change);
   return {
@@ -1002,15 +1939,15 @@ function compileChangeObservation(change, snapshot) {
     },
     seal,
     currentApplicability: inspectCurrentApplicability(change, snapshot.inspection, seal),
-    evidenceCurrency: classifyEvidenceCurrency(change, snapshot.inspection, expectedSubjectDigest)
+    evidenceCurrency: projectEvidenceCurrency(assessment.evidenceCurrency)
   };
 }
 
 function projectChangeOntoInspection(change, inspection) {
   return {
-    ...cloneJson(change),
+    ...change,
     projectModelDigest: inspection.digest,
-    currentGit: cloneJson(inspection.git)
+    currentGit: inspection.git
   };
 }
 
@@ -1061,27 +1998,41 @@ function inspectCurrentApplicability(change, inspection, seal) {
   };
 }
 
-function classifyEvidenceCurrency(change, inspection, expectedSubjectDigest) {
+function classifyEvidenceCurrency(change, inspection, expectedSubjectDigest, workBudget) {
   const evidence = Array.isArray(change?.evidence) ? change.evidence : [];
   const gateRuns = Array.isArray(change?.gateRuns) ? change.gateRuns : [];
+  assertEvidenceAssessmentCollectionBound(evidence, "evidence");
+  assertEvidenceAssessmentCollectionBound(gateRuns, "gateRuns");
+  const evaluationBudget = readEvidenceAssessmentWorkBudget(workBudget);
+  const runIndex = compileGateRunEvidenceIndex(gateRuns, evaluationBudget);
   const currentIds = [];
   const staleIds = [];
   const invalidIds = [];
+  const coverageBindings = [];
+  const coverageBindingKeys = new Set();
+  const evidenceIdentityCounts = new Map();
+  for (const [index, item] of evidence.entries()) {
+    consumeEvidenceAssessmentWork(evaluationBudget);
+    const id = readString(item?.id) ?? `missing-id-${index + 1}`;
+    evidenceIdentityCounts.set(id, (evidenceIdentityCounts.get(id) ?? 0) + 1);
+  }
 
   for (const [index, item] of evidence.entries()) {
+    consumeEvidenceAssessmentWork(evaluationBudget);
     const id = readString(item?.id) ?? `missing-id-${index + 1}`;
+    if (evidenceIdentityCounts.get(id) > 1) {
+      if (!invalidIds.includes(id)) invalidIds.push(id);
+      continue;
+    }
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       invalidIds.push(id);
       continue;
     }
     const evidenceDigest = canonicalDigest(item);
-    const bindingRuns = gateRuns.filter((run) => (
-      Array.isArray(run?.evidenceBindings)
-      && run.evidenceBindings.some((binding) => (
-        binding?.id === item.id && binding?.digest === evidenceDigest
-      ))
-      && evidenceProvenanceMatchesRun(change, item, run)
-    ));
+    const candidateBindingRuns = runIndex.bindingRuns.get(`${item.id}\u0000${evidenceDigest}`) ?? [];
+    consumeEvidenceAssessmentWork(evaluationBudget, candidateBindingRuns.length);
+    const bindingRuns = candidateBindingRuns
+      .filter((run) => evidenceProvenanceMatchesRun(change, item, run, runIndex));
     const provenance = item.provenance;
     const provenanceComplete = readString(provenance?.projectModelDigest)
       && readString(provenance?.git?.contentDigest)
@@ -1093,26 +2044,181 @@ function classifyEvidenceCurrency(change, inspection, expectedSubjectDigest) {
     const provenanceCurrent = provenance.projectModelDigest === inspection.digest
       && provenance.git.contentDigest === inspection.git.contentDigest
       && provenance.verificationSubjectDigest === expectedSubjectDigest;
-    const trustedCurrentRun = bindingRuns.some((run) => (
+    consumeEvidenceAssessmentWork(evaluationBudget, bindingRuns.length);
+    const trustedCurrentRuns = bindingRuns.filter((run) => (
       run.projectModelDigest === inspection.digest
       && run.gitContentDigest === inspection.git.contentDigest
       && run.verificationSubjectDigest === expectedSubjectDigest
     ));
-    if (provenanceCurrent && trustedCurrentRun) currentIds.push(id);
-    else staleIds.push(id);
+    if (provenanceCurrent && trustedCurrentRuns.length > 0) {
+      currentIds.push(id);
+      for (const run of trustedCurrentRuns.filter((entry) => entry.status === "passed")) {
+        const bindingKey = `${item.id}\u0000${evidenceDigest}`;
+        if (coverageBindingKeys.has(bindingKey)) continue;
+        coverageBindingKeys.add(bindingKey);
+        coverageBindings.push({ id: item.id, digest: evidenceDigest });
+      }
+    } else {
+      staleIds.push(id);
+    }
   }
 
-  return { currentIds, staleIds, invalidIds };
+  return { currentIds, staleIds, invalidIds, coverageBindings };
 }
 
-function evidenceProvenanceMatchesRun(change, evidence, run) {
+function compileGateRunEvidenceIndex(gateRuns, budget) {
+  const bindingRuns = new Map();
+  const runFacts = new WeakMap();
+  for (const [runIndex, run] of gateRuns.entries()) {
+    consumeEvidenceAssessmentWork(budget);
+    if (!run || typeof run !== "object" || Array.isArray(run)) continue;
+    const evidenceBindings = readEvidenceAssessmentCollection(
+      run.evidenceBindings,
+      `gateRuns.${runIndex}.evidenceBindings`
+    );
+    const commandResults = readEvidenceAssessmentCollection(
+      run.commandResults,
+      `gateRuns.${runIndex}.commandResults`
+    );
+    const evidenceIds = readEvidenceAssessmentCollection(
+      run.evidenceIds,
+      `gateRuns.${runIndex}.evidenceIds`
+    );
+    const facts = {
+      commandResults: new Set(),
+      evidenceIds: new Set()
+    };
+    for (const evidenceId of evidenceIds) {
+      consumeEvidenceAssessmentWork(budget);
+      const exact = readString(evidenceId);
+      if (exact) facts.evidenceIds.add(exact);
+    }
+    for (const result of commandResults) {
+      consumeEvidenceAssessmentWork(budget);
+      const commandId = readString(result?.id);
+      const evidenceId = readString(result?.evidenceId);
+      if (commandId && evidenceId) facts.commandResults.add(`${commandId}\u0000${evidenceId}`);
+    }
+    for (const binding of evidenceBindings) {
+      consumeEvidenceAssessmentWork(budget);
+      const evidenceId = readString(binding?.id);
+      const evidenceDigest = readString(binding?.digest);
+      if (!evidenceId || !evidenceDigest) continue;
+      const key = `${evidenceId}\u0000${evidenceDigest}`;
+      if (!bindingRuns.has(key)) bindingRuns.set(key, []);
+      bindingRuns.get(key).push(run);
+    }
+    runFacts.set(run, facts);
+  }
+  return { bindingRuns, runFacts };
+}
+
+function readEvidenceAssessmentCollection(value, location) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw kernelError(
+      "EVIDENCE_ASSESSMENT_INPUT_INVALID",
+      "Evidence assessment requires array-shaped Gate run collections.",
+      422,
+      { location }
+    );
+  }
+  assertEvidenceAssessmentCollectionBound(value, location);
+  return value;
+}
+
+function assertEvidenceAssessmentCollectionBound(value, location) {
+  if (value.length > EVIDENCE_ASSESSMENT_COLLECTION_LIMIT) {
+    throw kernelError(
+      "EVIDENCE_ASSESSMENT_LIMIT_EXCEEDED",
+      "Evidence assessment exceeded a declared hard collection bound.",
+      413,
+      {
+        location,
+        limit: EVIDENCE_ASSESSMENT_COLLECTION_LIMIT,
+        observed: value.length
+      }
+    );
+  }
+}
+
+function consumeEvidenceAssessmentWork(budget, units = 1) {
+  budget.observed += units;
+  if (budget.observed > EVIDENCE_ASSESSMENT_WORK_LIMIT) {
+    throw kernelError(
+      "EVIDENCE_ASSESSMENT_EVALUATION_LIMIT_EXCEEDED",
+      "Evidence assessment exceeded a declared hard work bound.",
+      413,
+      { limit: EVIDENCE_ASSESSMENT_WORK_LIMIT, observed: budget.observed }
+    );
+  }
+}
+
+function readEvidenceAssessmentWorkBudget(value) {
+  if (value === undefined) return { observed: 0 };
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || !Number.isSafeInteger(value.observed) || value.observed < 0) {
+    throw kernelError(
+      "EVIDENCE_ASSESSMENT_INPUT_INVALID",
+      "Evidence assessment workBudget must expose a non-negative safe-integer observation count.",
+      422,
+      { location: "workBudget" }
+    );
+  }
+  return value;
+}
+
+function compileEvidenceAssessment(change, inspection, { workBudget } = {}) {
+  const evaluationBudget = readEvidenceAssessmentWorkBudget(workBudget);
+  const observed = projectChangeOntoInspection(change, inspection);
+  consumeEvidenceAssessmentWork(
+    evaluationBudget,
+    arrayLength(observed?.claims)
+      + arrayLength(observed?.verificationObligations)
+      + arrayLength(observed?.authorityDecision?.approvedObligationIds)
+  );
+  const governanceBaseline = readGovernanceBaseline(observed);
+  const mappingAuthorization = readMappingAuthorization(observed, governanceBaseline);
+  const subjectDigest = verificationSubjectDigest(observed);
+  const evidenceCurrency = classifyEvidenceCurrency(
+    observed,
+    inspection,
+    subjectDigest,
+    evaluationBudget
+  );
+  const coverage = validateEvidenceCoverage(observed.claims, observed.evidence, {
+    authorityBindings: mappingAuthorization.authorityBindings,
+    verificationSubjectDigest: subjectDigest,
+    trustedEvidenceBindings: evidenceCurrency.coverageBindings,
+    verificationObligations: observed.verificationObligations,
+    workBudget: evaluationBudget
+  });
+  return {
+    observed,
+    coverage,
+    evidenceCurrency,
+    governanceBaseline,
+    mappingAuthorization,
+    verificationSubjectDigest: subjectDigest
+  };
+}
+
+function projectEvidenceCurrency(value) {
+  return {
+    currentIds: value.currentIds,
+    staleIds: value.staleIds,
+    invalidIds: value.invalidIds
+  };
+}
+
+function evidenceProvenanceMatchesRun(change, evidence, run, runIndex) {
   const provenance = evidence?.provenance;
+  const indexed = runIndex.runFacts.get(run);
   if (provenance?.changeId !== change?.id
     || provenance?.projectModelDigest !== run?.projectModelDigest
     || provenance?.git?.contentDigest !== run?.gitContentDigest
     || provenance?.verificationSubjectDigest !== run?.verificationSubjectDigest
-    || !Array.isArray(run?.evidenceIds)
-    || !run.evidenceIds.includes(evidence.id)) return false;
+    || !indexed?.evidenceIds.has(evidence.id)) return false;
   if (provenance.kind === "builtin-oracle") {
     return run.kind === "builtin-oracle"
       && run.gateId === "project-model"
@@ -1120,10 +2226,7 @@ function evidenceProvenanceMatchesRun(change, evidence, run) {
   }
   if (provenance.kind !== "gate-command" || run.kind !== "configured-gate"
     || provenance.gateId !== run.gateId) return false;
-  return Array.isArray(run.commandResults)
-    && run.commandResults.some((result) => (
-      result?.id === provenance.commandId && result?.evidenceId === evidence.id
-    ));
+  return indexed.commandResults.has(`${provenance.commandId}\u0000${evidence.id}`);
 }
 
 function boundedSummaryText(value) {
@@ -1211,23 +2314,22 @@ function deriveEvidenceReady(change, inspection, observedAt) {
 }
 
 function readReadiness(change, inspection) {
-  const governanceBaseline = readGovernanceBaseline(change);
-  const integrityFailureEvidence = validateIntegrityFailureEvidence(change, { requireDigest: true });
-  const mappingAuthorization = readMappingAuthorization(change, governanceBaseline);
-  const subjectDigest = verificationSubjectDigest(change);
-  const coverage = validateEvidenceCoverage(change.claims, change.evidence, {
-    approvedObligationIds: mappingAuthorization.approvedObligationIds,
-    verificationSubjectDigest: subjectDigest,
-    trustedEvidenceBindings: readTrustedEvidenceBindings(change, inspection, subjectDigest),
-    verificationObligations: change.verificationObligations
-  });
-  const builtin = change.gateRuns.find((run) => run.gateId === "project-model");
+  const assessment = compileEvidenceAssessment(change, inspection);
+  const {
+    observed,
+    coverage,
+    governanceBaseline,
+    mappingAuthorization,
+    verificationSubjectDigest: subjectDigest
+  } = assessment;
+  const integrityFailureEvidence = validateIntegrityFailureEvidence(observed, { requireDigest: true });
+  const builtin = observed.gateRuns.find((run) => run.gateId === "project-model");
   const defaultGateId = governanceBaseline.projectDocument?.changePolicy?.defaultGate;
   const requiredGateIds = defaultGateId
     ? [defaultGateId]
     : governanceBaseline.gates.filter((gate) => gate.required === true).map((gate) => gate.id);
   const missingOrStaleGateIds = ["project-model", ...requiredGateIds].filter((gateId) => {
-    const run = change.gateRuns.find((entry) => entry.gateId === gateId);
+    const run = observed.gateRuns.find((entry) => entry.gateId === gateId);
     return !run
       || run.status !== "passed"
       || run.projectModelDigest !== inspection.digest
@@ -1248,14 +2350,6 @@ function readReadiness(change, inspection) {
     requiredGateIds: ["project-model", ...requiredGateIds],
     missingOrStaleGateIds
   };
-}
-
-function readTrustedEvidenceBindings(change, inspection, subjectDigest) {
-  return change.gateRuns
-    .filter((run) => run.projectModelDigest === inspection.digest
-      && run.gitContentDigest === inspection.git.contentDigest
-      && run.verificationSubjectDigest === subjectDigest)
-    .flatMap((run) => Array.isArray(run.evidenceBindings) ? run.evidenceBindings : []);
 }
 
 function assertIntegrationAllowed(change, inspection) {
@@ -2212,6 +3306,15 @@ function readMappingAuthorization(change, governanceBaseline) {
   const approvedObligationIds = decisionValidation.valid && authorityDecisionBindsCurrentSubject(change)
     ? approvable.map((obligation) => obligation.id).filter((id) => decisionApprovedIds.has(id))
     : [];
+  const authorityDecisionDigest = approvedObligationIds.length > 0
+    ? canonicalDigest(change.authorityDecision)
+    : null;
+  const authorityBindings = authorityDecisionDigest
+    ? approvedObligationIds.map((obligationId) => ({
+        obligationId,
+        authorityDecisionDigest
+      }))
+    : [];
   const approved = new Set(approvedObligationIds);
   const unauthorizedObligationIds = approvable
     .map((obligation) => obligation.id)
@@ -2220,6 +3323,7 @@ function readMappingAuthorization(change, governanceBaseline) {
     valid: invalidObligationIds.length === 0 && unauthorizedObligationIds.length === 0,
     requiredObligationIds: approvable.map((obligation) => obligation.id),
     approvedObligationIds,
+    authorityBindings,
     invalidObligationIds,
     unauthorizedObligationIds
   };

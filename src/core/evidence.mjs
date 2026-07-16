@@ -1,5 +1,11 @@
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
+const EVIDENCE_COVERAGE_COLLECTION_LIMIT = 256;
+const EVIDENCE_COVERAGE_EVALUATION_LIMIT = 32768;
+const ELIGIBLE_ASSOCIATIONS_PER_EVIDENCE_LIMIT = 256;
+const ELIGIBLE_ASSOCIATIONS_TOTAL_LIMIT = 32768;
+
 export const EVIDENCE_FIELDS = [
   "claim",
   "oracle",
@@ -65,28 +71,109 @@ export function validateEvidenceCoverage(
   claims,
   evidence,
   {
-    approvedObligationIds = [],
+    authorityBindings = [],
     verificationSubjectDigest,
     trustedEvidenceBindings = [],
-    verificationObligations = []
+    verificationObligations = [],
+    workBudget
   } = {}
 ) {
+  assertEvidenceCoverageCollection(claims, "claims");
+  assertEvidenceCoverageCollection(evidence, "evidence");
+  assertEvidenceCoverageCollection(authorityBindings, "authorityBindings");
+  assertEvidenceCoverageCollection(trustedEvidenceBindings, "trustedEvidenceBindings");
+  assertEvidenceCoverageCollection(verificationObligations, "verificationObligations");
+  for (const [index, item] of evidence.entries()) {
+    assertEvidenceCoverageOptionalCollection(item?.claim?.refs, `evidence.${index}.claim.refs`);
+    assertEvidenceCoverageOptionalCollection(
+      item?.directSupportBindings,
+      `evidence.${index}.directSupportBindings`
+    );
+    assertEvidenceCoverageOptionalCollection(
+      item?.supportBindings,
+      `evidence.${index}.supportBindings`
+    );
+  }
+  for (const [index, obligation] of verificationObligations.entries()) {
+    for (const [field, value] of [
+      ["mapping.routes", obligation?.mapping?.routes],
+      ["mapping.sourceRoutes", obligation?.mapping?.sourceRoutes],
+      ["mapping.sourceClaimIds", obligation?.mapping?.sourceClaimIds],
+      ["mapping.sourceIds", obligation?.mapping?.sourceIds]
+    ]) {
+      assertEvidenceCoverageOptionalCollection(
+        value,
+        `verificationObligations.${index}.${field}`
+      );
+    }
+  }
   const covered = new Set();
-  const approved = new Set(approvedObligationIds);
-  const claimById = new Map(claims.map((claim) => [claim.id, claim]));
+  const evaluationBudget = readEvidenceCoverageWorkBudget(workBudget);
+  consumeEvidenceCoverageWork(
+    evaluationBudget,
+    claims.length
+      + evidence.length
+      + authorityBindings.length
+      + trustedEvidenceBindings.length
+      + (verificationObligations.length * 2)
+  );
+  const authorityBindingIndex = indexAuthorityBindings(authorityBindings);
+  const claimIndex = indexClaims(claims);
+  const claimById = claimIndex.byId;
   const obligationIndex = indexVerificationObligations(verificationObligations);
-  const trustedDigests = new Map(trustedEvidenceBindings
-    .filter((binding) => readString(binding?.id) && readString(binding?.digest))
-    .map((binding) => [binding.id, binding.digest]));
+  const mappingIndex = compileEvidenceCoverageMappingIndex(
+    verificationObligations,
+    evaluationBudget
+  );
+  const evidenceIdentityIndex = indexEvidenceIdentities(evidence);
+  const trustedBindingIndex = indexTrustedEvidenceBindings(trustedEvidenceBindings);
+  const trustedDigests = trustedBindingIndex.byEvidenceId;
+  const eligibleClaimAssociations = [];
+  const eligibleAssociationDigests = new Set();
+  const eligibleAssociationCounts = new Map();
   const untrustedEvidenceIds = [];
   const staleEvidenceIds = [];
   const mismatchedClaimEvidenceIds = [];
   const ineligibleRouteEvidenceIds = new Set();
+
+  function recordEligibleAssociation(association) {
+    const digest = canonicalDigest(association);
+    if (eligibleAssociationDigests.has(digest)) return;
+    const evidenceKey = `${association.evidenceRef}\u0000${association.evidenceDigest}`;
+    const evidenceCount = (eligibleAssociationCounts.get(evidenceKey) ?? 0) + 1;
+    if (evidenceCount > ELIGIBLE_ASSOCIATIONS_PER_EVIDENCE_LIMIT
+      || eligibleClaimAssociations.length + 1 > ELIGIBLE_ASSOCIATIONS_TOTAL_LIMIT) {
+      throw domainError(
+        "EVIDENCE_ASSOCIATION_LIMIT_EXCEEDED",
+        "Eligible Evidence-to-Claim associations exceeded a declared hard bound.",
+        {
+          evidenceRef: association.evidenceRef,
+          perEvidenceLimit: ELIGIBLE_ASSOCIATIONS_PER_EVIDENCE_LIMIT,
+          totalLimit: ELIGIBLE_ASSOCIATIONS_TOTAL_LIMIT
+        },
+        413
+      );
+    }
+    eligibleAssociationDigests.add(digest);
+    eligibleAssociationCounts.set(evidenceKey, evidenceCount);
+    eligibleClaimAssociations.push({ association, digest });
+  }
+
   for (const item of evidence) {
+    consumeEvidenceCoverageWork(evaluationBudget);
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      untrustedEvidenceIds.push("invalid-evidence");
+      continue;
+    }
+    if (evidenceIdentityIndex.duplicateIds.includes(readString(item?.id))) {
+      untrustedEvidenceIds.push(item?.id);
+      continue;
+    }
     if (!isPositiveObservation(item.observation)) {
       continue;
     }
-    if (trustedDigests.get(item.id) !== canonicalDigest(item)) {
+    const evidenceDigest = canonicalDigest(item);
+    if (trustedDigests.get(item.id) !== evidenceDigest) {
       untrustedEvidenceIds.push(item.id);
       continue;
     }
@@ -103,74 +190,175 @@ export function validateEvidenceCoverage(
 
     if (provenanceKind === "builtin-oracle") {
       const matchingClaim = claimById.get(item.claim?.id);
-      if (matchingClaim && item.claim?.statement === matchingClaim.statement) {
+      const explicitEnvelopeClaimRefs = readEvidenceEnvelopeClaimRefs(item);
+      const envelopeMatches = explicitEnvelopeClaimRefs.length === 0
+        || explicitEnvelopeClaimRefs.includes(matchingClaim?.id);
+      if (matchingClaim && item.claim?.statement === matchingClaim.statement && envelopeMatches) {
         const obligation = obligationIndex.byClaimId.get(matchingClaim.id);
-        const sourceIds = new Set(Array.isArray(obligation?.mapping?.sourceIds)
-          ? obligation.mapping.sourceIds.map(readString).filter(Boolean)
-          : []);
+        const sourceIds = mappingIndex.builtinSourceIds.get(obligation);
         if (obligation?.mapping?.kind === "builtin-oracle"
-          && sourceIds.has(readString(item.provenance?.sourceId))) {
-          covered.add(matchingClaim.id);
+          && sourceIds?.has(readString(item.provenance?.sourceId))) {
+          const obligationRef = readString(obligation?.id);
+          const sourceId = readString(item.provenance?.sourceId);
+          if (obligationRef && sourceId) {
+            recordEligibleAssociation({
+              evidenceRef: item.id,
+              evidenceDigest,
+              kind: "builtin",
+              targetClaimRef: matchingClaim.id,
+              sourceClaimRef: matchingClaim.id,
+              obligationRef,
+              obligationDigest: canonicalDigest(obligation),
+              sourceId
+            });
+            covered.add(matchingClaim.id);
+          } else {
+            ineligibleRouteEvidenceIds.add(item.id);
+          }
         } else {
           ineligibleRouteEvidenceIds.add(item.id);
         }
-      } else if (matchingClaim) {
+      } else if (matchingClaim && item.claim?.statement !== matchingClaim.statement) {
         mismatchedClaimEvidenceIds.push(item.id);
+      } else if (matchingClaim) {
+        ineligibleRouteEvidenceIds.add(item.id);
       }
       continue;
     }
 
-    for (const claimId of readEvidenceEnvelopeClaimRefs(item)) {
+    const envelopeClaimRefs = new Set(readEvidenceEnvelopeClaimRefs(item));
+
+    for (const claimId of envelopeClaimRefs) {
+      consumeEvidenceCoverageWork(evaluationBudget);
       if (!claimById.has(claimId)) continue;
       const obligation = obligationIndex.byClaimId.get(claimId);
       if (obligation?.mapping?.kind !== "exact-contract-claim"
-        || !routeMatchesProvenance(obligation.mapping.routes, item.provenance)) {
+        || !mappingIndex.exactRoutes.get(obligation)?.has(evidenceRouteKey(item.provenance))) {
         ineligibleRouteEvidenceIds.add(item.id);
       }
     }
 
+    const seenDirectBindings = new Set();
     for (const binding of item.directSupportBindings ?? []) {
+      consumeEvidenceCoverageWork(evaluationBudget);
+      const directBindingKey = canonicalDigest({
+        claimId: readString(binding?.claimId) ?? null,
+        claimStatement: readString(binding?.claimStatement) ?? null
+      });
+      if (seenDirectBindings.has(directBindingKey)) continue;
+      seenDirectBindings.add(directBindingKey);
       const directClaim = claimById.get(binding?.claimId);
-      if (directClaim && binding?.claimStatement === directClaim.statement) {
+      if (directClaim
+        && envelopeClaimRefs.has(directClaim.id)
+        && binding?.claimStatement === directClaim.statement) {
         const obligation = obligationIndex.byClaimId.get(directClaim.id);
         if (obligation?.mapping?.kind === "exact-contract-claim"
-          && routeMatchesProvenance(obligation.mapping.routes, item.provenance)) {
-          covered.add(directClaim.id);
+          && mappingIndex.exactRoutes.get(obligation)?.has(evidenceRouteKey(item.provenance))) {
+          const obligationRef = readString(obligation?.id);
+          const gateId = readString(item.provenance?.gateId);
+          const commandId = readString(item.provenance?.commandId);
+          if (obligationRef && gateId && commandId) {
+            recordEligibleAssociation({
+              evidenceRef: item.id,
+              evidenceDigest,
+              kind: "direct",
+              targetClaimRef: directClaim.id,
+              sourceClaimRef: directClaim.id,
+              obligationRef,
+              obligationDigest: canonicalDigest(obligation),
+              gateId,
+              commandId
+            });
+            covered.add(directClaim.id);
+          } else {
+            ineligibleRouteEvidenceIds.add(item.id);
+          }
         } else {
           ineligibleRouteEvidenceIds.add(item.id);
         }
-      } else if (directClaim) {
+      } else if (directClaim && binding?.claimStatement !== directClaim.statement) {
         mismatchedClaimEvidenceIds.push(item.id);
+      } else if (directClaim) {
+        ineligibleRouteEvidenceIds.add(item.id);
       }
     }
+    const seenSupportBindings = new Set();
+    const sourceRouteMatches = new Map();
     for (const binding of item.supportBindings ?? []) {
+      consumeEvidenceCoverageWork(evaluationBudget);
       const obligationId = readString(binding?.obligationId);
       const targetClaimId = readString(binding?.claimId);
+      const supportBindingKey = `${obligationId ?? ""}\u0000${targetClaimId ?? ""}`;
+      if (seenSupportBindings.has(supportBindingKey)) continue;
+      seenSupportBindings.add(supportBindingKey);
       const targetClaim = claimById.get(targetClaimId);
       const obligation = obligationIndex.byId.get(obligationId);
       if (!targetClaim || !obligationId) continue;
-      if (!obligation || obligation.claimId !== targetClaim.id) {
+      if (!obligation
+        || obligation.claimId !== targetClaim.id
+        || obligationIndex.byClaimId.get(targetClaim.id) !== obligation) {
         ineligibleRouteEvidenceIds.add(item.id);
         continue;
       }
-      if (!approved.has(obligationId)) continue;
-      if (obligation.mapping?.kind === "cross-claim"
-        && sourceRouteMatchesEvidence(obligation.mapping, item)) {
+      const authorityDecisionDigest = authorityBindingIndex.get(obligationId);
+      if (!authorityDecisionDigest) continue;
+      if (!sourceRouteMatches.has(obligationId)) {
+        sourceRouteMatches.set(obligationId, matchingIndexedSourceRoutesForEvidence({
+          obligation,
+          evidence: item,
+          envelopeClaimRefs,
+          mappingIndex,
+          evaluationBudget
+        }));
+      }
+      const sourceRoutes = sourceRouteMatches.get(obligationId);
+      if (obligation.mapping?.kind === "cross-claim" && sourceRoutes.length > 0) {
         covered.add(targetClaim.id);
+        const obligationDigest = canonicalDigest(obligation);
+        for (const route of sourceRoutes) {
+          recordEligibleAssociation({
+            evidenceRef: item.id,
+            evidenceDigest,
+            kind: "cross-claim",
+            targetClaimRef: targetClaim.id,
+            sourceClaimRef: route.sourceClaimId,
+            obligationRef: obligationId,
+            obligationDigest,
+            gateId: route.gateId,
+            commandId: route.commandId,
+            authorityDecisionDigest
+          });
+        }
       } else {
         ineligibleRouteEvidenceIds.add(item.id);
       }
     }
   }
-  const uncoveredClaimIds = claims.map((claim) => claim.id).filter((id) => !covered.has(id));
+  const uncoveredClaimIds = claims
+    .map((claim, index) => readString(claim?.id) ?? `invalid-claim-${index + 1}`)
+    .filter((id) => !covered.has(id));
   return {
-    satisfied: claims.length > 0 && uncoveredClaimIds.length === 0,
+    satisfied: claims.length > 0
+      && claimIndex.duplicateIds.length === 0
+      && evidenceIdentityIndex.duplicateIds.length === 0
+      && trustedBindingIndex.conflictingEvidenceIds.length === 0
+      && obligationIndex.duplicateIds.length === 0
+      && obligationIndex.duplicateClaimIds.length === 0
+      && uncoveredClaimIds.length === 0,
     coveredClaimIds: [...covered],
     uncoveredClaimIds,
+    duplicateClaimIds: claimIndex.duplicateIds,
+    duplicateEvidenceIds: evidenceIdentityIndex.duplicateIds,
+    conflictingTrustedEvidenceIds: trustedBindingIndex.conflictingEvidenceIds,
+    duplicateObligationIds: obligationIndex.duplicateIds,
+    duplicateObligationClaimIds: obligationIndex.duplicateClaimIds,
     untrustedEvidenceIds,
     staleEvidenceIds,
     mismatchedClaimEvidenceIds,
-    ineligibleRouteEvidenceIds: [...ineligibleRouteEvidenceIds]
+    ineligibleRouteEvidenceIds: [...ineligibleRouteEvidenceIds],
+    eligibleClaimAssociations: eligibleClaimAssociations
+      .sort((left, right) => left.digest.localeCompare(right.digest))
+      .map((entry) => entry.association)
   };
 }
 
@@ -305,6 +493,158 @@ function gateEvidenceApplicability(configured, primaryModule) {
   };
 }
 
+function compileEvidenceCoverageMappingIndex(obligations, evaluationBudget) {
+  const exactRoutes = new WeakMap();
+  const builtinSourceIds = new WeakMap();
+  const crossRoutes = new WeakMap();
+  for (const obligation of obligations) {
+    consumeEvidenceCoverageWork(evaluationBudget);
+    if (!obligation || typeof obligation !== "object" || Array.isArray(obligation)) continue;
+    const mapping = obligation.mapping;
+    if (!mapping || typeof mapping !== "object" || Array.isArray(mapping)) continue;
+    if (mapping.kind === "exact-contract-claim") {
+      const routeKeys = new Set();
+      for (const route of mapping.routes ?? []) {
+        consumeEvidenceCoverageWork(evaluationBudget);
+        const key = evidenceRouteKey(route);
+        if (key !== "\u0000") routeKeys.add(key);
+      }
+      exactRoutes.set(obligation, routeKeys);
+      continue;
+    }
+    if (mapping.kind === "builtin-oracle") {
+      const sourceIds = new Set();
+      for (const sourceId of mapping.sourceIds ?? []) {
+        consumeEvidenceCoverageWork(evaluationBudget);
+        const exact = readString(sourceId);
+        if (exact) sourceIds.add(exact);
+      }
+      builtinSourceIds.set(obligation, sourceIds);
+      continue;
+    }
+    if (mapping.kind !== "cross-claim") continue;
+    const declaredSourceClaimIds = new Set();
+    for (const sourceClaimId of mapping.sourceClaimIds ?? []) {
+      consumeEvidenceCoverageWork(evaluationBudget);
+      const exact = readString(sourceClaimId);
+      if (exact) declaredSourceClaimIds.add(exact);
+    }
+    const byRoute = new Map();
+    const seen = new Set();
+    for (const route of mapping.sourceRoutes ?? []) {
+      consumeEvidenceCoverageWork(evaluationBudget);
+      const sourceClaimId = readString(route?.sourceClaimId);
+      const gateId = readString(route?.gateId);
+      const commandId = readString(route?.commandId);
+      if (!sourceClaimId || !gateId || !commandId
+        || !declaredSourceClaimIds.has(sourceClaimId)) continue;
+      const exact = { sourceClaimId, gateId, commandId };
+      const digest = canonicalDigest(exact);
+      if (seen.has(digest)) continue;
+      seen.add(digest);
+      const key = evidenceRouteKey(exact);
+      if (!byRoute.has(key)) byRoute.set(key, []);
+      byRoute.get(key).push(exact);
+    }
+    for (const routes of byRoute.values()) {
+      routes.sort((left, right) => left.sourceClaimId.localeCompare(right.sourceClaimId));
+    }
+    crossRoutes.set(obligation, byRoute);
+  }
+  return { exactRoutes, builtinSourceIds, crossRoutes };
+}
+
+function matchingIndexedSourceRoutesForEvidence({
+  obligation,
+  evidence,
+  envelopeClaimRefs,
+  mappingIndex,
+  evaluationBudget
+}) {
+  const candidates = mappingIndex.crossRoutes.get(obligation)?.get(
+    evidenceRouteKey(evidence?.provenance)
+  ) ?? [];
+  const matches = [];
+  for (const route of candidates) {
+    consumeEvidenceCoverageWork(evaluationBudget);
+    if (envelopeClaimRefs.has(route.sourceClaimId)) matches.push(route);
+  }
+  return matches;
+}
+
+function evidenceRouteKey(value) {
+  return `${readString(value?.gateId) ?? ""}\u0000${readString(value?.commandId) ?? ""}`;
+}
+
+function consumeEvidenceCoverageWork(budget, units = 1) {
+  budget.observed += units;
+  if (budget.observed > EVIDENCE_COVERAGE_EVALUATION_LIMIT) {
+    throw domainError(
+      "EVIDENCE_COVERAGE_EVALUATION_LIMIT_EXCEEDED",
+      "Evidence coverage evaluation exceeded a declared hard work bound.",
+      {
+        limit: EVIDENCE_COVERAGE_EVALUATION_LIMIT,
+        observed: budget.observed
+      },
+      413
+    );
+  }
+}
+
+function readEvidenceCoverageWorkBudget(value) {
+  if (value === undefined) return { observed: 0 };
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || !Number.isSafeInteger(value.observed) || value.observed < 0) {
+    throw domainError(
+      "EVIDENCE_COVERAGE_INPUT_INVALID",
+      "Evidence coverage workBudget must expose a non-negative safe-integer observation count.",
+      { location: "workBudget" }
+    );
+  }
+  return value;
+}
+
+function assertEvidenceCoverageOptionalCollection(value, location) {
+  if (value === undefined || value === null) return;
+  assertEvidenceCoverageCollection(value, location);
+}
+
+function assertEvidenceCoverageCollection(value, location) {
+  if (!Array.isArray(value)) {
+    throw domainError(
+      "EVIDENCE_COVERAGE_INPUT_INVALID",
+      "Evidence coverage inputs require array-shaped collections.",
+      { location }
+    );
+  }
+  if (value.length > EVIDENCE_COVERAGE_COLLECTION_LIMIT) {
+    throw domainError(
+      "EVIDENCE_COVERAGE_LIMIT_EXCEEDED",
+      "Evidence coverage inputs exceeded a declared hard collection bound.",
+      {
+        location,
+        limit: EVIDENCE_COVERAGE_COLLECTION_LIMIT,
+        observed: value.length
+      },
+      413
+    );
+  }
+}
+
+function indexEvidenceIdentities(value) {
+  const counts = new Map();
+  for (const item of value) {
+    const id = readString(item?.id);
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return {
+    duplicateIds: [...counts]
+      .filter(([, count]) => count > 1)
+      .map(([id]) => id)
+      .sort()
+  };
+}
+
 function indexVerificationObligations(value) {
   const byId = new Map();
   const byClaimId = new Map();
@@ -323,8 +663,67 @@ function indexVerificationObligations(value) {
     }
   }
   for (const id of duplicateIds) byId.delete(id);
+  for (const [claimId, obligation] of byClaimId) {
+    if (duplicateIds.has(readString(obligation?.id))) byClaimId.delete(claimId);
+  }
   for (const claimId of duplicateClaimIds) byClaimId.delete(claimId);
-  return { byId, byClaimId };
+  return {
+    byId,
+    byClaimId,
+    duplicateIds: [...duplicateIds].sort(),
+    duplicateClaimIds: [...duplicateClaimIds].sort()
+  };
+}
+
+function indexClaims(value) {
+  const byId = new Map();
+  const duplicateIds = new Set();
+  for (const claim of Array.isArray(value) ? value : []) {
+    const id = readString(claim?.id);
+    if (!id) continue;
+    if (byId.has(id)) duplicateIds.add(id);
+    else byId.set(id, claim);
+  }
+  for (const id of duplicateIds) byId.delete(id);
+  return { byId, duplicateIds: [...duplicateIds].sort() };
+}
+
+function indexAuthorityBindings(value) {
+  const byObligationId = new Map();
+  const conflicts = new Set();
+  for (const binding of Array.isArray(value) ? value : []) {
+    const obligationId = readString(binding?.obligationId);
+    const authorityDecisionDigest = readString(binding?.authorityDecisionDigest);
+    if (!obligationId || !DIGEST_PATTERN.test(authorityDecisionDigest ?? "")) continue;
+    if (byObligationId.has(obligationId)
+      && byObligationId.get(obligationId) !== authorityDecisionDigest) {
+      conflicts.add(obligationId);
+      continue;
+    }
+    byObligationId.set(obligationId, authorityDecisionDigest);
+  }
+  for (const obligationId of conflicts) byObligationId.delete(obligationId);
+  return byObligationId;
+}
+
+function indexTrustedEvidenceBindings(value) {
+  const byEvidenceId = new Map();
+  const conflicts = new Set();
+  for (const binding of value) {
+    const evidenceId = readString(binding?.id);
+    const evidenceDigest = readString(binding?.digest);
+    if (!evidenceId || !DIGEST_PATTERN.test(evidenceDigest ?? "")) continue;
+    if (byEvidenceId.has(evidenceId) && byEvidenceId.get(evidenceId) !== evidenceDigest) {
+      conflicts.add(evidenceId);
+      continue;
+    }
+    byEvidenceId.set(evidenceId, evidenceDigest);
+  }
+  for (const evidenceId of conflicts) byEvidenceId.delete(evidenceId);
+  return {
+    byEvidenceId,
+    conflictingEvidenceIds: [...conflicts].sort()
+  };
 }
 
 function claimHasExactGateRoute(obligations, claimId, gateId, commandId) {
@@ -333,30 +732,12 @@ function claimHasExactGateRoute(obligations, claimId, gateId, commandId) {
     && routeMatchesPair(obligation.mapping.routes, gateId, commandId);
 }
 
-function routeMatchesProvenance(routes, provenance) {
-  return routeMatchesPair(routes, provenance?.gateId, provenance?.commandId);
-}
-
 function routeMatchesPair(routes, gateId, commandId) {
   const exactGateId = readString(gateId);
   const exactCommandId = readString(commandId);
   return Boolean(exactGateId && exactCommandId && Array.isArray(routes)
     && routes.some((route) => readString(route?.gateId) === exactGateId
       && readString(route?.commandId) === exactCommandId));
-}
-
-function sourceRouteMatchesEvidence(mapping, evidence) {
-  const envelopeRefs = new Set(readEvidenceEnvelopeClaimRefs(evidence));
-  const declaredSourceClaimIds = new Set(Array.isArray(mapping?.sourceClaimIds)
-    ? mapping.sourceClaimIds.map(readString).filter(Boolean)
-    : []);
-  return Array.isArray(mapping?.sourceRoutes) && mapping.sourceRoutes.some((route) => {
-    const sourceClaimId = readString(route?.sourceClaimId);
-    return Boolean(sourceClaimId)
-      && declaredSourceClaimIds.has(sourceClaimId)
-      && envelopeRefs.has(sourceClaimId)
-      && routeMatchesPair([route], evidence?.provenance?.gateId, evidence?.provenance?.commandId);
-  });
 }
 
 function readEvidenceEnvelopeClaimRefs(evidence) {
@@ -564,10 +945,10 @@ function shortDigest(value) {
   return canonicalDigest(value).slice("sha256:".length, "sha256:".length + 16);
 }
 
-function domainError(code, message, details) {
+function domainError(code, message, details, statusCode = 422) {
   const error = new Error(message);
   error.code = code;
-  error.statusCode = 422;
+  error.statusCode = statusCode;
   if (details) error.details = details;
   return error;
 }
