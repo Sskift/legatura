@@ -50,6 +50,23 @@ const EVIDENCE_ASSESSMENT_COLLECTION_LIMIT = 256;
 const EVIDENCE_ASSESSMENT_WORK_LIMIT = 32768;
 const ARCHITECTURE_PROFILE_QUERY_FACT_LIMIT = 32768;
 const ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT = 32768;
+const WORKBENCH_ACTION_FACT_LIMIT = 65536;
+const WORKBENCH_PROJECTION_BYTE_LIMIT = 4 * 1024 * 1024;
+
+export const WORKBENCH_DISABLED_REASON_CODES = Object.freeze([
+  "MODULE_NOT_GOVERNED",
+  "CLAIM_ACCEPTANCE_ROUTE_MISSING",
+  "CHANGE_CLAIM_REQUIRED",
+  "CHANGE_NOT_COMPILED",
+  "CHANGE_NOT_EVIDENCE_READY",
+  "CHANGE_SEALED",
+  "GATE_NOT_APPLICABLE",
+  "GATE_COMMAND_NOT_APPLICABLE"
+]);
+
+const WORKBENCH_DISABLED_REASON_PRECEDENCE = new Map(
+  WORKBENCH_DISABLED_REASON_CODES.map((code, index) => [code, index])
+);
 
 export function createKernel({ repoPath, clock, commandRunner } = {}) {
   if (typeof repoPath !== "string" || !repoPath.trim()) {
@@ -137,6 +154,11 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function inspectArchitectureProfile() {
     const snapshot = await inspectChangeQuery();
     return compileArchitectureProfileFromSnapshot(snapshot);
+  }
+
+  async function inspectWorkbenchProjection() {
+    const snapshot = await inspectChangeQuery();
+    return compileWorkbenchProjectionFromSnapshot(snapshot);
   }
 
   async function observeCurrentChangeScope(change, git, currentPlan) {
@@ -668,8 +690,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function executeGate({ change, gate, model, git, observedAt, verificationSubjectDigest: subjectDigest }) {
     const commandResults = [];
     const evidence = [];
-    const selectedCommands = gate.commands.filter((command) => commandAppliesToChange(command, change));
-    const skippedCommandIds = gate.commands
+    const gateCommands = readGateCommands(gate);
+    const selectedCommands = gateCommands.filter((command) => commandAppliesToChange(command, change));
+    const skippedCommandIds = gateCommands
       .filter((command) => !selectedCommands.includes(command))
       .map((command) => command.id);
     if (selectedCommands.length === 0) {
@@ -832,6 +855,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
 
   return {
     inspectProject,
+    inspectWorkbenchProjection: (...args) => (
+      serializeOperation(() => inspectWorkbenchProjection(...args))
+    ),
     inspectArchitectureProfile: (...args) => (
       serializeOperation(() => inspectArchitectureProfile(...args))
     ),
@@ -914,32 +940,29 @@ function summarizeChangeForRead(change, snapshot) {
 }
 
 function compileArchitectureProfileFromSnapshot(snapshot) {
+  return compileArchitectureProfileBundleFromSnapshot(snapshot).profile;
+}
+
+function compileArchitectureProfileBundleFromSnapshot(snapshot) {
   assertArchitectureProfileListBound(
     snapshot.records,
     ARCHITECTURE_PROFILE_LIMITS.changes,
     "changeStore.records"
   );
   preflightArchitectureProfileSnapshotFacts(snapshot.records);
-  const model = publicProjectModel(snapshot.inspection);
-  const { modelClaimRefs } = compileArchitectureProfileModelMembership(model);
   const evidenceWorkBudget = { observed: 0 };
   const preparedFacts = snapshot.records.map((record) => (
     prepareArchitectureProfileChangeFact(record, snapshot, evidenceWorkBudget)
   ));
   const historicalRequirements = collectArchitectureProfileRouteRequirements(preparedFacts);
   const routeQuery = createArchitectureProfileRouteQueryBudget();
-  requireArchitectureProfileDigest(model.digest, "model.digest");
-  const currentRouteProvider = compileArchitectureProfileRouteProvider({
+  const current = prepareCurrentModelRouteProduct(snapshot, routeQuery);
+  const {
     model,
-    claimRefs: modelClaimRefs,
-    budget: routeQuery,
-    location: "model.claimGateRoutes"
-  });
-  const currentClaimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
-    model,
-    routeQuery,
-    "model.claimDescriptors"
-  );
+    modelClaimRefs,
+    currentRouteProvider,
+    currentClaimDescriptors
+  } = current;
   const historicalProviders = compileArchitectureProfileHistoricalProviders(
     historicalRequirements,
     routeQuery
@@ -972,7 +995,7 @@ function compileArchitectureProfileFromSnapshot(snapshot) {
     }
     changeFacts.push(fact);
   }
-  return compileArchitectureProfile(
+  const profile = compileArchitectureProfile(
     {
       model,
       source: {
@@ -984,6 +1007,1038 @@ function compileArchitectureProfileFromSnapshot(snapshot) {
       changeFacts
     },
     { claimGateRouteIndex: currentRouteProvider.token }
+  );
+  return {
+    profile,
+    model,
+    modelClaimRefs,
+    currentClaimDescriptors,
+    currentRouteProvider,
+    historicalProviders
+  };
+}
+
+function compileWorkbenchProjectionFromSnapshot(snapshot) {
+  assertArchitectureProfileListBound(
+    snapshot.records,
+    ARCHITECTURE_PROFILE_LIMITS.changes,
+    "changeStore.records"
+  );
+  assertValidProject(snapshot.inspection);
+  const budget = { observed: 0 };
+  const routeQuery = createArchitectureProfileRouteQueryBudget();
+  const current = prepareCurrentModelRouteProduct(snapshot, routeQuery);
+  const currentAcceptanceGateScopeIndex = compileWorkbenchAcceptanceGateScopeIndex(
+    current.model,
+    budget
+  );
+  const historicalRequirements = new Map();
+  collectWorkbenchHistoricalRouteRequirements(snapshot.records, historicalRequirements, budget);
+  const historicalProviders = compileArchitectureProfileHistoricalProviders(
+    historicalRequirements,
+    routeQuery,
+    { includeClaimDescriptors: false }
+  );
+  const historicalAcceptanceGateScopeIndices = new Map(
+    [...historicalRequirements.values()].map((requirement) => [
+      requirement.baselineDigest,
+      compileWorkbenchAcceptanceGateScopeIndex(requirement.baseline, budget)
+    ])
+  );
+  const bundle = {
+    ...current,
+    currentAcceptanceGateScopeIndex,
+    historicalProviders,
+    historicalAcceptanceGateScopeIndices
+  };
+  const content = {
+    schemaVersion: 1,
+    source: {
+      snapshotDigest: snapshot.digest,
+      projectModelDigest: snapshot.inspection.digest,
+      gitContentDigest: snapshot.inspection.git.contentDigest,
+      changeStoreDigest: snapshot.changeStoreDigest
+    },
+    authoring: {
+      modules: compileWorkbenchAuthoringModules(bundle, budget)
+    },
+    changes: snapshot.records
+      .map((record) => compileWorkbenchChangeActions(record, snapshot, bundle, budget))
+      .sort((left, right) => left.id.localeCompare(right.id))
+  };
+  const result = { ...content, projectionDigest: canonicalDigest(content) };
+  const observedBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+  if (observedBytes > WORKBENCH_PROJECTION_BYTE_LIMIT) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_LIMIT_EXCEEDED",
+      "Workbench semantic projection exceeded its bounded output limit.",
+      413,
+      { dimension: "bytes", limit: WORKBENCH_PROJECTION_BYTE_LIMIT, observed: observedBytes }
+    );
+  }
+  return cloneJson(result);
+}
+
+function prepareCurrentModelRouteProduct(snapshot, routeQuery) {
+  const model = publicProjectModel(snapshot.inspection);
+  const { modelClaimRefs } = compileArchitectureProfileModelMembership(model);
+  requireArchitectureProfileDigest(model.digest, "model.digest");
+  const currentRouteProvider = compileArchitectureProfileRouteProvider({
+    model,
+    claimRefs: modelClaimRefs,
+    budget: routeQuery,
+    location: "model.claimGateRoutes"
+  });
+  const currentClaimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
+    model,
+    routeQuery,
+    "model.claimDescriptors"
+  );
+  return { model, modelClaimRefs, currentRouteProvider, currentClaimDescriptors };
+}
+
+function compileWorkbenchAuthoringModules(bundle, budget) {
+  const {
+    model,
+    currentClaimDescriptors,
+    currentRouteProvider,
+    currentAcceptanceGateScopeIndex
+  } = bundle;
+  const contractIndex = new Map(
+    (Array.isArray(model.contracts) ? model.contracts : [])
+      .map((contract) => [readModelReference(contract), contract])
+      .filter(([contractRef]) => Boolean(contractRef))
+  );
+  const modules = [];
+  for (const module of [...(Array.isArray(model.modules) ? model.modules : [])]
+    .sort((left, right) => (readString(left?.id) ?? "").localeCompare(readString(right?.id) ?? ""))) {
+    consumeWorkbenchProjectionFact(budget);
+    const moduleRef = requireWorkbenchReference(module?.id, "authoring.module.id");
+    const visibleContracts = new Map();
+    for (const contractRef of normalizeReferenceList(module?.publicContracts)) {
+      addWorkbenchContractVisibility(visibleContracts, contractRef, "owned");
+    }
+    for (const dependency of Array.isArray(module?.dependencies) ? module.dependencies : []) {
+      const contractRef = readModelReference(
+        dependency?.via ?? dependency?.contract ?? dependency?.contractId
+      );
+      if (contractRef) addWorkbenchContractVisibility(visibleContracts, contractRef, "dependency");
+    }
+
+    const claimOptions = new Map();
+    for (const [contractRef, visibilityKinds] of [...visibleContracts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))) {
+      const contract = contractIndex.get(contractRef);
+      if (!contract) {
+        throw kernelError(
+          "WORKBENCH_PROJECTION_FACT_INVALID",
+          `Workbench authoring Contract ${contractRef} is not present in the stabilized Project Model.`,
+          422,
+          { moduleRef, contractRef }
+        );
+      }
+      for (const claim of Array.isArray(contract?.claims) ? contract.claims : []) {
+        consumeWorkbenchProjectionFact(budget);
+        const claimRef = requireWorkbenchReference(claim?.id, `authoring.module.${moduleRef}.claim.id`);
+        const descriptor = currentClaimDescriptors.get(claimRef);
+        if (!descriptor || descriptor.contractRef !== contractRef) {
+          throw kernelError(
+            "WORKBENCH_PROJECTION_FACT_INVALID",
+            `Workbench Claim ${claimRef} does not resolve to its authoritative Contract.`,
+            422,
+            { moduleRef, contractRef, claimRef }
+          );
+        }
+        const existing = claimOptions.get(claimRef);
+        if (existing && existing.contractRef !== contractRef) {
+          throw kernelError(
+            "WORKBENCH_PROJECTION_FACT_INVALID",
+            `Workbench Claim ${claimRef} resolves through multiple Contracts.`,
+            422,
+            { moduleRef, claimRef }
+          );
+        }
+        const routeOptions = compileWorkbenchAcceptanceRouteOptions({
+          claimRef,
+          moduleRef,
+          gateScopeIndex: currentAcceptanceGateScopeIndex,
+          routeProvider: currentRouteProvider,
+          budget
+        });
+        const disabledReasonCodes = compileWorkbenchDisabledReasons([
+          ...(module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]),
+          ...(routeOptions.length > 0 ? [] : ["CLAIM_ACCEPTANCE_ROUTE_MISSING"])
+        ]);
+        claimOptions.set(claimRef, {
+          id: claimRef,
+          statement: descriptor.statement,
+          contractRef,
+          visibilityKinds: [...new Set([
+            ...(existing?.visibilityKinds ?? []),
+            ...visibilityKinds
+          ])].sort(),
+          selectable: disabledReasonCodes.length === 0,
+          disabledReasonCodes,
+          acceptanceRoutes: routeOptions
+        });
+      }
+    }
+    const disabledReasonCodes = compileWorkbenchDisabledReasons(
+      module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]
+    );
+    modules.push({
+      id: moduleRef,
+      name: readString(module?.name) ?? moduleRef,
+      governanceStatus: readString(module?.status) ?? "unknown",
+      selectable: disabledReasonCodes.length === 0,
+      disabledReasonCodes,
+      claims: [...claimOptions.values()].sort((left, right) => left.id.localeCompare(right.id))
+    });
+  }
+  return modules;
+}
+
+function addWorkbenchContractVisibility(index, contractRef, visibilityKind) {
+  if (!readString(contractRef)) return;
+  if (!index.has(contractRef)) index.set(contractRef, new Set());
+  index.get(contractRef).add(visibilityKind);
+}
+
+function compileWorkbenchAcceptanceGateScopeIndex(model, budget) {
+  const globalGateIds = new Set();
+  const gateIdsByModule = new Map();
+  for (const gate of Array.isArray(model?.gates) ? model.gates : []) {
+    consumeWorkbenchProjectionFact(budget);
+    const gateId = requireWorkbenchReference(gate?.id, "workbench.acceptanceGate.id");
+    const appliesTo = normalizeStringList(gate?.appliesTo);
+    consumeWorkbenchProjectionFact(budget, appliesTo.length);
+    if (appliesTo.length === 0) {
+      globalGateIds.add(gateId);
+      continue;
+    }
+    for (const rawModuleRef of appliesTo) {
+      const moduleRef = readString(rawModuleRef);
+      if (!moduleRef) continue;
+      if (!gateIdsByModule.has(moduleRef)) gateIdsByModule.set(moduleRef, new Set());
+      gateIdsByModule.get(moduleRef).add(gateId);
+    }
+  }
+  return { globalGateIds, gateIdsByModule };
+}
+
+function workbenchAcceptanceGateSelectsModule(index, gateId, moduleRef) {
+  return index?.globalGateIds.has(gateId)
+    || index?.gateIdsByModule.get(moduleRef)?.has(gateId)
+    || false;
+}
+
+function compileWorkbenchAcceptanceRouteOptions({
+  claimRef,
+  moduleRef,
+  gateScopeIndex,
+  routeProvider,
+  budget
+}) {
+  return selectWorkbenchAcceptanceRoutes({
+    claimRef,
+    moduleRef,
+    gateScopeIndex,
+    routeProvider,
+    budget
+  }).map(({ gateId, commandId, routeDigest }) => ({
+    gateId,
+    commandId,
+    routeRef: `route-${canonicalDigest({
+      claimRef,
+      gateRef: gateId,
+      commandRef: commandId
+    }).slice(7)}`,
+    routeDigest
+  }));
+}
+
+function selectWorkbenchAcceptanceRoutes({
+  claimRef,
+  moduleRef,
+  gateScopeIndex,
+  routeProvider,
+  budget
+}) {
+  const selected = [];
+  for (const route of routeProvider.routesByClaim.get(claimRef) ?? []) {
+    consumeWorkbenchProjectionFact(budget);
+    const gateId = readString(route?.gateId);
+    const commandId = readString(route?.commandId);
+    const effectiveModuleRefs = Array.isArray(route?.effectiveModuleRefs)
+      ? route.effectiveModuleRefs
+      : [];
+    consumeWorkbenchProjectionFact(budget, effectiveModuleRefs.length);
+    if (!gateId || !commandId
+      || !workbenchAcceptanceGateSelectsModule(gateScopeIndex, gateId, moduleRef)
+      || !effectiveModuleRefs.includes(moduleRef)) continue;
+    const routeDigest = routeProvider.routeDigests.get(
+      architectureProfileRouteKey(claimRef, gateId, commandId)
+    );
+    if (!isCanonicalDigest(routeDigest)) {
+      throw kernelError(
+        "WORKBENCH_PROJECTION_FACT_INVALID",
+        "Workbench authoring route is missing its compiler-owned semantic digest.",
+        422,
+        { claimRef, moduleRef, gateId, commandId }
+      );
+    }
+    selected.push({ gateId, commandId, routeDigest });
+  }
+  return uniqueWorkbenchRoutes(selected);
+}
+
+function compileWorkbenchChangeActions(record, snapshot, bundle, budget) {
+  consumeWorkbenchProjectionFact(budget, 2);
+  const id = requireWorkbenchReference(record?.id, "changes.id");
+  const governanceBaseline = readGovernanceBaseline(record);
+  const baselineDigest = requireArchitectureProfileDigest(
+    governanceBaseline.digest,
+    `workbench.change.${id}.governanceBaseline.digest`
+  );
+  const historicalProvider = bundle.historicalProviders.get(baselineDigest);
+  const acceptanceGateScopeIndex = bundle.historicalAcceptanceGateScopeIndices.get(baselineDigest);
+  const seal = inspectHistoricalSeal(record);
+  assertWorkbenchVerificationPlanValid({
+    record,
+    governanceBaseline,
+    provider: historicalProvider,
+    acceptanceGateScopeIndex,
+    seal,
+    budget
+  });
+  const annotations = compileWorkbenchVerificationPlanAnnotations({
+    record,
+    provider: historicalProvider,
+    budget
+  });
+  const annotationsByGate = indexWorkbenchAnnotationsByGate(annotations, budget);
+  const primaryModuleKnown = (Array.isArray(governanceBaseline.modules)
+    ? governanceBaseline.modules
+    : []).some((module) => readString(module?.id) === readString(record?.primaryModule));
+  const compileReasons = compileWorkbenchDisabledReasons([
+    ...(primaryModuleKnown ? [] : ["MODULE_NOT_GOVERNED"]),
+    ...(Array.isArray(record?.claims) && record.claims.length > 0
+      ? []
+      : ["CHANGE_CLAIM_REQUIRED"]),
+    ...(record?.acceptance || ["Accepted", "Integrated"].includes(record?.state)
+      ? ["CHANGE_SEALED"]
+      : [])
+  ]);
+  const acceptReasons = compileWorkbenchDisabledReasons([
+    ...(Array.isArray(record?.claims) && record.claims.length > 0
+      ? []
+      : ["CHANGE_CLAIM_REQUIRED"]),
+    ...(record?.compilation ? [] : ["CHANGE_NOT_COMPILED"]),
+    ...(workbenchChangeIsEvidenceReady(record, snapshot.inspection)
+      ? []
+      : ["CHANGE_NOT_EVIDENCE_READY"]),
+    ...(record?.acceptance || ["Accepted", "Integrated"].includes(record?.state)
+      ? ["CHANGE_SEALED"]
+      : [])
+  ]);
+  const currentApplicability = inspectCurrentApplicability(record, snapshot.inspection, seal);
+  const gates = [...(Array.isArray(governanceBaseline.gates) ? governanceBaseline.gates : [])]
+    .sort((left, right) => (readString(left?.id) ?? "").localeCompare(readString(right?.id) ?? ""))
+    .map((gate) => compileWorkbenchGateAction({
+      record,
+      governanceBaseline,
+      gate,
+      annotationsByGate,
+      seal,
+      currentApplicability,
+      budget
+    }));
+  return {
+    id,
+    state: readString(record?.state) ?? "unknown",
+    primaryModule: readString(record?.primaryModule) ?? null,
+    governanceBaselineDigest: baselineDigest,
+    actions: {
+      compile: workbenchAction("compile", compileReasons),
+      gates,
+      accept: workbenchAction("accept", acceptReasons)
+    }
+  };
+}
+
+function compileWorkbenchGateAction({
+  record,
+  governanceBaseline,
+  gate,
+  annotationsByGate,
+  seal,
+  currentApplicability,
+  budget
+}) {
+  consumeWorkbenchProjectionFact(budget);
+  const gateId = requireWorkbenchReference(gate?.id, `change.${record?.id}.gate.id`);
+  consumeWorkbenchProjectionFact(
+    budget,
+    Array.isArray(gate?.appliesTo) ? gate.appliesTo.length : gate?.appliesTo == null ? 0 : 1
+  );
+  const commands = readGateCommands(gate);
+  const selectedCommandIds = [];
+  const skippedCommandIds = [];
+  for (const command of commands) {
+    consumeWorkbenchProjectionFact(budget);
+    consumeWorkbenchProjectionFact(
+      budget,
+      Array.isArray(command?.appliesTo)
+        ? command.appliesTo.length
+        : command?.appliesTo == null ? 0 : 1
+    );
+    const commandId = requireWorkbenchReference(
+      command?.id,
+      `change.${record?.id}.gate.${gateId}.command.id`
+    );
+    (commandAppliesToChange(command, record)
+      ? selectedCommandIds
+      : skippedCommandIds).push(commandId);
+  }
+  selectedCommandIds.sort();
+  skippedCommandIds.sort();
+  const gateApplicable = gateAppliesToChange(gate, governanceBaseline, record);
+  const reasons = compileWorkbenchDisabledReasons([
+    ...(Array.isArray(record?.claims) && record.claims.length > 0
+      ? []
+      : ["CHANGE_CLAIM_REQUIRED"]),
+    ...(record?.compilation ? [] : ["CHANGE_NOT_COMPILED"]),
+    ...(workbenchGateIsSealed(record, gateId, seal, currentApplicability)
+      ? ["CHANGE_SEALED"]
+      : []),
+    ...(gateApplicable ? [] : ["GATE_NOT_APPLICABLE"]),
+    ...(selectedCommandIds.length > 0 ? [] : ["GATE_COMMAND_NOT_APPLICABLE"])
+  ]);
+  return {
+    kind: "gate",
+    gateId,
+    name: readString(gate?.name) ?? gateId,
+    enabled: reasons.length === 0,
+    disabledReasonCodes: reasons,
+    selectedCommandIds,
+    skippedCommandIds,
+    claimRouteAnnotations: annotationsByGate.get(gateId) ?? []
+  };
+}
+
+function indexWorkbenchAnnotationsByGate(annotations, budget) {
+  const index = new Map();
+  for (const annotation of annotations) {
+    consumeWorkbenchProjectionFact(budget);
+    if (!index.has(annotation.gateId)) index.set(annotation.gateId, []);
+    index.get(annotation.gateId).push(annotation);
+  }
+  return index;
+}
+
+function assertWorkbenchVerificationPlanValid({
+  record,
+  governanceBaseline,
+  provider,
+  acceptanceGateScopeIndex,
+  seal,
+  budget
+}) {
+  const changeId = readString(record?.id) ?? "unknown";
+  const plan = record?.verificationPlan;
+  if (!record?.compilation) {
+    if (plan === undefined || plan === null) return;
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "An uncompiled Change cannot carry a Verification Plan."
+    );
+  }
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "A compiled Change requires an object-shaped Verification Plan."
+    );
+  }
+
+  const primaryModule = readString(record?.primaryModule);
+  if (!primaryModule
+    || record.compilation.governanceBaselineDigest !== governanceBaseline.digest
+    || readString(record.compilation.primaryModule) !== primaryModule) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "Change compilation is not bound to its frozen Governance Baseline and primary Module."
+    );
+  }
+
+  const claims = readWorkbenchVerificationPlanArray(record?.claims, changeId, "claims");
+  const verificationObligations = readWorkbenchVerificationPlanArray(
+    record?.verificationObligations,
+    changeId,
+    "verificationObligations"
+  );
+  const planObligations = readWorkbenchVerificationPlanArray(
+    plan.obligations,
+    changeId,
+    "verificationPlan.obligations"
+  );
+  consumeWorkbenchProjectionFact(
+    budget,
+    claims.length + verificationObligations.length + planObligations.length
+  );
+  const claimIds = readUniqueWorkbenchPlanIds(claims, "id", changeId, "claims");
+  const verificationObligationIds = readUniqueWorkbenchPlanIds(
+    verificationObligations,
+    "id",
+    changeId,
+    "verificationObligations"
+  );
+  const verificationObligationClaimIds = readUniqueWorkbenchPlanIds(
+    verificationObligations,
+    "claimId",
+    changeId,
+    "verificationObligations.claimIds"
+  );
+  readUniqueWorkbenchPlanIds(
+    planObligations,
+    "id",
+    changeId,
+    "verificationPlan.obligations"
+  );
+  readUniqueWorkbenchPlanIds(
+    planObligations,
+    "claimId",
+    changeId,
+    "verificationPlan.obligations.claimIds"
+  );
+  if (verificationObligationIds.length !== claimIds.length
+    || canonicalDigest([...verificationObligationClaimIds].sort())
+      !== canonicalDigest([...claimIds].sort())) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "Verification Obligations must cover every Change Claim exactly once."
+    );
+  }
+
+  const policy = governanceBaseline.projectDocument?.changePolicy ?? {};
+  const defaultGateId = readString(policy.defaultGate);
+  const acceptanceGateIds = uniqueStrings([
+    "project-model",
+    ...(defaultGateId
+      ? [defaultGateId]
+      : (Array.isArray(governanceBaseline.gates) ? governanceBaseline.gates : [])
+          .filter((gate) => gate?.required === true)
+          .map((gate) => readString(gate?.id))
+          .filter(Boolean))
+  ]);
+  const fullGateId = readString(policy.fullGate);
+  const fullGateBefore = normalizeStringList(policy.fullGateBefore)
+    .map((value) => value.toLowerCase());
+  const integrationGateIds = fullGateId && fullGateBefore.includes("integrated")
+    ? [fullGateId]
+    : [];
+  const expectedObligations = verificationObligations.map((obligation) => ({
+    id: obligation.id,
+    claimId: obligation.claimId,
+    required: obligation.required,
+    mapping: cloneJson(obligation.mapping)
+  }));
+  const expectedPlan = {
+    schemaVersion: 1,
+    primaryModule,
+    defaultGateId: defaultGateId ?? null,
+    acceptanceGateIds,
+    integrationGateIds,
+    obligations: expectedObligations
+  };
+  if (canonicalDigest(plan) !== canonicalDigest(expectedPlan)) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "Verification Plan fields do not match their compiler-owned frozen-baseline projection."
+    );
+  }
+
+  const verificationObligationsById = new Map(
+    verificationObligations.map((obligation) => [obligation.id, obligation])
+  );
+  for (const obligation of planObligations) {
+    consumeWorkbenchProjectionFact(budget);
+    assertWorkbenchVerificationMappingValid({
+      changeId,
+      obligation,
+      verificationObligation: verificationObligationsById.get(obligation.id),
+      primaryModule,
+      provider,
+      acceptanceGateScopeIndex,
+      record,
+      seal,
+      budget
+    });
+  }
+}
+
+function assertWorkbenchVerificationMappingValid({
+  changeId,
+  obligation,
+  verificationObligation,
+  primaryModule,
+  provider,
+  acceptanceGateScopeIndex,
+  record,
+  seal,
+  budget
+}) {
+  const claimRef = readString(obligation?.claimId);
+  const mapping = obligation?.mapping;
+  if (!claimRef || !mapping || typeof mapping !== "object" || Array.isArray(mapping)) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      "Every Verification Plan Obligation requires an exact Claim and mapping."
+    );
+  }
+  const builtinMappingRequired = claimRef === "project-model-self-consistent";
+  if (builtinMappingRequired !== (mapping.kind === "builtin-oracle")) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification mapping ${obligation.id} does not preserve builtin Oracle ownership.`
+    );
+  }
+  if (mapping.kind === "builtin-oracle") {
+    assertWorkbenchVerificationMappingKeys(
+      mapping,
+      ["status", "kind", "sourceIds"],
+      changeId,
+      obligation.id
+    );
+    if (mapping.status !== "mapped"
+      || canonicalDigest(mapping.sourceIds) !== canonicalDigest(["project-model"])) {
+      throwWorkbenchVerificationPlanInvalid(changeId, "Builtin Oracle mapping is not canonical.");
+    }
+    return;
+  }
+  if (mapping.kind === "exact-contract-claim" && !Array.isArray(mapping.routes)) {
+    assertWorkbenchVerificationMappingKeys(
+      mapping,
+      ["status", "kind", "gateIds"],
+      changeId,
+      obligation.id
+    );
+    if (mapping.status === "mapped" && workbenchLegacyPlanIsPackageBound(record, seal)) {
+      const legacyGateIds = readExactWorkbenchPlanStringList(
+        mapping.gateIds,
+        changeId,
+        `verificationPlan.obligation.${obligation.id}.mapping.gateIds`,
+        { nonempty: true }
+      );
+      consumeWorkbenchProjectionFact(budget, legacyGateIds.length);
+      return;
+    }
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Exact Claim mapping ${obligation.id} is missing its canonical routes.`
+    );
+  }
+  if (!provider || !acceptanceGateScopeIndex) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification mapping ${obligation.id} has no complete frozen route context.`
+    );
+  }
+  const targetAcceptanceRoutes = selectWorkbenchAcceptanceRoutes({
+    claimRef,
+    moduleRef: primaryModule,
+    gateScopeIndex: acceptanceGateScopeIndex,
+    routeProvider: provider,
+    budget
+  });
+  const declaredSourceClaimIds = normalizeStringList(
+    verificationObligation?.gateClaimRefs
+      ?? verificationObligation?.evidenceSourceRefs
+      ?? verificationObligation?.supportedBy
+  ).filter((sourceClaimRef) => sourceClaimRef !== claimRef);
+  const expectedMappingKind = targetAcceptanceRoutes.length > 0
+    ? "exact-contract-claim"
+    : declaredSourceClaimIds.length > 0 && hasCrossMappingSemantics(verificationObligation)
+      ? "cross-claim"
+      : "unmapped";
+  if (mapping.kind !== expectedMappingKind) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification mapping ${obligation.id} is ${mapping.kind}, expected ${expectedMappingKind}.`
+    );
+  }
+  if (mapping.kind === "exact-contract-claim") {
+    assertWorkbenchVerificationMappingKeys(
+      mapping,
+      ["status", "kind", "gateIds", "routes"],
+      changeId,
+      obligation.id
+    );
+    if (mapping.status !== "mapped" || !provider) {
+      throwWorkbenchVerificationPlanInvalid(changeId, "Exact Claim mapping has no frozen route Provider.");
+    }
+    const expectedRoutes = targetAcceptanceRoutes
+      .map(({ gateId, commandId }) => ({ gateId, commandId }));
+    const observedRoutes = readWorkbenchVerificationPlanArray(
+      mapping.routes,
+      changeId,
+      `verificationPlan.obligation.${obligation.id}.mapping.routes`
+    );
+    consumeWorkbenchProjectionFact(budget, observedRoutes.length);
+    const expectedGateIds = uniqueStrings(expectedRoutes.map((route) => route.gateId));
+    if (expectedRoutes.length === 0
+      || canonicalDigest(observedRoutes) !== canonicalDigest(expectedRoutes)
+      || canonicalDigest(mapping.gateIds) !== canonicalDigest(expectedGateIds)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Exact Claim mapping ${obligation.id} does not contain its complete canonical acceptance routes.`
+      );
+    }
+    return;
+  }
+  if (mapping.kind === "cross-claim") {
+    assertWorkbenchVerificationMappingKeys(
+      mapping,
+      ["status", "kind", "sourceClaimIds", "sourceRoutes", "requiredApproval"],
+      changeId,
+      obligation.id
+    );
+    if (mapping.status !== "pending-authority") {
+      throwWorkbenchVerificationPlanInvalid(changeId, "Cross-Claim mapping status is not canonical.");
+    }
+    const sourceClaimIds = readExactWorkbenchPlanStringList(
+      mapping.sourceClaimIds,
+      changeId,
+      `verificationPlan.obligation.${obligation.id}.mapping.sourceClaimIds`,
+      { nonempty: true }
+    );
+    consumeWorkbenchProjectionFact(budget, sourceClaimIds.length);
+    if (canonicalDigest(sourceClaimIds) !== canonicalDigest(declaredSourceClaimIds)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Cross-Claim mapping ${obligation.id} source Claims are not compiler-derived.`
+      );
+    }
+    if (sourceClaimIds.includes(claimRef)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Cross-Claim mapping ${obligation.id} cannot name its target as a source.`
+      );
+    }
+    const expectedSourceRoutes = sourceClaimIds.flatMap((sourceClaimId) => (
+      selectWorkbenchAcceptanceRoutes({
+        claimRef: sourceClaimId,
+        moduleRef: primaryModule,
+        gateScopeIndex: acceptanceGateScopeIndex,
+        routeProvider: provider,
+        budget
+      }).map(({ gateId, commandId }) => ({ sourceClaimId, gateId, commandId }))
+    )).sort((left, right) => (
+      left.sourceClaimId.localeCompare(right.sourceClaimId)
+        || left.gateId.localeCompare(right.gateId)
+        || left.commandId.localeCompare(right.commandId)
+    ));
+    const observedSourceRoutes = readWorkbenchVerificationPlanArray(
+      mapping.sourceRoutes,
+      changeId,
+      `verificationPlan.obligation.${obligation.id}.mapping.sourceRoutes`
+    );
+    consumeWorkbenchProjectionFact(budget, observedSourceRoutes.length);
+    if (canonicalDigest(observedSourceRoutes) !== canonicalDigest(expectedSourceRoutes)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Cross-Claim mapping ${obligation.id} does not contain its complete canonical source routes.`
+      );
+    }
+    if (readString(mapping.requiredApproval)
+      !== `approvedObligationIds must include ${obligation.id}`) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Cross-Claim mapping ${obligation.id} has a non-canonical approval requirement.`
+      );
+    }
+    return;
+  }
+  if (mapping.kind === "unmapped") {
+    assertWorkbenchVerificationMappingKeys(
+      mapping,
+      ["status", "kind", "reason"],
+      changeId,
+      obligation.id
+    );
+    if (mapping.status !== "unmapped"
+      || Object.hasOwn(mapping, "routes")
+      || Object.hasOwn(mapping, "sourceRoutes")) {
+      throwWorkbenchVerificationPlanInvalid(changeId, "Unmapped Claim mapping contains route facts.");
+    }
+    const expectedReason = declaredSourceClaimIds.length > 0
+      ? "Cross-Claim mappings require mappingRationale, applicability, and discriminatoryPower."
+      : "No exact Contract Claim Gate mapping is declared; independent Evidence is required.";
+    if (mapping.reason !== expectedReason) {
+      throwWorkbenchVerificationPlanInvalid(changeId, `Unmapped Claim ${claimRef} reason is not canonical.`);
+    }
+    return;
+  }
+  throwWorkbenchVerificationPlanInvalid(
+    changeId,
+    `Unsupported Verification Plan mapping kind: ${readString(mapping.kind) ?? "missing"}.`
+  );
+}
+
+function assertWorkbenchVerificationMappingKeys(mapping, expectedKeys, changeId, obligationId) {
+  if (canonicalDigest(Object.keys(mapping).sort()) !== canonicalDigest([...expectedKeys].sort())) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification Plan mapping ${obligationId} does not have its exact compiler-owned shape.`
+    );
+  }
+}
+
+function workbenchLegacyPlanIsPackageBound(record, seal) {
+  const sealedPackage = record?.acceptance?.package;
+  return seal?.packageIntact === true
+    && Boolean(sealedPackage)
+    && canonicalDigest(record?.verificationPlan) === canonicalDigest(sealedPackage.verificationPlan)
+    && canonicalDigest(record?.verificationObligations)
+      === canonicalDigest(sealedPackage.verificationObligations);
+}
+
+function readWorkbenchVerificationPlanArray(value, changeId, location) {
+  if (!Array.isArray(value) || value.length > ARCHITECTURE_PROFILE_LIMITS.refsPerFact) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification Plan ${location} must be a bounded array.`,
+      {
+        location,
+        limit: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+        observed: Array.isArray(value) ? value.length : null
+      }
+    );
+  }
+  return value;
+}
+
+function readUniqueWorkbenchPlanIds(values, field, changeId, location) {
+  const ids = [];
+  const seen = new Set();
+  for (const value of values) {
+    const rawId = value?.[field];
+    const id = readString(rawId);
+    if (typeof rawId !== "string" || id !== rawId || seen.has(id)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Verification Plan ${location} requires unique exact ${field} values.`
+      );
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+function readExactWorkbenchPlanStringList(value, changeId, location, { nonempty = false } = {}) {
+  const values = readWorkbenchVerificationPlanArray(value, changeId, location);
+  const seen = new Set();
+  for (const raw of values) {
+    const exact = readString(raw);
+    if (typeof raw !== "string" || exact !== raw || seen.has(exact)) {
+      throwWorkbenchVerificationPlanInvalid(
+        changeId,
+        `Verification Plan ${location} requires unique exact string references.`
+      );
+    }
+    seen.add(exact);
+  }
+  if (nonempty && seen.size === 0) {
+    throwWorkbenchVerificationPlanInvalid(
+      changeId,
+      `Verification Plan ${location} cannot be empty.`
+    );
+  }
+  return [...seen];
+}
+
+function throwWorkbenchVerificationPlanInvalid(changeId, message, details = {}) {
+  throw kernelError(
+    "WORKBENCH_VERIFICATION_PLAN_INVALID",
+    message,
+    422,
+    { changeId, ...details }
+  );
+}
+
+function compileWorkbenchVerificationPlanAnnotations({ record, provider, budget }) {
+  const annotations = [];
+  const obligations = Array.isArray(record?.verificationPlan?.obligations)
+    ? record.verificationPlan.obligations
+    : [];
+  for (const obligation of obligations) {
+    const obligationRef = readString(obligation?.id);
+    const targetClaimRef = readString(obligation?.claimId);
+    if (!obligationRef || !targetClaimRef) continue;
+    const mapping = obligation?.mapping;
+    if (mapping?.kind === "exact-contract-claim") {
+      for (const route of Array.isArray(mapping?.routes) ? mapping.routes : []) {
+        annotations.push(compileWorkbenchPlanRouteAnnotation({
+          obligationRef,
+          targetClaimRef,
+          sourceClaimRef: targetClaimRef,
+          mappingKind: mapping.kind,
+          route,
+          provider,
+          budget
+        }));
+      }
+    }
+    if (mapping?.kind === "cross-claim") {
+      for (const route of Array.isArray(mapping?.sourceRoutes) ? mapping.sourceRoutes : []) {
+        annotations.push(compileWorkbenchPlanRouteAnnotation({
+          obligationRef,
+          targetClaimRef,
+          sourceClaimRef: readString(route?.sourceClaimId),
+          mappingKind: mapping.kind,
+          route,
+          provider,
+          budget
+        }));
+      }
+    }
+  }
+  const indexed = new Map();
+  for (const annotation of annotations) {
+    const key = [
+      annotation.obligationRef,
+      annotation.targetClaimRef,
+      annotation.sourceClaimRef,
+      annotation.gateId,
+      annotation.commandId
+    ].join("\u0000");
+    indexed.set(key, annotation);
+  }
+  return [...indexed.values()].sort((left, right) => (
+    left.gateId.localeCompare(right.gateId)
+      || left.commandId.localeCompare(right.commandId)
+      || left.targetClaimRef.localeCompare(right.targetClaimRef)
+      || left.sourceClaimRef.localeCompare(right.sourceClaimRef)
+      || left.obligationRef.localeCompare(right.obligationRef)
+  ));
+}
+
+function compileWorkbenchPlanRouteAnnotation({
+  obligationRef,
+  targetClaimRef,
+  sourceClaimRef,
+  mappingKind,
+  route,
+  provider,
+  budget
+}) {
+  consumeWorkbenchProjectionFact(budget);
+  const gateId = readString(route?.gateId);
+  const commandId = readString(route?.commandId);
+  if (!sourceClaimRef || !gateId || !commandId || !provider) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench verification route annotation is incomplete or has no verified frozen Provider.",
+      422,
+      { obligationRef, targetClaimRef, sourceClaimRef: sourceClaimRef ?? null, gateId, commandId }
+    );
+  }
+  const routeDigest = provider.routeDigests.get(
+    architectureProfileRouteKey(sourceClaimRef, gateId, commandId)
+  );
+  if (!isCanonicalDigest(routeDigest)) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench verification route annotation is not present in its verified frozen Governance Baseline.",
+      422,
+      { obligationRef, targetClaimRef, sourceClaimRef, gateId, commandId }
+    );
+  }
+  return {
+    obligationRef,
+    targetClaimRef,
+    sourceClaimRef,
+    mappingKind,
+    gateId,
+    commandId,
+    routeDigest
+  };
+}
+
+function workbenchChangeIsEvidenceReady(record, inspection) {
+  if (!record?.compilation) return false;
+  try {
+    return readReadiness(projectChangeOntoInspection(record, inspection), inspection).evidenceReady === true;
+  } catch {
+    return false;
+  }
+}
+
+function workbenchGateIsSealed(record, gateId, seal, currentApplicability) {
+  if (record?.state === "Integrated") return true;
+  if (!record?.acceptance && record?.state !== "Accepted") return false;
+  if (record?.state !== "Accepted"
+    || !seal?.intact
+    || currentApplicability?.status !== "current") return true;
+  return !normalizeStringList(record?.verificationPlan?.integrationGateIds).includes(gateId);
+}
+
+function workbenchAction(kind, disabledReasonCodes) {
+  return {
+    kind,
+    enabled: disabledReasonCodes.length === 0,
+    disabledReasonCodes
+  };
+}
+
+function compileWorkbenchDisabledReasons(values) {
+  const reasons = [...new Set(values)];
+  for (const reason of reasons) {
+    if (!WORKBENCH_DISABLED_REASON_PRECEDENCE.has(reason)) {
+      throw kernelError(
+        "WORKBENCH_DISABLED_REASON_INVALID",
+        `Unknown Workbench disabled-reason code: ${reason}.`,
+        500
+      );
+    }
+  }
+  return reasons.sort((left, right) => (
+    WORKBENCH_DISABLED_REASON_PRECEDENCE.get(left)
+      - WORKBENCH_DISABLED_REASON_PRECEDENCE.get(right)
+  ));
+}
+
+function uniqueWorkbenchRoutes(routes) {
+  const indexed = new Map();
+  for (const route of routes) {
+    indexed.set(`${route.gateId}\u0000${route.commandId}`, route);
+  }
+  return [...indexed.values()].sort((left, right) => (
+    left.gateId.localeCompare(right.gateId)
+      || left.commandId.localeCompare(right.commandId)
+  ));
+}
+
+function consumeWorkbenchProjectionFact(budget, units = 1) {
+  budget.observed += units;
+  if (budget.observed > WORKBENCH_ACTION_FACT_LIMIT) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_LIMIT_EXCEEDED",
+      "Workbench semantic projection exceeded its bounded fact limit.",
+      413,
+      { dimension: "facts", limit: WORKBENCH_ACTION_FACT_LIMIT, observed: budget.observed }
+    );
+  }
+}
+
+function requireWorkbenchReference(value, location) {
+  const reference = readString(value);
+  if (reference) return reference;
+  throw kernelError(
+    "WORKBENCH_PROJECTION_FACT_INVALID",
+    "Workbench semantic projection requires exact non-empty references.",
+    422,
+    { location }
   );
 }
 
@@ -1226,18 +2281,85 @@ function collectArchitectureProfileRouteRequirements(preparedFacts) {
   return requirements;
 }
 
-function compileArchitectureProfileHistoricalProviders(requirements, budget) {
+function collectWorkbenchHistoricalRouteRequirements(records, requirements, budget) {
+  for (const record of records) {
+    const claimRefs = collectWorkbenchVerificationPlanClaimRefs(record?.verificationPlan, budget);
+    if (claimRefs.size === 0) continue;
+    const baseline = readGovernanceBaseline(record);
+    const baselineDigest = requireArchitectureProfileDigest(
+      baseline.digest,
+      `workbench.change.${readString(record?.id) ?? "unknown"}.governanceBaseline.digest`
+    );
+    if (!requirements.has(baselineDigest)) {
+      requirements.set(baselineDigest, {
+        baseline,
+        baselineDigest,
+        routeClaimRefs: new Set()
+      });
+    }
+    const requirement = requirements.get(baselineDigest);
+    for (const claimRef of claimRefs) requirement.routeClaimRefs.add(claimRef);
+    assertArchitectureProfileCountBound(
+      requirement.routeClaimRefs.size,
+      ARCHITECTURE_PROFILE_LIMITS.claims,
+      `workbench.change.${readString(record?.id) ?? "unknown"}.verificationPlan.claimRefs`
+    );
+  }
+}
+
+function collectWorkbenchVerificationPlanClaimRefs(verificationPlan, budget) {
+  const claimRefs = new Set();
+  for (const obligation of Array.isArray(verificationPlan?.obligations)
+    ? verificationPlan.obligations
+    : []) {
+    consumeWorkbenchProjectionFact(budget);
+    if (obligation?.mapping?.kind === "exact-contract-claim"
+      && Array.isArray(obligation.mapping.routes)
+      && obligation.mapping.routes.length > 0) {
+      const claimRef = readString(obligation?.claimId);
+      if (claimRef) claimRefs.add(claimRef);
+      consumeWorkbenchProjectionFact(budget, obligation.mapping.routes.length);
+    }
+    if (obligation?.mapping?.kind === "cross-claim") {
+      const targetClaimRef = readString(obligation?.claimId);
+      if (targetClaimRef) claimRefs.add(targetClaimRef);
+      for (const sourceClaimRef of Array.isArray(obligation.mapping.sourceClaimIds)
+        ? obligation.mapping.sourceClaimIds
+        : []) {
+        consumeWorkbenchProjectionFact(budget);
+        const exactSourceClaimRef = readString(sourceClaimRef);
+        if (exactSourceClaimRef) claimRefs.add(exactSourceClaimRef);
+      }
+      for (const route of Array.isArray(obligation.mapping.sourceRoutes)
+        ? obligation.mapping.sourceRoutes
+        : []) {
+        consumeWorkbenchProjectionFact(budget);
+        const sourceClaimRef = readString(route?.sourceClaimId);
+        if (sourceClaimRef) claimRefs.add(sourceClaimRef);
+      }
+    }
+    if (obligation?.mapping?.kind === "unmapped") {
+      const targetClaimRef = readString(obligation?.claimId);
+      if (targetClaimRef) claimRefs.add(targetClaimRef);
+    }
+  }
+  return claimRefs;
+}
+
+function compileArchitectureProfileHistoricalProviders(requirements, budget, options = {}) {
   const providers = new Map();
   const ordered = [...requirements.values()].sort((left, right) => (
     left.baselineDigest.localeCompare(right.baselineDigest)
   ));
   for (const requirement of ordered) {
     const location = `historicalBaseline.${requirement.baselineDigest}`;
-    const claimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
-      requirement.baseline,
-      budget,
-      `${location}.claimDescriptors`
-    );
+    const claimDescriptors = options.includeClaimDescriptors === false
+      ? null
+      : compileArchitectureProfileClaimDescriptorIndex(
+          requirement.baseline,
+          budget,
+          `${location}.claimDescriptors`
+        );
     const routeProvider = requirement.routeClaimRefs.size > 0
       ? compileArchitectureProfileRouteProvider({
           model: requirement.baseline,
@@ -1248,7 +2370,8 @@ function compileArchitectureProfileHistoricalProviders(requirements, budget) {
         })
       : { routeDigests: new Map(), token: null };
     providers.set(requirement.baselineDigest, {
-      claimDescriptors,
+      ...(claimDescriptors ? { claimDescriptors } : {}),
+      routesByClaim: routeProvider.routesByClaim ?? new Map(),
       routeDigests: routeProvider.routeDigests
     });
   }
@@ -1303,6 +2426,7 @@ function compileArchitectureProfileRouteProvider({
   );
   const provider = {
     token,
+    routesByClaim: projection.routesByClaim,
     routeDigests: compileArchitectureProfileRouteDigestIndex(
       projection.routesByClaim,
       budget,
@@ -3367,6 +4491,11 @@ function gateAppliesToChange(gate, governanceBaseline, change) {
   const fullGateId = readString(governanceBaseline.projectDocument?.changePolicy?.fullGate);
   return gate.id === fullGateId
     && (appliesTo.includes("integration") || appliesTo.includes("release"));
+}
+
+function readGateCommands(gate) {
+  if (Array.isArray(gate?.commands)) return gate.commands;
+  return gate?.command ? [gate] : [];
 }
 
 function commandAppliesToChange(command, change) {
