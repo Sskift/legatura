@@ -367,6 +367,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         { errors: closureValidation.errors }
       );
     }
+    assertOutcomeExceptionBinding(change);
     const expectedAuthorities = readExpectedAuthorities(readGovernanceBaseline(change), change);
     const authorityValidation = validateAuthorityDecision(
       change.authorityDecision,
@@ -906,6 +907,10 @@ function assertPlanHistoryPreserved(change, currentPlan) {
   const removedOutcomeIds = [];
   const rewrittenOutcomeIds = [];
   const reopenedOutcomeIds = [];
+  const removedCriteria = [];
+  const rewrittenCriteria = [];
+  const terminalAdditions = [];
+  const statusChangeAdditions = [];
   for (const baselineOutcome of Array.isArray(baselinePlan.outcomes) ? baselinePlan.outcomes : []) {
     const outcomeId = readString(baselineOutcome?.id);
     if (!outcomeId) continue;
@@ -921,9 +926,24 @@ function assertPlanHistoryPreserved(change, currentPlan) {
       && currentOutcome.status !== baselineOutcome.status) {
       reopenedOutcomeIds.push(outcomeId);
     }
+    const criteriaGoverned = Array.isArray(baselineOutcome.acceptance?.criteria)
+      || Array.isArray(currentOutcome.acceptance?.criteria);
     if (baselineOutcome.status === "achieved"
-      && canonicalDigest(currentOutcome.acceptance ?? null) !== canonicalDigest(baselineOutcome.acceptance ?? null)) {
+      && canonicalDigest(achievedAcceptanceHistoryValue(currentOutcome.acceptance, criteriaGoverned))
+        !== canonicalDigest(achievedAcceptanceHistoryValue(baselineOutcome.acceptance, criteriaGoverned))) {
       rewrittenOutcomeIds.push(outcomeId);
+    }
+    const criterionChanges = compareStableCriteria(baselineOutcome, currentOutcome);
+    removedCriteria.push(...criterionChanges.removed.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
+    rewrittenCriteria.push(...criterionChanges.rewritten.map((entry) => ({
+      outcomeRef: outcomeId,
+      ...entry
+    })));
+    if (["achieved", "retired"].includes(baselineOutcome.status)) {
+      terminalAdditions.push(...criterionChanges.added.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
+    }
+    if (currentOutcome.status !== baselineOutcome.status) {
+      statusChangeAdditions.push(...criterionChanges.added.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
     }
   }
   if (removedOutcomeIds.length > 0 || rewrittenOutcomeIds.length > 0 || reopenedOutcomeIds.length > 0) {
@@ -938,6 +958,135 @@ function assertPlanHistoryPreserved(change, currentPlan) {
       }
     );
   }
+  if (removedCriteria.length > 0
+    || rewrittenCriteria.length > 0
+    || terminalAdditions.length > 0
+    || statusChangeAdditions.length > 0) {
+    throw kernelError(
+      "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN",
+      "Stable Outcome Criteria cannot be removed or reinterpreted; new Criteria must be declared before a status transition and before an Outcome becomes terminal.",
+      422,
+      { removedCriteria, rewrittenCriteria, terminalAdditions, statusChangeAdditions }
+    );
+  }
+}
+
+function compareStableCriteria(baselineOutcome, currentOutcome) {
+  const baselineById = new Map((Array.isArray(baselineOutcome?.acceptance?.criteria)
+    ? baselineOutcome.acceptance.criteria
+    : []).map((criterion) => [readString(criterion?.id), criterion]).filter(([id]) => Boolean(id)));
+  const currentById = new Map((Array.isArray(currentOutcome?.acceptance?.criteria)
+    ? currentOutcome.acceptance.criteria
+    : []).map((criterion) => [readString(criterion?.id), criterion]).filter(([id]) => Boolean(id)));
+  const removed = [];
+  const rewritten = [];
+  for (const [criterionRef, baselineCriterion] of baselineById) {
+    const currentCriterion = currentById.get(criterionRef);
+    if (!currentCriterion) {
+      removed.push(criterionRef);
+      continue;
+    }
+    const baselineValue = criterionSemanticValue(baselineCriterion);
+    const currentValue = criterionSemanticValue(currentCriterion);
+    if (canonicalDigest(baselineValue) !== canonicalDigest(currentValue)) {
+      rewritten.push({
+        criterionRef,
+        changedFields: ["statement", "claimRefs", "gapRefs"].filter((field) => (
+          canonicalDigest(baselineValue[field]) !== canonicalDigest(currentValue[field])
+        )),
+        baselineDigest: canonicalDigest(baselineValue),
+        currentDigest: canonicalDigest(currentValue)
+      });
+    }
+  }
+  const added = [...currentById.keys()].filter((criterionRef) => !baselineById.has(criterionRef));
+  return { removed, rewritten, added };
+}
+
+function criterionSemanticValue(criterion) {
+  return {
+    id: readString(criterion?.id) ?? null,
+    statement: readString(criterion?.statement) ?? null,
+    claimRefs: normalizeStringList(criterion?.claimRefs).sort(),
+    gapRefs: normalizeStringList(criterion?.gapRefs).sort()
+  };
+}
+
+function achievedAcceptanceHistoryValue(acceptance, criteriaGoverned) {
+  const value = acceptance && typeof acceptance === "object" && !Array.isArray(acceptance)
+    ? cloneJson(acceptance)
+    : {};
+  if (criteriaGoverned) {
+    delete value.criteria;
+    delete value.exitCriteria;
+    delete value.claimRefs;
+    delete value.gapRefs;
+    return value;
+  }
+  if (Array.isArray(value.exitCriteria)) value.exitCriteria = normalizeStringList(value.exitCriteria).sort();
+  for (const field of ["claimRefs", "gapRefs"]) {
+    if (Array.isArray(value[field])) value[field] = normalizeReferenceList(value[field]).sort();
+  }
+  return value;
+}
+
+function assertOutcomeExceptionBinding(change) {
+  const requestedValue = change.compilerInput?.outcomeExceptions;
+  const compiledValue = change.outcomeAlignment?.exceptions;
+  const requests = Array.isArray(requestedValue) ? requestedValue : [];
+  const exceptions = Array.isArray(compiledValue) ? compiledValue : [];
+  const requestListMalformed = requestedValue !== undefined && requestedValue !== null
+    && !Array.isArray(requestedValue);
+  const compiledListMalformed = compiledValue !== undefined && compiledValue !== null
+    && !Array.isArray(compiledValue);
+  if (requests.length === 0 && exceptions.length === 0
+    && !requestListMalformed && !compiledListMalformed) return;
+
+  const problems = [];
+  if (requestListMalformed) problems.push("request-list-invalid");
+  if (compiledListMalformed) problems.push("compiled-list-invalid");
+  const normalizedRequests = requests.map(outcomeExceptionSemanticValue).sort(compareOutcomeExceptionValues);
+  const normalizedExceptions = exceptions.map(outcomeExceptionSemanticValue).sort(compareOutcomeExceptionValues);
+  if (canonicalDigest(normalizedRequests) !== canonicalDigest(normalizedExceptions)) {
+    problems.push("request-output-mismatch");
+  }
+  const planAuthority = readString(readGovernanceBaseline(change).plan?.authority);
+  if (change.outcomeAlignmentSchemaVersion !== OUTCOME_ALIGNMENT_SCHEMA_VERSION) {
+    problems.push("schema-version-missing");
+  }
+  if (!planAuthority) problems.push("plan-authority-missing");
+  for (const [index, exception] of exceptions.entries()) {
+    if (readString(exception?.requiredAuthorityRef) !== planAuthority) {
+      problems.push(`exception-${index + 1}-authority-mismatch`);
+    }
+    if (exception?.progress !== "none") {
+      problems.push(`exception-${index + 1}-progress-invalid`);
+    }
+    if (exception?.transitionUse !== "forbidden") {
+      problems.push(`exception-${index + 1}-transition-use-invalid`);
+    }
+  }
+  if (problems.length > 0) {
+    throw kernelError(
+      "OUTCOME_EXCEPTION_BINDING_INVALID",
+      "Compiled Outcome exceptions must remain bound to the frozen Development Plan authority and cannot grant progress or transition proof.",
+      409,
+      { planAuthority: planAuthority ?? null, problems }
+    );
+  }
+}
+
+function outcomeExceptionSemanticValue(exception) {
+  return {
+    outcomeRef: readString(exception?.outcomeRef) ?? null,
+    reason: readString(exception?.reason) ?? null,
+    residualUncertainty: exception?.residualUncertainty ?? null
+  };
+}
+
+function compareOutcomeExceptionValues(left, right) {
+  return (left.outcomeRef ?? "").localeCompare(right.outcomeRef ?? "")
+    || canonicalDigest(left).localeCompare(canonicalDigest(right));
 }
 
 async function readObservedTouchedPaths(change, git, repoPath, commandRunner) {
@@ -1512,6 +1661,21 @@ function normalizeStringList(value) {
   if (value === undefined || value === null) return [];
   const values = Array.isArray(value) ? value : [value];
   return [...new Set(values.filter(readString).map((item) => item.trim()))];
+}
+
+function normalizeReferenceList(value) {
+  if (value === undefined || value === null) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values.map(readModelReference).filter(Boolean))];
+}
+
+function readModelReference(value) {
+  if (readString(value)) return value.trim();
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  for (const key of ["id", "module", "moduleId", "contract", "contractId", "target"]) {
+    if (readString(value[key])) return value[key].trim();
+  }
+  return undefined;
 }
 
 function readString(value) {

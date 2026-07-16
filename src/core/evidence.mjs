@@ -381,7 +381,11 @@ export function readExpectedAuthorities(model, change) {
     && model.plan.outcomes.some((outcome) => (
       selectedOutcomeIds.has(outcome?.id) && outcome?.kind === "integrity-maintenance"
     ));
-  if (change.changeKind === "plan-amendment" || usesIntegrityOutcome) {
+  const usesOutcomeException = (Array.isArray(change.outcomeAlignment?.exceptions)
+      && change.outcomeAlignment.exceptions.length > 0)
+    || (Array.isArray(change.compilerInput?.outcomeExceptions)
+      && change.compilerInput.outcomeExceptions.length > 0);
+  if (change.changeKind === "plan-amendment" || usesIntegrityOutcome || usesOutcomeException) {
     const planAuthority = readString(model.plan?.authority);
     return planAuthority ? [planAuthority] : [];
   }

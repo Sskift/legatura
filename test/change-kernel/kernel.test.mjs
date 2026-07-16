@@ -51,11 +51,16 @@ test("plan alignment injects only an active Outcome into bounded Context", async
   );
 
   const compiled = await kernel.compileChange(change.id, {
-    planRefs: ["LGT-900"]
+    planRefs: ["LGT-900"],
+    outcomeContributionHints: [{ outcomeRef: "LGT-900", criterionRefs: ["LGT-900-C1"] }]
   });
 
   assert.deepEqual(compiled.planRefs, ["LGT-900"]);
   assert.deepEqual(compiled.contextCapsule.planOutcomes.map((outcome) => outcome.id), ["LGT-900"]);
+  assert.deepEqual(compiled.contextCapsule.planOutcomes[0].acceptance.criteria.map((criterion) => criterion.id), [
+    "LGT-900-C1"
+  ]);
+  assert.deepEqual(compiled.outcomeAlignment.contributions.map((entry) => entry.criterionRef), ["LGT-900-C1"]);
   assert.deepEqual(readExpectedAuthorities(compiled.governanceBaseline, compiled), ["module-maintainer"]);
   assert.ok(compiled.contextCapsule.scope.read.include.includes("test/core/**"));
   assert.ok(!compiled.contextCapsule.scope.write.include.includes("test/core/**"));
@@ -67,25 +72,16 @@ test("plan alignment injects only an active Outcome into bounded Context", async
 
 test("Outcome alignment inputs are subject-bound and preserved in the Accepted Package", async () => {
   const fixture = await createFixture();
+  await enablePlanPolicy(fixture.repoPath);
   const kernel = createKernel({ repoPath: fixture.repoPath });
   const firstHints = [{ outcomeRef: "LGT-900", criterionRefs: ["LGT-900-C1"] }];
   const secondHints = [{ outcomeRef: "LGT-900", criterionRefs: ["LGT-900-C2"] }];
-  const firstExceptions = [{
-    outcomeRef: "LGT-901",
-    reason: "The fixture has no honest Criterion mapping yet.",
-    residualUncertainty: "This entry grants no Outcome progress."
-  }];
-  const secondExceptions = [{
-    outcomeRef: "LGT-901",
-    reason: "The caller revised the non-progress exception.",
-    residualUncertainty: "Plan authority must still decide it."
-  }];
   const change = await kernel.createChange({
     title: "Bind Outcome alignment input",
     primaryModule: "core",
+    planRefs: ["LGT-900"],
     claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }],
     outcomeContributionHints: firstHints,
-    outcomeExceptions: firstExceptions,
     knowledgeClosure: {
       status: "complete",
       noNewKnowledge: true,
@@ -93,10 +89,10 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
     }
   });
   assert.deepEqual(change.compilerInput.outcomeContributionHints, firstHints);
-  assert.deepEqual(change.compilerInput.outcomeExceptions, firstExceptions);
 
   const compiled = await kernel.compileChange(change.id);
-  assert.equal(compiled.outcomeAlignment, null);
+  assert.equal(compiled.outcomeAlignment.status, "complete");
+  assert.deepEqual(compiled.outcomeAlignment.contributions.map((entry) => entry.criterionRef), ["LGT-900-C1"]);
   const firstGate = await kernel.runGate(change.id);
   const firstSubjectDigest = firstGate.gateRuns
     .find((entry) => entry.gateId === "minimum")
@@ -107,9 +103,11 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
   });
   assert.equal(recompiled.state, "Submitted");
   assert.deepEqual(recompiled.compilerInput.outcomeContributionHints, secondHints);
-  assert.deepEqual(recompiled.compilerInput.outcomeExceptions, firstExceptions);
+  assert.deepEqual(recompiled.outcomeAlignment.contributions.map((entry) => entry.criterionRef), ["LGT-900-C2"]);
   const stale = await kernel.getChange(change.id);
   assert.deepEqual(stale.readiness.missingOrStaleGateIds, ["project-model", "minimum"]);
+  assert.equal(stale.readiness.coverage.satisfied, false);
+  assert.ok(stale.readiness.coverage.uncoveredClaimIds.includes("behavior-correct"));
 
   const secondGate = await kernel.runGate(change.id);
   const secondSubjectDigest = secondGate.gateRuns
@@ -117,21 +115,8 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
     .verificationSubjectDigest;
   assert.notEqual(secondSubjectDigest, firstSubjectDigest);
 
-  const exceptionRecompiled = await kernel.compileChange(change.id, {
-    outcomeExceptions: secondExceptions
-  });
-  assert.equal(exceptionRecompiled.state, "Submitted");
-  assert.deepEqual(exceptionRecompiled.compilerInput.outcomeExceptions, secondExceptions);
-  const exceptionStale = await kernel.getChange(change.id);
-  assert.deepEqual(exceptionStale.readiness.missingOrStaleGateIds, ["project-model", "minimum"]);
-  const thirdGate = await kernel.runGate(change.id);
-  const thirdSubjectDigest = thirdGate.gateRuns
-    .find((entry) => entry.gateId === "minimum")
-    .verificationSubjectDigest;
-  assert.notEqual(thirdSubjectDigest, secondSubjectDigest);
-
   const accepted = await kernel.acceptChange(change.id, {
-    authority: "project-maintainer",
+    authority: "module-maintainer",
     decidedBy: "maintainer@example.test",
     decisionType: "case-decision",
     status: "approved",
@@ -139,8 +124,92 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
   });
   assert.equal(accepted.acceptance.package.outcomeAlignmentSchemaVersion, 1);
   assert.deepEqual(accepted.acceptance.package.outcomeContributionHints, secondHints);
-  assert.deepEqual(accepted.acceptance.package.outcomeExceptions, secondExceptions);
-  assert.equal(accepted.acceptance.package.outcomeAlignment, null);
+  assert.deepEqual(accepted.acceptance.package.outcomeAlignment, recompiled.outcomeAlignment);
+  assert.equal(
+    accepted.acceptance.package.compilation.outcomeAlignmentDigest,
+    canonicalDigest(recompiled.outcomeAlignment)
+  );
+  assert.equal(
+    accepted.acceptance.package.gateRuns.find((entry) => entry.gateId === "minimum").verificationSubjectDigest,
+    secondSubjectDigest
+  );
+
+  const exceptionChange = await kernel.createChange({
+    title: "Request a non-progress Outcome exception",
+    primaryModule: "core",
+    planRefs: ["LGT-900"],
+    claims: [{
+      id: "project-model-self-consistent",
+      statement: "The versioned Project Model is internally self-consistent for this Change."
+    }],
+    outcomeExceptions: [{
+      outcomeRef: "LGT-900",
+      reason: "The built-in model Claim has no honest Contract Criterion mapping.",
+      residualUncertainty: "This exception grants no Outcome progress."
+    }],
+    knowledgeClosure: {
+      status: "complete",
+      noNewKnowledge: true,
+      rationale: "The fixture exception introduces no future-relevant project knowledge."
+    }
+  });
+  const exceptionCompiled = await kernel.compileChange(exceptionChange.id);
+  assert.equal(exceptionCompiled.outcomeAlignment.status, "pending-authority");
+  assert.deepEqual(readExpectedAuthorities(exceptionCompiled.governanceBaseline, exceptionCompiled), [
+    "project-maintainer"
+  ]);
+  const exceptionRecordPath = path.join(
+    fixture.repoPath,
+    ".legatura/runtime/changes",
+    `${exceptionChange.id}.json`
+  );
+  const tamperedException = JSON.parse(await readFile(exceptionRecordPath, "utf8"));
+  tamperedException.outcomeAlignment.exceptions = [];
+  await writeJson(exceptionRecordPath, tamperedException);
+  const tamperedGate = await kernel.runGate(exceptionChange.id);
+  assert.equal(tamperedGate.change.state, "EvidenceReady");
+  await assert.rejects(
+    kernel.acceptChange(exceptionChange.id, {
+      authority: "module-maintainer",
+      decidedBy: "maintainer@example.test",
+      decisionType: "case-decision",
+      status: "approved",
+      rationale: "Deleting compiled exceptions must not restore Module authority."
+    }),
+    (error) => error.code === "OUTCOME_EXCEPTION_BINDING_INVALID"
+      && error.details.problems.includes("request-output-mismatch")
+  );
+  const restoredException = await kernel.compileChange(exceptionChange.id);
+  assert.equal(restoredException.outcomeAlignment.status, "pending-authority");
+  const exceptionGate = await kernel.runGate(exceptionChange.id);
+  assert.equal(exceptionGate.change.state, "EvidenceReady");
+  await assert.rejects(
+    kernel.acceptChange(exceptionChange.id, {
+      authority: "module-maintainer",
+      decidedBy: "maintainer@example.test",
+      decisionType: "case-decision",
+      status: "approved",
+      rationale: "A Module authority must not authorize an Outcome exception."
+    }),
+    (error) => error.code === "AUTHORITY_DECISION_REQUIRED"
+      && error.details.expectedAuthorities.includes("project-maintainer")
+  );
+  const acceptedException = await kernel.acceptChange(exceptionChange.id, {
+    authority: "project-maintainer",
+    decidedBy: "plan-maintainer@example.test",
+    decisionType: "case-decision",
+    status: "approved",
+    rationale: "Plan authority records the non-progress exception without granting Outcome completion."
+  });
+  assert.deepEqual(acceptedException.acceptance.package.outcomeAlignment.exceptions.map((entry) => ({
+    requiredAuthorityRef: entry.requiredAuthorityRef,
+    progress: entry.progress,
+    transitionUse: entry.transitionUse
+  })), [{
+    requiredAuthorityRef: "project-maintainer",
+    progress: "none",
+    transitionUse: "forbidden"
+  }]);
 });
 
 test("integrity maintenance requires content-exact failed Evidence and Plan authority", async () => {
@@ -225,6 +294,56 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
     kernel.compileChange(historyChange.id),
     (error) => error.code === "PLAN_HISTORY_REWRITE_FORBIDDEN"
       && error.details.removedOutcomeIds.includes("LGT-901")
+  );
+  await writeJson(planPath, plan);
+
+  const rewrittenCriterionPlan = JSON.parse(JSON.stringify(plan));
+  const rewrittenOutcome = rewrittenCriterionPlan.outcomes.find((outcome) => outcome.id === "LGT-900");
+  rewrittenOutcome.acceptance.criteria[0].statement = "The active fixture Criterion was silently reinterpreted.";
+  rewrittenOutcome.acceptance.exitCriteria[0] = rewrittenOutcome.acceptance.criteria[0].statement;
+  await writeJson(planPath, rewrittenCriterionPlan);
+  await assert.rejects(
+    kernel.compileChange(historyChange.id),
+    (error) => error.code === "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN"
+      && error.details.rewrittenCriteria.some((entry) => entry.criterionRef === "LGT-900-C1")
+  );
+  await writeJson(planPath, plan);
+
+  const reorderedAchievedPlan = JSON.parse(JSON.stringify(plan));
+  const achievedOutcome = reorderedAchievedPlan.outcomes.find((outcome) => outcome.id === "LGT-898");
+  achievedOutcome.acceptance.criteria.reverse();
+  achievedOutcome.acceptance.exitCriteria.reverse();
+  await writeJson(planPath, reorderedAchievedPlan);
+  await assert.doesNotReject(kernel.compileChange(historyChange.id));
+  await writeJson(planPath, plan);
+
+  const deletedLegacyReferencePlan = JSON.parse(JSON.stringify(plan));
+  deletedLegacyReferencePlan.outcomes.find((outcome) => outcome.id === "LGT-897").acceptance.claimRefs = [];
+  await writeJson(planPath, deletedLegacyReferencePlan);
+  await assert.rejects(
+    kernel.compileChange(historyChange.id),
+    (error) => error.code === "PLAN_HISTORY_REWRITE_FORBIDDEN"
+      && error.details.rewrittenOutcomeIds.includes("LGT-897")
+  );
+  await writeJson(planPath, plan);
+
+  const statusChangeCriteriaPlan = JSON.parse(JSON.stringify(plan));
+  const activatingOutcome = statusChangeCriteriaPlan.outcomes.find((outcome) => outcome.id === "LGT-901");
+  activatingOutcome.status = "active";
+  activatingOutcome.dependsOn = [];
+  activatingOutcome.acceptance.criteria = [{
+    id: "LGT-901-C1",
+    statement: activatingOutcome.acceptance.exitCriteria[0],
+    claimRefs: ["behavior-correct"],
+    gapRefs: []
+  }];
+  await writeJson(planPath, statusChangeCriteriaPlan);
+  await assert.rejects(
+    kernel.compileChange(historyChange.id),
+    (error) => error.code === "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN"
+      && error.details.statusChangeAdditions.some((entry) => (
+        entry.outcomeRef === "LGT-901" && entry.criterionRef === "LGT-901-C1"
+      ))
   );
   await writeJson(planPath, plan);
 
@@ -562,6 +681,8 @@ async function enablePlanPolicy(repoPath) {
   planAuthority.may = [...new Set([...(planAuthority.may ?? []), "normative-amendment"])];
   project.authorities.decision.push({ id: "module-maintainer", may: ["case-decision", "normative-amendment"] });
   project.changePolicy.requirePlanRefs = true;
+  project.changePolicy.outcomeAlignmentMode = "declared";
+  project.changePolicy.outcomeCriterionSelection = "unique-claim-match-or-explicit-hint";
   await writeJson(projectPath, project);
   const modulePath = path.join(repoPath, ".legatura/modules/core.json");
   const module = JSON.parse(await readFile(modulePath, "utf8"));
@@ -576,9 +697,50 @@ async function enablePlanPolicy(repoPath) {
       id: "S1",
       name: "Fixture Stage",
       status: "active",
-      outcomeRefs: ["LGT-900", "LGT-901", "LGT-999"]
+      outcomeRefs: ["LGT-897", "LGT-898", "LGT-900", "LGT-901", "LGT-999"]
     }],
     outcomes: [
+      {
+        id: "LGT-897",
+        stage: "S1",
+        status: "achieved",
+        outcome: "The legacy achieved fixture Outcome preserves object-form acceptance references.",
+        dependsOn: [],
+        acceptance: {
+          claimRefs: [{ id: "behavior-correct" }],
+          gapRefs: [],
+          exitCriteria: ["Legacy achieved acceptance references remain durable."]
+        }
+      },
+      {
+        id: "LGT-898",
+        stage: "S1",
+        status: "achieved",
+        outcome: "The achieved fixture Outcome preserves semantically stable acceptance history.",
+        dependsOn: [],
+        acceptance: {
+          claimRefs: ["behavior-correct"],
+          gapRefs: [],
+          exitCriteria: [
+            "The achieved fixture acceptance remains durable.",
+            "Equivalent Criterion ordering does not rewrite history."
+          ],
+          criteria: [
+            {
+              id: "LGT-898-C1",
+              statement: "The achieved fixture acceptance remains durable.",
+              claimRefs: ["behavior-correct"],
+              gapRefs: []
+            },
+            {
+              id: "LGT-898-C2",
+              statement: "Equivalent Criterion ordering does not rewrite history.",
+              claimRefs: ["behavior-correct"],
+              gapRefs: []
+            }
+          ]
+        }
+      },
       {
         id: "LGT-900",
         stage: "S1",
@@ -588,7 +750,24 @@ async function enablePlanPolicy(repoPath) {
         acceptance: {
           claimRefs: ["behavior-correct"],
           gapRefs: [],
-          exitCriteria: ["The active fixture Outcome is injected into the Context Capsule."]
+          exitCriteria: [
+            "The active fixture Outcome is injected into the Context Capsule.",
+            "The selected fixture Criterion is sealed into the Accepted Change Package."
+          ],
+          criteria: [
+            {
+              id: "LGT-900-C1",
+              statement: "The active fixture Outcome is injected into the Context Capsule.",
+              claimRefs: ["behavior-correct"],
+              gapRefs: []
+            },
+            {
+              id: "LGT-900-C2",
+              statement: "The selected fixture Criterion is sealed into the Accepted Change Package.",
+              claimRefs: ["behavior-correct"],
+              gapRefs: []
+            }
+          ]
         }
       },
       {
