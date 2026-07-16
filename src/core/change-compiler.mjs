@@ -617,9 +617,15 @@ function compileOutcomeAlignment({
       }
     }
 
-    const selectedCriterionRefs = new Set(matchesByClaim
-      .filter((match) => match.criterionRefs.length === 1)
-      .map((match) => match.criterionRefs[0]));
+    const claimBindingsByCriterion = new Map();
+    const assignClaim = (criterionRef, claim) => {
+      const assigned = claimBindingsByCriterion.get(criterionRef) ?? [];
+      assigned.push(claim);
+      claimBindingsByCriterion.set(criterionRef, assigned);
+    };
+    for (const match of matchesByClaim.filter((entry) => entry.criterionRefs.length === 1)) {
+      assignClaim(match.criterionRefs[0], match.claim);
+    }
     const unresolvedAmbiguities = [];
     for (const match of ambiguousMatches) {
       const selected = match.criterionRefs.filter((criterionRef) => hint?.criterionRefs.includes(criterionRef));
@@ -636,7 +642,7 @@ function compileOutcomeAlignment({
           candidateCriterionRefs: match.criterionRefs
         });
       } else {
-        for (const criterionRef of selected) selectedCriterionRefs.add(criterionRef);
+        assignClaim(selected[0], match.claim);
       }
     }
 
@@ -651,10 +657,9 @@ function compileOutcomeAlignment({
       });
     }
 
-    for (const criterionRef of [...selectedCriterionRefs].sort()) {
+    for (const criterionRef of [...claimBindingsByCriterion.keys()].sort()) {
       const criterion = criteriaById.get(criterionRef);
-      const claimBindings = exactAccessibleClaims
-        .filter((claim) => normalizeStringList(criterion.claimRefs).includes(claim.id))
+      const claimBindings = claimBindingsByCriterion.get(criterionRef)
         .sort((left, right) => left.id.localeCompare(right.id));
       contributions.push(compileOutcomeContribution({
         change,

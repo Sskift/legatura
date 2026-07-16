@@ -189,6 +189,49 @@ test("Outcome Contributions use exact accessible Claims, stable Criteria, and ex
   );
   assert.ok(compiled.contextCapsule.knowledgeGaps.some((gap) => gap.id === "fixture-gap"));
 
+  const dependencyModel = baseModel();
+  enableOutcomeCriteria(dependencyModel, [], "dependency-works");
+  const dependencyCompiled = compileChangeAgainstGovernance(outcomeChange({
+    claims: [{ id: "dependency-works", statement: "Dependency remains correct." }]
+  }), governanceBaseline(dependencyModel));
+  assert.deepEqual(dependencyCompiled.outcomeAlignment.contributions.map((entry) => entry.claimRefs), [
+    ["dependency-works"]
+  ]);
+
+  const mixedAmbiguityModel = baseModel();
+  enableOutcomeCriteria(mixedAmbiguityModel, [{
+    id: "LGT-001-C2",
+    statement: "A caller assigns an ambiguous Claim to exactly one Criterion.",
+    claimRefs: ["core-works"],
+    gapRefs: []
+  }]);
+  mixedAmbiguityModel.plan.outcomes[0].acceptance.criteria[0].claimRefs.push("dependency-works");
+  mixedAmbiguityModel.plan.outcomes[0].acceptance.claimRefs.push("dependency-works");
+  const mixedChange = outcomeChange({
+    claims: [
+      { id: "core-works", statement: "Core remains correct." },
+      { id: "dependency-works", statement: "Dependency remains correct." }
+    ]
+  });
+  const partiallyResolved = compileChangeAgainstGovernance(mixedChange, governanceBaseline(mixedAmbiguityModel));
+  assert.deepEqual(partiallyResolved.outcomeAlignment.contributions.map((entry) => entry.claimRefs), [
+    ["dependency-works"]
+  ]);
+  const fullyResolved = compileChangeAgainstGovernance({
+    ...mixedChange,
+    compilerInput: {
+      ...mixedChange.compilerInput,
+      outcomeContributionHints: [{ outcomeRef: "LGT-001", criterionRefs: ["LGT-001-C2"] }]
+    }
+  }, governanceBaseline(mixedAmbiguityModel));
+  assert.deepEqual(fullyResolved.outcomeAlignment.contributions.map((entry) => ({
+    criterionRef: entry.criterionRef,
+    claimRefs: entry.claimRefs
+  })), [
+    { criterionRef: "LGT-001-C1", claimRefs: ["dependency-works"] },
+    { criterionRef: "LGT-001-C2", claimRefs: ["core-works"] }
+  ]);
+
   const ambiguousModel = baseModel();
   enableOutcomeCriteria(ambiguousModel, [{
     id: "LGT-001-C2",
