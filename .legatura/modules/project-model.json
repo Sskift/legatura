@@ -27,6 +27,7 @@
     "include": [
       "src/core/project-model.mjs",
       "src/core/change-compiler.mjs",
+      "src/core/outcome-transitions.mjs",
       "test/project-model/project-model.test.mjs",
       "CONTEXT.md",
       "TESTING.md",
