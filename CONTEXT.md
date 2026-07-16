@@ -32,6 +32,22 @@ _Avoid_: Roadmap, backlog, wishlist
 A stable, dependency-aware capability or uncertainty closure whose active status can authorize a Change and whose exit criteria require Evidence.
 _Avoid_: Task, issue, milestone, implementation step
 
+**Outcome Criterion**:
+A permanently identified, falsifiable acceptance condition that exactly mirrors one Development Outcome exit criterion and names its Claims and Knowledge Gaps.
+_Avoid_: Checklist item, test name, array position
+
+**Outcome Contribution**:
+The compiler-owned, content-addressed binding from one Change's primary Module and exact accessible Claims to one Outcome Criterion. It records relevance, not completion.
+_Avoid_: Progress percentage, worker rationale, passing test
+
+**Outcome Alignment**:
+The compiled set of Outcome Contributions, non-progress exception requests, and unresolved matches for one Change. Semantic inputs are explicit; mechanical fields and digests are derived.
+_Avoid_: Plan reference list, inferred intent
+
+**Outcome Transition**:
+An append-only Plan-authority decision that changes Outcome status by citing prior sealed Accepted Change Packages against stable Criteria and disposing referenced Gaps.
+_Avoid_: Editing status, closing a task, self-proof
+
 **Project Atlas**:
 The human-readable projection of the Project Model and scanned repository facts.
 _Avoid_: Architecture document

@@ -139,6 +139,15 @@ export function validateProjectModel(model) {
     for (const contractId of asArray(module.publicContracts).map(readReference).filter(Boolean)) {
       if (!contractIndex.has(contractId)) {
         errors.push(issue("module.contract.unknown", location, `Unknown public Contract: ${contractId}.`));
+      } else {
+        const owner = readReference(contractIndex.get(contractId)?.owner, ["module", "moduleId", "id"]);
+        if (owner !== readId(module)) {
+          errors.push(issue(
+            "module.contract.owner-mismatch",
+            location,
+            `Public Contract ${contractId} is owned by ${owner ?? "(missing)"}, not ${readId(module)}.`
+          ));
+        }
       }
     }
   }
@@ -271,6 +280,7 @@ export function validateProjectModel(model) {
       "changePolicy.fullGateBefore requires changePolicy.fullGate."
     ));
   }
+  validateOutcomePolicy(changePolicy, errors);
 
   validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
 
@@ -369,6 +379,7 @@ function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors)
   validatePlanDependencyCycles(outcomeIndex, errors, location);
 
   const gapIds = new Set(asArray(model.knowledgeGaps).map(readId).filter(Boolean));
+  const alignmentMode = readString(model.projectDocument?.changePolicy?.outcomeAlignmentMode);
   let activeOutcomes = 0;
   for (const outcome of plan.outcomes) {
     const outcomeId = readId(outcome);
@@ -450,11 +461,212 @@ function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors)
       unknownCode: "plan.outcome.gap.unknown",
       kind: "Knowledge Gap"
     });
+    validateOutcomeCriteria({
+      outcome,
+      outcomeId,
+      location: outcomeLocation,
+      claimIndex,
+      gapIds,
+      alignmentMode,
+      errors
+    });
   }
 
   if (activeOutcomes === 0) {
     errors.push(issue("plan.active.missing", location, "Development Plan requires at least one active Outcome."));
   }
+}
+
+function validateOutcomePolicy(changePolicy, errors) {
+  if (Object.hasOwn(changePolicy, "outcomeAlignmentMode")) {
+    const value = readString(changePolicy.outcomeAlignmentMode);
+    if (!value || !["declared", "enforced"].includes(value)) {
+      errors.push(issue(
+        "change-policy.outcomeAlignmentMode.invalid",
+        ".legatura/project.json",
+        "changePolicy.outcomeAlignmentMode must be declared or enforced."
+      ));
+    }
+  }
+  if (Object.hasOwn(changePolicy, "outcomeTransitionMode")) {
+    const value = readString(changePolicy.outcomeTransitionMode);
+    if (value !== "declared") {
+      errors.push(issue(
+        "change-policy.outcomeTransitionMode.invalid",
+        ".legatura/project.json",
+        "changePolicy.outcomeTransitionMode must remain declared until Transition enforcement is implemented."
+      ));
+    }
+  }
+  const alignmentMode = readString(changePolicy.outcomeAlignmentMode);
+  const criterionSelection = readString(changePolicy.outcomeCriterionSelection);
+  const declaresCriterionSelection = Object.hasOwn(changePolicy, "outcomeCriterionSelection");
+  if (
+    (declaresCriterionSelection || alignmentMode)
+    && criterionSelection !== "unique-claim-match-or-explicit-hint"
+  ) {
+    errors.push(issue(
+      "change-policy.outcome-criterion-selection.invalid",
+      ".legatura/project.json",
+      "Outcome alignment requires outcomeCriterionSelection unique-claim-match-or-explicit-hint."
+    ));
+  }
+}
+
+function validateOutcomeCriteria({
+  outcome,
+  outcomeId,
+  location,
+  claimIndex,
+  gapIds,
+  alignmentMode,
+  errors
+}) {
+  const criteria = outcome?.acceptance?.criteria;
+  if (!outcomeId) return;
+  const required = alignmentMode === "enforced"
+    && outcome?.status === "active"
+    && outcome?.kind !== "integrity-maintenance";
+  if (criteria === undefined) {
+    if (required) {
+      errors.push(issue(
+        "plan.outcome.criteria.required",
+        location,
+        `Enforced active Outcome ${outcomeId} requires stable acceptance.criteria.`
+      ));
+    }
+    return;
+  }
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    errors.push(issue(
+      "plan.outcome.criteria.invalid",
+      location,
+      "Outcome acceptance.criteria must be a non-empty list of Criterion objects."
+    ));
+    return;
+  }
+
+  const seenIds = new Set();
+  const seenStatements = new Set();
+  const criterionClaimRefs = new Set();
+  const criterionGapRefs = new Set();
+  const expectedId = new RegExp(`^${escapeRegExp(outcomeId)}-C[1-9][0-9]*$`, "u");
+  for (const criterion of criteria) {
+    const criterionId = readId(criterion);
+    const criterionLocation = `${location}#${criterionId ?? "criterion"}`;
+    if (!criterionId || !expectedId.test(criterionId)) {
+      errors.push(issue(
+        "plan.outcome.criterion.id.invalid",
+        criterionLocation,
+        `Criterion id must use the stable ${outcomeId}-Cnn form.`
+      ));
+    } else if (seenIds.has(criterionId)) {
+      errors.push(issue(
+        "plan.outcome.criterion.id.duplicate",
+        criterionLocation,
+        `Duplicate Criterion id: ${criterionId}.`
+      ));
+    } else {
+      seenIds.add(criterionId);
+    }
+
+    const statement = readString(criterion?.statement);
+    if (!statement) {
+      errors.push(issue(
+        "plan.outcome.criterion.statement.missing",
+        criterionLocation,
+        "Every Criterion requires a substantive statement."
+      ));
+    } else if (seenStatements.has(statement)) {
+      errors.push(issue(
+        "plan.outcome.criterion.statement.duplicate",
+        criterionLocation,
+        "Criterion statements must be unique within an Outcome."
+      ));
+    } else {
+      seenStatements.add(statement);
+    }
+
+    validateCriterionReferences({
+      criterion,
+      field: "claimRefs",
+      index: claimIndex,
+      kind: "Contract Claim",
+      location: criterionLocation,
+      codePrefix: "plan.outcome.criterion.claim",
+      union: criterionClaimRefs,
+      errors
+    });
+    validateCriterionReferences({
+      criterion,
+      field: "gapRefs",
+      index: gapIds,
+      kind: "Knowledge Gap",
+      location: criterionLocation,
+      codePrefix: "plan.outcome.criterion.gap",
+      union: criterionGapRefs,
+      errors
+    });
+  }
+
+  const exitCriteria = asArray(outcome?.acceptance?.exitCriteria).map(readString).filter(Boolean);
+  if (!sameStringSet([...seenStatements], exitCriteria)) {
+    errors.push(issue(
+      "plan.outcome.criteria.statement-mirror",
+      location,
+      "Stable Criterion statements must exactly mirror acceptance.exitCriteria."
+    ));
+  }
+  const acceptanceClaimRefs = asArray(outcome?.acceptance?.claimRefs).map(readReference).filter(Boolean);
+  if (!sameStringSet([...criterionClaimRefs], acceptanceClaimRefs)) {
+    errors.push(issue(
+      "plan.outcome.criteria.claim-union",
+      location,
+      "Criterion claimRefs must exactly cover the Outcome acceptance.claimRefs set."
+    ));
+  }
+  const acceptanceGapRefs = asArray(outcome?.acceptance?.gapRefs).map(readReference).filter(Boolean);
+  if (!sameStringSet([...criterionGapRefs], acceptanceGapRefs)) {
+    errors.push(issue(
+      "plan.outcome.criteria.gap-union",
+      location,
+      "Criterion gapRefs must exactly cover the Outcome acceptance.gapRefs set."
+    ));
+  }
+}
+
+function validateCriterionReferences({ criterion, field, index, kind, location, codePrefix, union, errors }) {
+  const refs = criterion?.[field];
+  if (!Array.isArray(refs) || !refs.every(readString)) {
+    errors.push(issue(`${codePrefix}.invalid`, location, `Criterion ${field} must be a list of ${kind} ids.`));
+    return;
+  }
+  const seen = new Set();
+  for (const value of refs) {
+    const reference = readReference(value);
+    if (seen.has(reference)) {
+      errors.push(issue(`${codePrefix}.duplicate`, location, `Criterion ${field} repeats ${reference}.`));
+      continue;
+    }
+    seen.add(reference);
+    union.add(reference);
+    if (!index.has(reference)) {
+      errors.push(issue(`${codePrefix}.unknown`, location, `Unknown ${kind}: ${reference}.`));
+    }
+  }
+}
+
+function sameStringSet(left, right) {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === left.length
+    && rightSet.size === right.length
+    && leftSet.size === rightSet.size
+    && [...leftSet].every((value) => rightSet.has(value));
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function validatePlanOutcomeControl(plan, stageIndex, outcomeIndex, errors, location) {

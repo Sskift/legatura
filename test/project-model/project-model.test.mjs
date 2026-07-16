@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { canonicalDigest } from "../../src/core/canonical.mjs";
+import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.mjs";
 import {
   loadProjectModel,
   publicProjectModel,
@@ -14,6 +16,38 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   const model = baseModel();
   const valid = validateProjectModel(model);
   assert.equal(valid.valid, true, JSON.stringify(valid.errors));
+
+  const criteriaModel = baseModel();
+  enableOutcomeCriteria(criteriaModel);
+  assert.equal(validateProjectModel(criteriaModel).valid, true);
+
+  const invalidCriteria = structuredClone(criteriaModel);
+  invalidCriteria.plan.outcomes[0].acceptance.criteria[0] = {
+    id: "LGT-404-C1",
+    statement: "This no longer mirrors the declared exit Criterion.",
+    claimRefs: ["missing-claim"],
+    gapRefs: ["missing-gap"]
+  };
+  const invalidCriteriaCodes = validateProjectModel(invalidCriteria).errors.map((error) => error.code);
+  assert.ok(invalidCriteriaCodes.includes("plan.outcome.criterion.id.invalid"));
+  assert.ok(invalidCriteriaCodes.includes("plan.outcome.criterion.claim.unknown"));
+  assert.ok(invalidCriteriaCodes.includes("plan.outcome.criterion.gap.unknown"));
+  assert.ok(invalidCriteriaCodes.includes("plan.outcome.criteria.statement-mirror"));
+
+  const missingCriterionOutcomeId = structuredClone(criteriaModel);
+  delete missingCriterionOutcomeId.plan.outcomes[0].id;
+  assert.doesNotThrow(() => validateProjectModel(missingCriterionOutcomeId));
+  assert.ok(validateProjectModel(missingCriterionOutcomeId).errors.some(
+    (error) => error.code === "plan.outcome.id.missing"
+  ));
+
+  const missingEnforcedCriteria = baseModel();
+  missingEnforcedCriteria.projectDocument.changePolicy.outcomeAlignmentMode = "enforced";
+  missingEnforcedCriteria.projectDocument.changePolicy.outcomeCriterionSelection =
+    "unique-claim-match-or-explicit-hint";
+  assert.ok(validateProjectModel(missingEnforcedCriteria).errors.some(
+    (error) => error.code === "plan.outcome.criteria.required"
+  ));
 
   const optionalPlan = baseModel();
   optionalPlan.projectDocument.changePolicy.requirePlanRefs = false;
@@ -61,7 +95,11 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
 
   model.modules[0].decisionAuthority = "invented-authority";
   model.modules[0].dependencies = [{ module: "dependency", via: "missing-contract" }];
+  model.modules[0].publicContracts = ["dependency-api"];
   model.projectDocument.changePolicy.defaultGate = "missing-gate";
+  model.projectDocument.changePolicy.outcomeAlignmentMode = true;
+  model.projectDocument.changePolicy.outcomeTransitionMode = "enforced";
+  model.projectDocument.changePolicy.outcomeCriterionSelection = "semantic-similarity";
   model.gates[0].commands[0].appliesTo = ["missing-module"];
   model.gates[0].commands[0].applicability.modules = ["dependency"];
   model.plan.northStar = "";
@@ -103,7 +141,11 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   assert.equal(validation.valid, false);
   assert.ok(codes.includes("module.decision-authority.unknown"));
   assert.ok(codes.includes("module.dependency.contract.unknown"));
+  assert.ok(codes.includes("module.contract.owner-mismatch"));
   assert.ok(codes.includes("change-policy.defaultGate.unknown"));
+  assert.ok(codes.includes("change-policy.outcomeAlignmentMode.invalid"));
+  assert.ok(codes.includes("change-policy.outcomeTransitionMode.invalid"));
+  assert.ok(codes.includes("change-policy.outcome-criterion-selection.invalid"));
   assert.ok(codes.includes("gate.command.applies-to.unknown"));
   assert.ok(codes.includes("gate.command.applicability.module-scope"));
   assert.ok(codes.includes("plan.north-star.missing"));
@@ -126,6 +168,204 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   assert.ok(codes.includes("plan.reference-scenario.acceptance.missing"));
   assert.ok(codes.includes("plan.bootstrap.invalid"));
 });
+
+test("Outcome Contributions use exact accessible Claims, stable Criteria, and explicit ambiguity", () => {
+  const uniqueModel = baseModel();
+  enableOutcomeCriteria(uniqueModel);
+  const uniqueBaseline = governanceBaseline(uniqueModel);
+  const change = outcomeChange();
+
+  const compiled = compileChangeAgainstGovernance(change, uniqueBaseline);
+  const repeated = compileChangeAgainstGovernance(change, uniqueBaseline);
+  assert.equal(compiled.outcomeAlignment.status, "complete");
+  assert.deepEqual(compiled.outcomeAlignment.contributions.map((entry) => entry.criterionRef), ["LGT-001-C1"]);
+  assert.equal(
+    compiled.outcomeAlignment.contributions[0].bindingDigest,
+    repeated.outcomeAlignment.contributions[0].bindingDigest
+  );
+  assert.deepEqual(
+    compiled.contextCapsule.planOutcomes[0].acceptance.criteria.map((criterion) => criterion.id),
+    ["LGT-001-C1"]
+  );
+  assert.ok(compiled.contextCapsule.knowledgeGaps.some((gap) => gap.id === "fixture-gap"));
+
+  const ambiguousModel = baseModel();
+  enableOutcomeCriteria(ambiguousModel, [{
+    id: "LGT-001-C2",
+    statement: "A caller resolves a genuinely ambiguous Criterion explicitly.",
+    claimRefs: ["core-works"],
+    gapRefs: []
+  }]);
+  const ambiguousBaseline = governanceBaseline(ambiguousModel);
+  const unresolved = compileChangeAgainstGovernance(change, ambiguousBaseline);
+  assert.equal(unresolved.outcomeAlignment.status, "unresolved");
+  assert.deepEqual(unresolved.outcomeAlignment.unresolved[0].candidateCriterionRefs, [
+    "LGT-001-C1",
+    "LGT-001-C2"
+  ]);
+
+  const hinted = compileChangeAgainstGovernance({
+    ...change,
+    compilerInput: {
+      ...change.compilerInput,
+      outcomeContributionHints: [{ outcomeRef: "LGT-001", criterionRefs: ["LGT-001-C2"] }]
+    }
+  }, ambiguousBaseline);
+  assert.equal(hinted.outcomeAlignment.status, "complete");
+  assert.deepEqual(hinted.outcomeAlignment.contributions.map((entry) => entry.criterionRef), ["LGT-001-C2"]);
+  assert.throws(
+    () => compileChangeAgainstGovernance({
+      ...change,
+      compilerInput: {
+        ...change.compilerInput,
+        outcomeContributionHints: [{ outcomeRef: "LGT-001", criterionRefs: ["LGT-001-C404"] }]
+      }
+    }, ambiguousBaseline),
+    (error) => error.code === "OUTCOME_CRITERION_UNKNOWN"
+  );
+  assert.throws(
+    () => compileChangeAgainstGovernance({
+      ...change,
+      compilerInput: {
+        ...change.compilerInput,
+        outcomeContributionHints: [{
+          outcomeRef: "LGT-001",
+          criterionRefs: ["LGT-001-C1", "LGT-001-C2"]
+        }]
+      }
+    }, ambiguousBaseline),
+    (error) => error.code === "OUTCOME_HINT_AMBIGUOUS"
+  );
+
+  ambiguousModel.projectDocument.changePolicy.outcomeAlignmentMode = "enforced";
+  const enforcedAmbiguousBaseline = governanceBaseline(ambiguousModel);
+  assert.throws(
+    () => compileChangeAgainstGovernance(change, enforcedAmbiguousBaseline),
+    (error) => error.code === "OUTCOME_CRITERION_AMBIGUOUS"
+  );
+
+  const inaccessibleModel = baseModel();
+  addForeignContract(inaccessibleModel);
+  enableOutcomeCriteria(inaccessibleModel, [], "foreign-works");
+  assert.equal(validateProjectModel(inaccessibleModel).valid, true);
+  const inaccessibleBaseline = governanceBaseline(inaccessibleModel);
+  const foreignChange = outcomeChange({
+    claims: [{ id: "foreign-works", statement: "The foreign Module remains correct." }]
+  });
+  const inaccessible = compileChangeAgainstGovernance(foreignChange, inaccessibleBaseline);
+  assert.equal(inaccessible.outcomeAlignment.status, "unresolved");
+  assert.ok(inaccessible.outcomeAlignment.unresolved[0].inaccessibleClaimRefs.includes("foreign-works"));
+
+  const excepted = compileChangeAgainstGovernance({
+    ...foreignChange,
+    compilerInput: {
+      ...foreignChange.compilerInput,
+      outcomeExceptions: [{
+        outcomeRef: "LGT-001",
+        reason: "Required work has no honest accessible Criterion mapping.",
+        residualUncertainty: "The exception records no Outcome progress."
+      }]
+    }
+  }, inaccessibleBaseline);
+  assert.equal(excepted.outcomeAlignment.status, "pending-authority");
+  assert.deepEqual(excepted.outcomeAlignment.exceptions.map((entry) => ({
+    requiredAuthorityRef: entry.requiredAuthorityRef,
+    progress: entry.progress,
+    transitionUse: entry.transitionUse
+  })), [{ requiredAuthorityRef: "maintainer", progress: "none", transitionUse: "forbidden" }]);
+
+  inaccessibleModel.projectDocument.changePolicy.outcomeAlignmentMode = "enforced";
+  const enforcedInaccessibleBaseline = governanceBaseline(inaccessibleModel);
+  assert.throws(
+    () => compileChangeAgainstGovernance(foreignChange, enforcedInaccessibleBaseline),
+    (error) => error.code === "OUTCOME_CONTRIBUTION_REQUIRED"
+  );
+  assert.throws(
+    () => compileChangeAgainstGovernance({
+      ...foreignChange,
+      compilerInput: {
+        ...foreignChange.compilerInput,
+        outcomeExceptions: [{
+          outcomeRef: "LGT-001",
+          reason: "Required work has no honest accessible Criterion mapping.",
+          residualUncertainty: "The exception records no Outcome progress."
+        }]
+      }
+    }, enforcedInaccessibleBaseline),
+    (error) => error.code === "OUTCOME_EXCEPTION_AUTHORITY_UNENFORCED"
+  );
+});
+
+function enableOutcomeCriteria(model, additionalCriteria = [], claimRef = "core-works") {
+  model.projectDocument.changePolicy.outcomeAlignmentMode = "declared";
+  model.projectDocument.changePolicy.outcomeCriterionSelection = "unique-claim-match-or-explicit-hint";
+  const outcome = model.plan.outcomes[0];
+  const primaryCriterion = {
+    id: "LGT-001-C1",
+    statement: outcome.acceptance.exitCriteria[0],
+    claimRefs: [claimRef],
+    gapRefs: ["fixture-gap"]
+  };
+  outcome.acceptance.criteria = [primaryCriterion, ...structuredClone(additionalCriteria)];
+  outcome.acceptance.exitCriteria = outcome.acceptance.criteria.map((criterion) => criterion.statement);
+  outcome.acceptance.claimRefs = [...new Set(outcome.acceptance.criteria.flatMap((criterion) => criterion.claimRefs))];
+  outcome.acceptance.gapRefs = [...new Set(outcome.acceptance.criteria.flatMap((criterion) => criterion.gapRefs))];
+}
+
+function governanceBaseline(model) {
+  const snapshot = {
+    schemaVersion: 1,
+    modelDigest: "fixture-model",
+    project: structuredClone(model.project),
+    projectDocument: structuredClone(model.projectDocument),
+    modules: structuredClone(model.modules),
+    contracts: structuredClone(model.contracts),
+    gates: structuredClone(model.gates),
+    plan: structuredClone(model.plan),
+    knowledgeGaps: structuredClone(model.knowledgeGaps),
+    files: structuredClone(model.files)
+  };
+  return { ...snapshot, digest: canonicalDigest(snapshot) };
+}
+
+function outcomeChange(overrides = {}) {
+  return {
+    id: "compile-outcome-contribution",
+    primaryModule: "core",
+    changeKind: "implementation",
+    planRefs: ["LGT-001"],
+    claims: [{ id: "core-works", statement: "Core remains correct." }],
+    compilerInput: {
+      verificationObligations: [],
+      impact: null,
+      contextCapsule: null,
+      outcomeContributionHints: [],
+      outcomeExceptions: []
+    },
+    ...overrides
+  };
+}
+
+function addForeignContract(model) {
+  model.modules.push({
+    id: "foreign",
+    status: "governed",
+    paths: { include: ["src/foreign/**"] },
+    interface: { description: "Foreign behavior." },
+    factAuthority: "facts",
+    decisionAuthority: "maintainer",
+    publicContracts: ["foreign-api"],
+    dependencies: []
+  });
+  model.contracts.push({
+    id: "foreign-api",
+    owner: "foreign",
+    consumers: [],
+    normativeSources: ["requirements"],
+    claims: [{ id: "foreign-works", statement: "The foreign Module remains correct." }]
+  });
+  model.projectDocument.assuranceBoundary.governed.push("foreign");
+}
 
 function baseModel() {
   return {

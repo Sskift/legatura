@@ -40,6 +40,7 @@ const COMPILED_CONTEXT_KEYS = new Set([
   "dependencyContracts",
   "dependencies",
   "planOutcomes",
+  "outcomeAlignment",
   "normativeSources",
   "knowledgeGaps",
   "scope",
@@ -133,10 +134,19 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
   const integrityTarget = compileIntegrityTarget(change);
   const assurance = assertAssuranceAllowsCompilation(change, primaryModule, governanceBaseline);
   const compilerInput = change.compilerInput ?? {};
+  const outcomeAlignment = compileOutcomeAlignment({
+    change,
+    governanceBaseline,
+    primaryModule,
+    planOutcomes,
+    hints: compilerInput.outcomeContributionHints,
+    exceptions: compilerInput.outcomeExceptions
+  });
   const contextCapsule = compileContextCapsule({
     governanceBaseline,
     primaryModule,
     planOutcomes,
+    outcomeAlignment,
     assurance,
     supplied: compilerInput.contextCapsule
   });
@@ -159,7 +169,9 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
 
   return {
     ...change,
+    ...(outcomeAlignment ? { outcomeAlignmentSchemaVersion: 1 } : {}),
     integrityTarget,
+    outcomeAlignment,
     contextCapsule,
     impact,
     verificationObligations,
@@ -170,6 +182,7 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
       primaryModule: primaryModule.id,
       changeKind: change.changeKind,
       planRefs: planOutcomes.map((outcome) => outcome.id),
+      outcomeAlignmentDigest: outcomeAlignment ? canonicalDigest(outcomeAlignment) : null,
       assuranceStatus: primaryModule.status
     }
   };
@@ -186,7 +199,14 @@ function compileIntegrityTarget(change) {
   };
 }
 
-function compileContextCapsule({ governanceBaseline, primaryModule, planOutcomes, assurance, supplied }) {
+function compileContextCapsule({
+  governanceBaseline,
+  primaryModule,
+  planOutcomes,
+  outcomeAlignment,
+  assurance,
+  supplied
+}) {
   validateContextSupplement(supplied);
   const contractsById = new Map(governanceBaseline.contracts.map((contract) => [contract.id, contract]));
   const modulesById = new Map(governanceBaseline.modules.map((module) => [module.id, module]));
@@ -212,6 +232,9 @@ function compileContextCapsule({ governanceBaseline, primaryModule, planOutcomes
   const normativeSources = asArray(governanceBaseline.projectDocument?.normativeSources)
     .filter((source) => normativeSourceIds.includes(readReference(source)))
     .map(cloneJson);
+  const projectedPlanOutcomes = projectOutcomeContext(planOutcomes, outcomeAlignment);
+  const outcomeGapRefs = new Set(projectedPlanOutcomes
+    .flatMap((outcome) => normalizeStringList(outcome?.acceptance?.gapRefs)));
   const relatedRefs = new Set([
     primaryModule.id,
     ...dependencies.map((dependency) => dependency.module),
@@ -219,7 +242,8 @@ function compileContextCapsule({ governanceBaseline, primaryModule, planOutcomes
     ...dependencyContractIds
   ].filter(Boolean));
   const knowledgeGaps = governanceBaseline.knowledgeGaps
-    .filter((gap) => asArray(gap.affects).map(readReference).some((ref) => relatedRefs.has(ref)))
+    .filter((gap) => outcomeGapRefs.has(readString(gap?.id))
+      || asArray(gap.affects).map(readReference).some((ref) => relatedRefs.has(ref)))
     .map(cloneJson);
   for (const [index, statement] of asArray(primaryModule.modelGaps).entries()) {
     knowledgeGaps.push({
@@ -273,7 +297,8 @@ function compileContextCapsule({ governanceBaseline, primaryModule, planOutcomes
     },
     primaryModule: primaryModule.id,
     module: pickModuleContext(primaryModule),
-    planOutcomes: planOutcomes.map(cloneJson),
+    planOutcomes: projectedPlanOutcomes,
+    outcomeAlignment: cloneJson(outcomeAlignment),
     publicContracts: publicContracts.map(pickContractContext),
     dependencyContracts: dependencyContracts.map(pickContractContext),
     dependencies,
@@ -413,6 +438,475 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
   }
 
   return selected.map(cloneJson);
+}
+
+function compileOutcomeAlignment({
+  change,
+  governanceBaseline,
+  primaryModule,
+  planOutcomes,
+  hints,
+  exceptions
+}) {
+  const mode = readString(governanceBaseline.projectDocument?.changePolicy?.outcomeAlignmentMode);
+  if (!mode) return null;
+  if (!["declared", "enforced"].includes(mode)) {
+    throw compilerError(
+      "OUTCOME_ALIGNMENT_MODE_INVALID",
+      `Unsupported Outcome alignment mode: ${mode}.`,
+      { mode }
+    );
+  }
+
+  const selectedOutcomeIds = new Set(planOutcomes.map((outcome) => outcome.id));
+  const normalizedHints = normalizeOutcomeContributionHints(hints, selectedOutcomeIds);
+  const normalizedExceptions = normalizeOutcomeExceptions(exceptions, selectedOutcomeIds);
+  const changeKind = readString(change.changeKind) ?? "implementation";
+  if (changeKind !== "implementation" || planOutcomes.length === 0) {
+    if (normalizedHints.length > 0 || normalizedExceptions.length > 0) {
+      throw compilerError(
+        "OUTCOME_ALIGNMENT_INPUT_NOT_APPLICABLE",
+        `Change kind ${changeKind} cannot carry Outcome contribution hints or exceptions.`,
+        { changeKind }
+      );
+    }
+    return {
+      schemaVersion: 1,
+      mode,
+      status: "not-applicable",
+      selectedOutcomeRefs: planOutcomes.map((outcome) => outcome.id),
+      contributions: [],
+      exceptions: [],
+      unresolved: []
+    };
+  }
+
+  const hintsByOutcome = new Map(normalizedHints.map((hint) => [hint.outcomeRef, hint]));
+  const exceptionsByOutcome = new Map(normalizedExceptions.map((exception) => [exception.outcomeRef, exception]));
+  const overlappingInputs = [...hintsByOutcome.keys()].filter((outcomeRef) => exceptionsByOutcome.has(outcomeRef));
+  if (overlappingInputs.length > 0) {
+    throw compilerError(
+      "OUTCOME_ALIGNMENT_INPUT_CONFLICT",
+      "An Outcome cannot use a Criterion hint and a non-progress exception in the same Change.",
+      { outcomeRefs: overlappingInputs }
+    );
+  }
+
+  const accessibleClaims = readAccessibleContractClaims(primaryModule, governanceBaseline);
+  const globalClaims = new Map(governanceBaseline.contracts.flatMap((contract) => (
+    asArray(contract.claims).map((claim) => [claim.id, claim])
+  )));
+  const exactAccessibleClaims = asArray(change.claims)
+    .filter((claim) => accessibleClaims.get(claim?.id)?.statement === claim?.statement)
+    .map(cloneJson);
+  const contributions = [];
+  const compiledExceptions = [];
+  const unresolved = [];
+
+  for (const outcome of planOutcomes) {
+    const outcomeRef = outcome.id;
+    const criteria = asArray(outcome.acceptance?.criteria);
+    const hint = hintsByOutcome.get(outcomeRef);
+    const exception = exceptionsByOutcome.get(outcomeRef);
+    if (criteria.length === 0) {
+      if (hint) {
+        throw compilerError(
+          "OUTCOME_CRITERION_UNKNOWN",
+          `Outcome ${outcomeRef} has no stable Criteria for the supplied hint.`,
+          { outcomeRef, criterionRefs: hint.criterionRefs }
+        );
+      }
+      if (exception) {
+        compiledExceptions.push(compileOutcomeException({
+          change,
+          governanceBaseline,
+          primaryModule,
+          outcome,
+          exception,
+          exactAccessibleClaims
+        }));
+      } else {
+        unresolved.push(outcomeAlignmentProblem({
+          outcomeRef,
+          reason: "criteria-missing",
+          exactAccessibleClaims,
+          changeClaims: change.claims,
+          accessibleClaims,
+          globalClaims
+        }));
+      }
+      continue;
+    }
+
+    const criteriaById = new Map(criteria.map((criterion) => [criterion.id, criterion]));
+    if (hint) {
+      const unknownCriterionRefs = hint.criterionRefs.filter((criterionRef) => !criteriaById.has(criterionRef));
+      if (unknownCriterionRefs.length > 0) {
+        throw compilerError(
+          "OUTCOME_CRITERION_UNKNOWN",
+          `Outcome ${outcomeRef} does not declare the hinted Criteria: ${unknownCriterionRefs.join(", ")}.`,
+          { outcomeRef, unknownCriterionRefs }
+        );
+      }
+    }
+
+    const matchesByClaim = exactAccessibleClaims.map((claim) => ({
+      claim,
+      criterionRefs: criteria
+        .filter((criterion) => normalizeStringList(criterion.claimRefs).includes(claim.id))
+        .map((criterion) => criterion.id)
+    }));
+    const candidateCriterionRefs = new Set(matchesByClaim.flatMap((match) => match.criterionRefs));
+    if (exception && candidateCriterionRefs.size > 0) {
+      throw compilerError(
+        "OUTCOME_EXCEPTION_CONTRIBUTION_AVAILABLE",
+        `Outcome ${outcomeRef} has an exact Claim-to-Criterion match and cannot be replaced by a non-progress exception.`,
+        { outcomeRef, candidateCriterionRefs: [...candidateCriterionRefs] }
+      );
+    }
+    if (exception) {
+      compiledExceptions.push(compileOutcomeException({
+        change,
+        governanceBaseline,
+        primaryModule,
+        outcome,
+        exception,
+        exactAccessibleClaims
+      }));
+      continue;
+    }
+
+    if (candidateCriterionRefs.size === 0) {
+      if (hint) {
+        throw compilerError(
+          "OUTCOME_HINT_UNMATCHED",
+          `Outcome ${outcomeRef} hint does not correspond to an exact accessible Change Claim.`,
+          { outcomeRef, criterionRefs: hint.criterionRefs }
+        );
+      }
+      unresolved.push(outcomeAlignmentProblem({
+        outcomeRef,
+        reason: "no-exact-match",
+        exactAccessibleClaims,
+        changeClaims: change.claims,
+        accessibleClaims,
+        globalClaims,
+        criteria
+      }));
+      continue;
+    }
+
+    const ambiguousMatches = matchesByClaim.filter((match) => match.criterionRefs.length > 1);
+    const ambiguousCriterionRefs = new Set(ambiguousMatches.flatMap((match) => match.criterionRefs));
+    if (hint) {
+      const unmatched = hint.criterionRefs.filter((criterionRef) => !candidateCriterionRefs.has(criterionRef));
+      if (unmatched.length > 0) {
+        throw compilerError(
+          "OUTCOME_HINT_UNMATCHED",
+          `Outcome ${outcomeRef} hint is not supported by exact accessible Claims.`,
+          { outcomeRef, unmatched, candidateCriterionRefs: [...candidateCriterionRefs] }
+        );
+      }
+      const unnecessary = hint.criterionRefs.filter((criterionRef) => !ambiguousCriterionRefs.has(criterionRef));
+      if (unnecessary.length > 0) {
+        throw compilerError(
+          "OUTCOME_HINT_NOT_AMBIGUOUS",
+          `Outcome ${outcomeRef} hint may only resolve an ambiguous Claim-to-Criterion match.`,
+          { outcomeRef, unnecessary, ambiguousCriterionRefs: [...ambiguousCriterionRefs] }
+        );
+      }
+    }
+
+    const selectedCriterionRefs = new Set(matchesByClaim
+      .filter((match) => match.criterionRefs.length === 1)
+      .map((match) => match.criterionRefs[0]));
+    const unresolvedAmbiguities = [];
+    for (const match of ambiguousMatches) {
+      const selected = match.criterionRefs.filter((criterionRef) => hint?.criterionRefs.includes(criterionRef));
+      if (selected.length > 1) {
+        throw compilerError(
+          "OUTCOME_HINT_AMBIGUOUS",
+          `Outcome ${outcomeRef} hint must select exactly one Criterion for Claim ${match.claim.id}.`,
+          { outcomeRef, claimRef: match.claim.id, selectedCriterionRefs: selected }
+        );
+      }
+      if (selected.length === 0) {
+        unresolvedAmbiguities.push({
+          claimRef: match.claim.id,
+          candidateCriterionRefs: match.criterionRefs
+        });
+      } else {
+        for (const criterionRef of selected) selectedCriterionRefs.add(criterionRef);
+      }
+    }
+
+    if (unresolvedAmbiguities.length > 0) {
+      unresolved.push({
+        outcomeRef,
+        reason: "ambiguous",
+        claimRefs: unresolvedAmbiguities.map((entry) => entry.claimRef),
+        candidateCriterionRefs: unique(unresolvedAmbiguities.flatMap((entry) => entry.candidateCriterionRefs)),
+        accessibleClaimRefs: exactAccessibleClaims.map((claim) => claim.id),
+        inaccessibleClaimRefs: []
+      });
+    }
+
+    for (const criterionRef of [...selectedCriterionRefs].sort()) {
+      const criterion = criteriaById.get(criterionRef);
+      const claimBindings = exactAccessibleClaims
+        .filter((claim) => normalizeStringList(criterion.claimRefs).includes(claim.id))
+        .sort((left, right) => left.id.localeCompare(right.id));
+      contributions.push(compileOutcomeContribution({
+        change,
+        governanceBaseline,
+        primaryModule,
+        outcome,
+        criterion,
+        claimBindings
+      }));
+    }
+  }
+
+  if (mode === "enforced" && compiledExceptions.length > 0) {
+    throw compilerError(
+      "OUTCOME_EXCEPTION_AUTHORITY_UNENFORCED",
+      "An enforced Outcome exception requires Change Kernel routing to Plan authority before it can compile.",
+      { exceptions: compiledExceptions }
+    );
+  }
+  if (mode === "enforced" && unresolved.length > 0) {
+    const codeByReason = {
+      ambiguous: "OUTCOME_CRITERION_AMBIGUOUS",
+      "criteria-missing": "OUTCOME_CRITERIA_REQUIRED",
+      "no-exact-match": "OUTCOME_CONTRIBUTION_REQUIRED"
+    };
+    throw compilerError(
+      codeByReason[unresolved[0].reason] ?? "OUTCOME_ALIGNMENT_UNRESOLVED",
+      "Enforced Outcome alignment requires every selected Outcome to resolve to a Contribution or Plan-authorized exception request.",
+      { unresolved }
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    mode,
+    status: unresolved.length > 0
+      ? "unresolved"
+      : compiledExceptions.length > 0 ? "pending-authority" : "complete",
+    selectedOutcomeRefs: planOutcomes.map((outcome) => outcome.id),
+    contributions: contributions.sort(compareOutcomeBindings),
+    exceptions: compiledExceptions.sort(compareOutcomeBindings),
+    unresolved
+  };
+}
+
+function normalizeOutcomeContributionHints(value, selectedOutcomeIds) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw compilerError("OUTCOME_HINT_INVALID", "outcomeContributionHints must be a list.");
+  }
+  const seen = new Set();
+  return value.map((hint) => {
+    const outcomeRef = readString(hint?.outcomeRef);
+    const rawCriterionRefs = hint?.criterionRefs;
+    if (!outcomeRef || !Array.isArray(rawCriterionRefs) || rawCriterionRefs.length === 0
+      || !rawCriterionRefs.every(readString)) {
+      throw compilerError(
+        "OUTCOME_HINT_INVALID",
+        "Each Outcome contribution hint requires outcomeRef and non-empty criterionRefs."
+      );
+    }
+    if (!selectedOutcomeIds.has(outcomeRef)) {
+      throw compilerError(
+        "OUTCOME_HINT_OUTCOME_UNSELECTED",
+        `Outcome contribution hint references unselected Outcome ${outcomeRef}.`,
+        { outcomeRef, selectedOutcomeRefs: [...selectedOutcomeIds] }
+      );
+    }
+    if (seen.has(outcomeRef)) {
+      throw compilerError("OUTCOME_HINT_DUPLICATE", `Outcome ${outcomeRef} has more than one contribution hint.`);
+    }
+    seen.add(outcomeRef);
+    const criterionRefs = rawCriterionRefs.map((item) => item.trim());
+    if (new Set(criterionRefs).size !== criterionRefs.length) {
+      throw compilerError("OUTCOME_HINT_DUPLICATE_CRITERION", `Outcome ${outcomeRef} repeats a Criterion hint.`);
+    }
+    return { outcomeRef, criterionRefs };
+  });
+}
+
+function normalizeOutcomeExceptions(value, selectedOutcomeIds) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw compilerError("OUTCOME_EXCEPTION_INVALID", "outcomeExceptions must be a list.");
+  }
+  const seen = new Set();
+  return value.map((exception) => {
+    const outcomeRef = readString(exception?.outcomeRef);
+    const reason = readString(exception?.reason);
+    if (!outcomeRef || !reason || !isSubstantive(exception?.residualUncertainty)) {
+      throw compilerError(
+        "OUTCOME_EXCEPTION_INVALID",
+        "Each Outcome exception requires outcomeRef, reason, and residualUncertainty."
+      );
+    }
+    if (!selectedOutcomeIds.has(outcomeRef)) {
+      throw compilerError(
+        "OUTCOME_EXCEPTION_OUTCOME_UNSELECTED",
+        `Outcome exception references unselected Outcome ${outcomeRef}.`,
+        { outcomeRef, selectedOutcomeRefs: [...selectedOutcomeIds] }
+      );
+    }
+    if (seen.has(outcomeRef)) {
+      throw compilerError("OUTCOME_EXCEPTION_DUPLICATE", `Outcome ${outcomeRef} has more than one exception.`);
+    }
+    seen.add(outcomeRef);
+    return {
+      outcomeRef,
+      reason,
+      residualUncertainty: cloneJson(exception.residualUncertainty)
+    };
+  });
+}
+
+function readAccessibleContractClaims(primaryModule, governanceBaseline) {
+  const contractIds = new Set([
+    ...asArray(primaryModule.publicContracts).map(readReference).filter(Boolean),
+    ...asArray(primaryModule.dependencies)
+      .map((dependency) => readReference(dependency, ["via", "contract", "contractId"]))
+      .filter(Boolean)
+  ]);
+  return new Map(governanceBaseline.contracts
+    .filter((contract) => contractIds.has(contract.id))
+    .flatMap((contract) => asArray(contract.claims).map((claim) => [claim.id, claim])));
+}
+
+function outcomeAlignmentProblem({
+  outcomeRef,
+  reason,
+  exactAccessibleClaims,
+  changeClaims,
+  accessibleClaims,
+  globalClaims,
+  criteria = []
+}) {
+  const criterionClaimRefs = new Set(criteria.flatMap((criterion) => normalizeStringList(criterion.claimRefs)));
+  return {
+    outcomeRef,
+    reason,
+    candidateCriterionRefs: [],
+    accessibleClaimRefs: exactAccessibleClaims.map((claim) => claim.id),
+    inaccessibleClaimRefs: asArray(changeClaims)
+      .filter((claim) => criterionClaimRefs.has(claim?.id)
+        && globalClaims.has(claim?.id)
+        && !accessibleClaims.has(claim?.id))
+      .map((claim) => claim.id)
+  };
+}
+
+function compileOutcomeContribution({
+  change,
+  governanceBaseline,
+  primaryModule,
+  outcome,
+  criterion,
+  claimBindings
+}) {
+  const binding = {
+    schemaVersion: 1,
+    changeId: change.id,
+    governanceBaselineDigest: governanceBaseline.digest,
+    outcome: { id: outcome.id, statement: outcome.outcome },
+    criterion: cloneJson(criterion),
+    moduleRef: primaryModule.id,
+    claims: claimBindings.map((claim) => ({ id: claim.id, statement: claim.statement }))
+  };
+  const bindingDigest = canonicalDigest(binding);
+  return {
+    contributionId: `oc-${bindingDigest.slice("sha256:".length)}`,
+    outcomeRef: outcome.id,
+    criterionRef: criterion.id,
+    moduleRef: primaryModule.id,
+    claimRefs: claimBindings.map((claim) => claim.id),
+    bindingDigest
+  };
+}
+
+function compileOutcomeException({
+  change,
+  governanceBaseline,
+  primaryModule,
+  outcome,
+  exception,
+  exactAccessibleClaims
+}) {
+  const requiredAuthorityRef = readReference(governanceBaseline.plan?.authority) ?? null;
+  const claimRefs = exactAccessibleClaims.map((claim) => claim.id).sort();
+  const binding = {
+    schemaVersion: 1,
+    changeId: change.id,
+    governanceBaselineDigest: governanceBaseline.digest,
+    outcome: { id: outcome.id, statement: outcome.outcome },
+    moduleRef: primaryModule.id,
+    claimRefs,
+    reason: exception.reason,
+    residualUncertainty: exception.residualUncertainty,
+    requiredAuthorityRef,
+    progress: "none",
+    transitionUse: "forbidden"
+  };
+  const bindingDigest = canonicalDigest(binding);
+  return {
+    exceptionId: `oe-${bindingDigest.slice("sha256:".length)}`,
+    outcomeRef: outcome.id,
+    moduleRef: primaryModule.id,
+    claimRefs,
+    reason: exception.reason,
+    residualUncertainty: cloneJson(exception.residualUncertainty),
+    requiredAuthorityRef,
+    progress: "none",
+    transitionUse: "forbidden",
+    bindingDigest
+  };
+}
+
+function compareOutcomeBindings(left, right) {
+  return left.outcomeRef.localeCompare(right.outcomeRef)
+    || (left.criterionRef ?? "").localeCompare(right.criterionRef ?? "")
+    || (left.contributionId ?? left.exceptionId).localeCompare(right.contributionId ?? right.exceptionId);
+}
+
+function projectOutcomeContext(planOutcomes, outcomeAlignment) {
+  if (!outcomeAlignment || outcomeAlignment.status === "not-applicable") {
+    return planOutcomes.map(cloneJson);
+  }
+  const criterionRefsByOutcome = new Map();
+  for (const contribution of outcomeAlignment.contributions) {
+    const refs = criterionRefsByOutcome.get(contribution.outcomeRef) ?? new Set();
+    refs.add(contribution.criterionRef);
+    criterionRefsByOutcome.set(contribution.outcomeRef, refs);
+  }
+  for (const problem of outcomeAlignment.unresolved) {
+    const refs = criterionRefsByOutcome.get(problem.outcomeRef) ?? new Set();
+    for (const criterionRef of normalizeStringList(problem.candidateCriterionRefs)) refs.add(criterionRef);
+    criterionRefsByOutcome.set(problem.outcomeRef, refs);
+  }
+  return planOutcomes.map((outcome) => {
+    const selectedRefs = criterionRefsByOutcome.get(outcome.id) ?? new Set();
+    const criteria = asArray(outcome.acceptance?.criteria)
+      .filter((criterion) => selectedRefs.has(criterion.id))
+      .map(cloneJson);
+    return cloneJson({
+      ...outcome,
+      acceptance: {
+        ...outcome.acceptance,
+        criteria,
+        exitCriteria: criteria.map((criterion) => criterion.statement),
+        claimRefs: unique(criteria.flatMap((criterion) => normalizeStringList(criterion.claimRefs))),
+        gapRefs: unique(criteria.flatMap((criterion) => normalizeStringList(criterion.gapRefs)))
+      }
+    });
+  });
 }
 
 function compileImpact({ governanceBaseline, primaryModule, supplied }) {

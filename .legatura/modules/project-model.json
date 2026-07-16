@@ -17,7 +17,9 @@
       "Dependencies are visible only through owned Contracts.",
       "A supplied Context Capsule may narrow but never broaden generated scope.",
       "Unrelated Claims require an explicit authority-bound mapping.",
-      "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome."
+      "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome.",
+      "Stable Outcome Criteria exactly mirror exit criteria and their declared Claim and Knowledge Gap sets.",
+      "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint."
     ]
   },
   "paths": {
