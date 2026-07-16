@@ -1,10 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { types as utilTypes } from "node:util";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   compileClaimGateRouteIndex,
   INTEGRITY_CHANGE_KINDS,
-  reuseCompiledClaimGateRouteIndex
+  projectCompiledClaimGateRouteIndex
 } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
@@ -16,7 +17,8 @@ import {
 export {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
-  compileClaimGateRoutes
+  compileClaimGateRoutes,
+  projectCompiledClaimGateRouteIndex
 };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -61,9 +63,11 @@ export function projectModelContentDigest(model) {
   return canonicalDigest(stripSourceMetadata(model));
 }
 
-export function validateProjectModel(model, { claimGateRouteIndexRequest = null } = {}) {
-  const claimGateRouteIndex = claimGateRouteIndexRequest
-    ? compileClaimGateRouteIndex(model, claimGateRouteIndexRequest)
+export function validateProjectModel(model, options = {}) {
+  const claimGateRouteProductRequest = readClaimGateRouteProductRequest(options);
+  let claimGateRoutesByClaim = claimGateRouteProductRequest.supplied
+    && claimGateRouteProductRequest.claimRefs !== undefined
+    ? projectClaimGateRoutes(model, claimGateRouteProductRequest)
     : null;
   const errors = [];
   const warnings = [];
@@ -324,12 +328,23 @@ export function validateProjectModel(model, { claimGateRouteIndexRequest = null 
   }
   validateOutcomePolicy(changePolicy, errors);
 
+  if (claimGateRouteProductRequest.supplied && !claimGateRoutesByClaim) {
+    const proofClaimRefs = collectKnowledgeGapProofClaimRefs({
+      knowledgeGaps: model.knowledgeGaps,
+      claimIndex
+    });
+    claimGateRoutesByClaim = projectClaimGateRoutes(model, {
+      ...claimGateRouteProductRequest,
+      claimRefs: proofClaimRefs
+    });
+  }
+
   validateKnowledgeGaps({
     model,
     knowledgeGaps: model.knowledgeGaps,
     claimIndex,
     plan: model.plan,
-    suppliedClaimGateRouteIndex: claimGateRouteIndex
+    suppliedClaimGateRoutesByClaim: claimGateRoutesByClaim
   }, errors);
 
   validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
@@ -347,8 +362,16 @@ export function validateProjectModel(model, { claimGateRouteIndexRequest = null 
       planOutcomes: asArray(model.plan?.outcomes).length,
       knowledgeGaps: model.knowledgeGaps.length
     },
-    ...(claimGateRouteIndex ? { claimGateRouteIndex } : {})
+    ...(claimGateRoutesByClaim ? { claimGateRoutesByClaim } : {})
   };
+}
+
+function projectClaimGateRoutes(model, request) {
+  return projectCompiledClaimGateRouteIndex(request.index, {
+    model,
+    claimRefs: request.claimRefs,
+    ...(request.limits === undefined ? {} : { limits: request.limits })
+  }).routesByClaim;
 }
 
 function validateKnowledgeGaps({
@@ -356,7 +379,7 @@ function validateKnowledgeGaps({
   knowledgeGaps,
   claimIndex,
   plan,
-  suppliedClaimGateRouteIndex
+  suppliedClaimGateRoutesByClaim
 }, errors) {
   const seen = new Set();
   const gapIndex = new Map();
@@ -365,7 +388,7 @@ function validateKnowledgeGaps({
     model,
     knowledgeGaps,
     claimIndex,
-    suppliedClaimGateRouteIndex
+    suppliedClaimGateRoutesByClaim
   }, errors);
   for (const [index, gap] of asArray(knowledgeGaps).entries()) {
     const gapId = readId(gap);
@@ -506,21 +529,14 @@ function compileKnowledgeGapProofClaimRouteIndex({
   model,
   knowledgeGaps,
   claimIndex,
-  suppliedClaimGateRouteIndex
+  suppliedClaimGateRoutesByClaim
 }, errors) {
-  const claimRefs = [...new Set(asArray(knowledgeGaps).flatMap((gap) => (
-    asArray(gap?.proofClaimRefs)
-      .filter((claimRef) => (
-        typeof claimRef === "string"
-          && readString(claimRef) === claimRef
-          && claimIndex.has(claimRef)
-      ))
-  )))].sort();
+  const claimRefs = collectKnowledgeGapProofClaimRefs({ knowledgeGaps, claimIndex });
   if (claimRefs.length === 0) return new Map();
+  if (suppliedClaimGateRoutesByClaim) return suppliedClaimGateRoutesByClaim;
   try {
-    return suppliedClaimGateRouteIndex
-      ? reuseCompiledClaimGateRouteIndex(suppliedClaimGateRouteIndex, { model, claimRefs })
-      : compileClaimGateRouteIndex(model, { claimRefs });
+    const product = compileClaimGateRouteIndex(model, { claimRefs });
+    return projectCompiledClaimGateRouteIndex(product, { model, claimRefs }).routesByClaim;
   } catch (error) {
     errors.push(issue(
       "knowledge-gap.proof-claim.route-index-invalid",
@@ -529,6 +545,66 @@ function compileKnowledgeGapProofClaimRouteIndex({
     ));
     return null;
   }
+}
+
+function collectKnowledgeGapProofClaimRefs({ knowledgeGaps, claimIndex }) {
+  return [...new Set(asArray(knowledgeGaps).flatMap((gap) => (
+    asArray(gap?.proofClaimRefs)
+      .filter((claimRef) => (
+        typeof claimRef === "string"
+          && readString(claimRef) === claimRef
+          && claimIndex.has(claimRef)
+      ))
+  )))].sort();
+}
+
+function readClaimGateRouteProductRequest(options) {
+  if (options === undefined) {
+    return { supplied: false, index: null, claimRefs: undefined, limits: undefined };
+  }
+  if (!options || typeof options !== "object" || Array.isArray(options)
+    || utilTypes.isProxy(options)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) {
+    throw invalidClaimGateRouteProductRequest(
+      "Project Model validation options must be a plain process-local object."
+    );
+  }
+  const allowed = new Set(["claimGateRouteIndex", "claimRefs", "limits"]);
+  for (const key in options) {
+    if (Object.hasOwn(options, key) && !allowed.has(key)) {
+      throw invalidClaimGateRouteProductRequest(
+        "Project Model validation options contain unsupported fields."
+      );
+    }
+  }
+  const supplied = Object.hasOwn(options, "claimGateRouteIndex");
+  const index = readClaimGateRouteProductOption(options, "claimGateRouteIndex");
+  const suppliedClaimRefs = readClaimGateRouteProductOption(options, "claimRefs");
+  const limits = readClaimGateRouteProductOption(options, "limits");
+  if (!supplied && (suppliedClaimRefs !== undefined || limits !== undefined)) {
+    throw invalidClaimGateRouteProductRequest(
+      "Claim coverage and limits require a compiler-produced Claim Gate route product."
+    );
+  }
+  return { supplied, index, claimRefs: suppliedClaimRefs, limits };
+}
+
+function readClaimGateRouteProductOption(options, field) {
+  if (!Object.hasOwn(options, field)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(options, field);
+  if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+    throw invalidClaimGateRouteProductRequest(
+      "Project Model validation options cannot contain accessor properties."
+    );
+  }
+  return descriptor.value;
+}
+
+function invalidClaimGateRouteProductRequest(message) {
+  const error = new Error(message);
+  error.code = "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID";
+  error.statusCode = 422;
+  return error;
 }
 
 function hasExecutableGateRoute(routeIndex, claimRef) {

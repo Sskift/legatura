@@ -1,7 +1,12 @@
 import { Buffer } from "node:buffer";
+import { types as utilTypes } from "node:util";
 
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { projectModelContentDigest, validateProjectModel } from "./project-model.mjs";
+import {
+  compileClaimGateRouteIndex,
+  projectModelContentDigest,
+  validateProjectModel
+} from "./project-model.mjs";
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const EVIDENCE_CURRENCIES = new Set(["current", "stale", "invalid", "sealed-historical"]);
@@ -55,7 +60,20 @@ export const ARCHITECTURE_PROFILE_LIMITS = Object.freeze({
   profileBytes: 2 * 1024 * 1024
 });
 
-export function compileArchitectureProfile(input = {}) {
+const ARCHITECTURE_PROFILE_ROUTE_INDEX_LIMITS = Object.freeze({
+  claimRefs: ARCHITECTURE_PROFILE_LIMITS.claims,
+  modules: ARCHITECTURE_PROFILE_LIMITS.modules,
+  gates: ARCHITECTURE_PROFILE_LIMITS.gates,
+  commands: ARCHITECTURE_PROFILE_LIMITS.routes,
+  refsPerCommand: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+  routes: ARCHITECTURE_PROFILE_LIMITS.routes,
+  totalRouteBytes: ARCHITECTURE_PROFILE_LIMITS.profileBytes,
+  depth: ARCHITECTURE_PROFILE_LIMITS.depth,
+  textBytes: ARCHITECTURE_PROFILE_LIMITS.textBytes
+});
+
+export function compileArchitectureProfile(input = {}, options = {}) {
+  const routeProductOption = readArchitectureProfileRouteProductOption(options);
   assertPlainObject(input, "input");
   assertPlainJsonContainer(input, "input", "input");
   assertAllowedKeys(input, ["model", "source", "changeFacts"], "input");
@@ -83,8 +101,12 @@ export function compileArchitectureProfile(input = {}) {
     byteLimit: ARCHITECTURE_PROFILE_LIMITS.metadataBytes
   });
   preflightArchitectureProfileModel(model);
-  const validation = validateArchitectureProfileModel(model);
-  const claimGateRouteIndex = validation.claimGateRouteIndex;
+  const claimRefs = collectArchitectureProfileClaimRefs(model);
+  const validation = validateArchitectureProfileModel(model, {
+    routeProductOption,
+    claimRefs
+  });
+  const claimGateRoutesByClaim = validation.claimGateRoutesByClaim;
   if (!validation.valid) {
     throw profileError(
       "ARCHITECTURE_PROFILE_MODEL_INVALID",
@@ -101,7 +123,7 @@ export function compileArchitectureProfile(input = {}) {
 
   const source = compileSource(sourceInput, model);
 
-  const graph = compileModelGraph(model, claimGateRouteIndex);
+  const graph = compileModelGraph(model, claimGateRoutesByClaim);
   compileChangeFacts(changeFacts, graph, source);
 
   for (const collection of Object.values(graph.entities)) sortFacts(collection);
@@ -522,7 +544,7 @@ function compileSource(value, model) {
   return source;
 }
 
-function compileModelGraph(model, claimGateRouteIndex) {
+function compileModelGraph(model, claimGateRoutesByClaim) {
   const entities = {
     stages: [],
     outcomes: [],
@@ -730,31 +752,22 @@ function compileModelGraph(model, claimGateRouteIndex) {
     }
   }
 
-  compileRoutes(graph, claimGateRouteIndex);
+  compileRoutes(graph, claimGateRoutesByClaim);
   return graph;
 }
 
-function validateArchitectureProfileModel(model) {
-  const claimRefs = asArray(model.contracts)
-    .flatMap((contract) => asArray(contract?.claims))
-    .map((claim) => readString(claim?.id))
-    .filter(Boolean);
+function validateArchitectureProfileModel(model, { routeProductOption, claimRefs }) {
   try {
-    return validateProjectModel(model, {
-      claimGateRouteIndexRequest: {
+    const claimGateRouteIndex = routeProductOption.supplied
+      ? routeProductOption.index
+      : compileClaimGateRouteIndex(model, {
         claimRefs,
-        limits: {
-          claimRefs: ARCHITECTURE_PROFILE_LIMITS.claims,
-          modules: ARCHITECTURE_PROFILE_LIMITS.modules,
-          gates: ARCHITECTURE_PROFILE_LIMITS.gates,
-          commands: ARCHITECTURE_PROFILE_LIMITS.routes,
-          refsPerCommand: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
-          routes: ARCHITECTURE_PROFILE_LIMITS.routes,
-          totalRouteBytes: ARCHITECTURE_PROFILE_LIMITS.profileBytes,
-          depth: ARCHITECTURE_PROFILE_LIMITS.depth,
-          textBytes: ARCHITECTURE_PROFILE_LIMITS.textBytes
-        }
-      }
+        limits: ARCHITECTURE_PROFILE_ROUTE_INDEX_LIMITS
+      });
+    return validateProjectModel(model, {
+      claimGateRouteIndex,
+      claimRefs,
+      limits: ARCHITECTURE_PROFILE_ROUTE_INDEX_LIMITS
     });
   } catch (error) {
     if (error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED") {
@@ -767,8 +780,55 @@ function validateArchitectureProfileModel(model) {
         : limit + 1;
       throw boundsError(`claimGateRouteIndex.${dimension}`, limit, observed);
     }
+    if (typeof error?.code === "string" && error.code.startsWith("CLAIM_GATE_ROUTE_INDEX_")) {
+      throw profileError(
+        "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+        "Architecture Profile route projection failed closed at its Project Model Provider boundary.",
+        { providerCode: error.code }
+      );
+    }
     throw error;
   }
+}
+
+function collectArchitectureProfileClaimRefs(model) {
+  return [...new Set(asArray(model.contracts)
+    .flatMap((contract) => asArray(contract?.claims))
+    .map((claim) => readString(claim?.id))
+    .filter(Boolean))].sort();
+}
+
+function readArchitectureProfileRouteProductOption(options) {
+  if (!options || typeof options !== "object" || Array.isArray(options)
+    || utilTypes.isProxy(options)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(options))) {
+    throw profileError(
+      "ARCHITECTURE_PROFILE_INPUT_INVALID",
+      "Architecture Profile options must be a plain process-local object.",
+      { location: "options" }
+    );
+  }
+  for (const key in options) {
+    if (Object.hasOwn(options, key) && key !== "claimGateRouteIndex") {
+      throw profileError(
+        "ARCHITECTURE_PROFILE_INPUT_INVALID",
+        "Architecture Profile options contain unsupported fields.",
+        { location: "options" }
+      );
+    }
+  }
+  if (!Object.hasOwn(options, "claimGateRouteIndex")) {
+    return { supplied: false, index: null };
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(options, "claimGateRouteIndex");
+  if (!descriptor || !Object.hasOwn(descriptor, "value")) {
+    throw profileError(
+      "ARCHITECTURE_PROFILE_INPUT_INVALID",
+      "Architecture Profile options cannot contain accessor properties.",
+      { location: "options.claimGateRouteIndex" }
+    );
+  }
+  return { supplied: true, index: descriptor.value };
 }
 
 function compileRoutes(graph, routesByClaim) {

@@ -53,6 +53,8 @@ export const CLAIM_GATE_ROUTE_INDEX_LIMITS = Object.freeze({
 });
 
 const COMPILED_CLAIM_GATE_ROUTE_INDEXES = new WeakMap();
+const CLAIM_GATE_ROUTE_LIMIT_USAGES = new WeakMap();
+let activeClaimGateRouteInputGuard = null;
 
 const COMPILED_CONTEXT_KEYS = new Set([
   "schemaVersion",
@@ -239,17 +241,15 @@ export function compileClaimGateRoutes(model, claimRef) {
   if (typeof claimRef !== "string") return [];
   const exactClaimRef = claimRef.trim();
   if (!exactClaimRef) return [];
-  return compileClaimGateRouteIndex(model, { claimRefs: [exactClaimRef] }).get(exactClaimRef);
+  const index = compileClaimGateRouteIndex(model, { claimRefs: [exactClaimRef] });
+  return projectCompiledClaimGateRouteIndex(index, {
+    model,
+    claimRefs: [exactClaimRef]
+  }).routesByClaim.get(exactClaimRef);
 }
 
 export function compileClaimGateRouteIndex(model, options = {}) {
   const { claimRefs, limits } = normalizeClaimGateRouteIndexOptions(options);
-  const normalizedClaimRefs = normalizeRequestedClaimRefs(claimRefs, limits);
-  const routesByClaim = new Map(normalizedClaimRefs.map((claimRef) => [claimRef, []]));
-  if (normalizedClaimRefs.length === 0) {
-    return brandCompiledClaimGateRouteIndex(routesByClaim, model, normalizedClaimRefs);
-  }
-
   const budget = {
     commands: 0,
     totalCommandClaimRefs: 0,
@@ -257,128 +257,145 @@ export function compileClaimGateRouteIndex(model, options = {}) {
     totalRouteBytes: 0,
     workUnits: 0
   };
-  const selectedClaimRefs = new Set(normalizedClaimRefs);
-  const modules = readRouteIndexArrayProperty(model, "modules", "model.modules");
-  const moduleRefs = compileRouteModuleRefs(modules, limits, budget);
-  const gates = readRouteIndexArrayProperty(model, "gates", "model.gates");
-  assertClaimGateRouteLimit("gates", gates.length, limits);
-  const projectDocument = readOptionalRouteIndexDataProperty(
-    model,
-    "projectDocument",
-    "model.projectDocument"
-  );
-  const changePolicy = readOptionalRouteIndexDataProperty(
-    projectDocument,
-    "changePolicy",
-    "model.projectDocument.changePolicy"
-  );
-  const fullGateId = normalizeBoundedOptionalRouteText(
-    readOptionalRouteIndexDataProperty(
-      changePolicy,
-      "fullGate",
-      "model.projectDocument.changePolicy.fullGate"
-    ),
-    "model.projectDocument.changePolicy.fullGate",
-    limits
-  );
-
-  for (let gateIndex = 0; gateIndex < gates.length; gateIndex += 1) {
-    reserveClaimGateRouteWork(budget, limits, 1);
-    const gateLocation = `model.gates.${gateIndex}`;
-    const gate = readRouteIndexArrayValue(gates, gateIndex, gateLocation);
-    let gateSemantics;
-    const declaredCommands = readOptionalRouteIndexDataProperty(
-      gate,
-      "commands",
-      `${gateLocation}.commands`
-    );
-    let commands;
-    if (Array.isArray(declaredCommands)) {
-      commands = assertRouteIndexArray(declaredCommands, `${gateLocation}.commands`);
-    } else {
-      const legacyCommand = readOptionalRouteIndexDataProperty(
-        gate,
-        "command",
-        `${gateLocation}.command`
+  const normalizedClaimRefs = normalizeRequestedClaimRefs(claimRefs, limits, budget);
+  const routesByClaim = new Map(normalizedClaimRefs.map((claimRef) => [claimRef, []]));
+  const inputGuard = createClaimGateRouteInputGuard(model);
+  const priorInputGuard = activeClaimGateRouteInputGuard;
+  activeClaimGateRouteInputGuard = inputGuard;
+  try {
+    if (normalizedClaimRefs.length > 0) {
+      const selectedClaimRefs = new Set(normalizedClaimRefs);
+      const modules = readRouteIndexArrayProperty(model, "modules", "model.modules");
+      const moduleRefs = compileRouteModuleRefs(modules, limits, budget);
+      const gates = readRouteIndexArrayProperty(model, "gates", "model.gates");
+      assertClaimGateRouteLimit("gates", gates.length, limits);
+      const projectDocument = readOptionalRouteIndexDataProperty(
+        model,
+        "projectDocument",
+        "model.projectDocument"
       );
-      commands = legacyCommand ? [gate] : [];
-    }
-    budget.commands += commands.length;
-    assertClaimGateRouteLimit("commands", budget.commands, limits);
-
-    for (let commandIndex = 0; commandIndex < commands.length; commandIndex += 1) {
-      reserveClaimGateRouteWork(budget, limits, 1);
-      const command = readRouteIndexArrayValue(
-        commands,
-        commandIndex,
-        `${gateLocation}.commands.${commandIndex}`
+      const changePolicy = readOptionalRouteIndexDataProperty(
+        projectDocument,
+        "changePolicy",
+        "model.projectDocument.changePolicy"
       );
-      const location = `model.gates.${gateIndex}.commands.${commandIndex}`;
-      const commandClaimRefs = normalizeBoundedCommandClaimRefs(
-        readOptionalRouteIndexDataProperty(command, "claimRefs", `${location}.claimRefs`),
-        `${location}.claimRefs`,
-        limits,
-        budget
-      );
-      const matchingClaimRefs = commandClaimRefs.filter((claimRef) => (
-        selectedClaimRefs.has(claimRef)
-      ));
-      if (matchingClaimRefs.length === 0) continue;
-      gateSemantics ??= compileBoundedGateSemantics(gate, gateLocation, limits, budget);
-      const commandId = normalizeBoundedOptionalRouteText(
-        readOptionalRouteIndexDataProperty(command, "id", `${location}.id`),
-        `${location}.id`,
+      const fullGateId = normalizeBoundedOptionalRouteText(
+        readOptionalRouteIndexDataProperty(
+          changePolicy,
+          "fullGate",
+          "model.projectDocument.changePolicy.fullGate"
+        ),
+        "model.projectDocument.changePolicy.fullGate",
         limits
-      ) ?? null;
-      const commandScope = normalizeBoundedGateScope(
-        readOptionalRouteIndexDataProperty(command, "appliesTo", `${location}.appliesTo`),
-        `${location}.appliesTo`,
-        limits,
-        budget
       );
-      reserveClaimGateRouteWork(budget, limits, moduleRefs.length);
-      const effectiveModuleRefs = moduleRefs.filter((moduleRef) => (
-        normalizedGateScopeSelectsModule(
-          gateSemantics.scope,
-          gateSemantics.selectorId,
-          moduleRef,
-          fullGateId
-        )
-          && normalizedCommandScopeSelectsModule(commandScope, moduleRef)
-      ));
 
-      const routeTemplate = compileBoundedRouteTemplate({
-        commandValues: readBoundedRouteCommandValues(command, location),
-        commandId,
-        effectiveModuleRefs,
-        gateId: gateSemantics.id,
-        limits,
-        location,
-        budget
-      });
-      for (const claimRef of matchingClaimRefs) {
+      for (let gateIndex = 0; gateIndex < gates.length; gateIndex += 1) {
         reserveClaimGateRouteWork(budget, limits, 1);
-        budget.routes += 1;
-        assertClaimGateRouteLimit("routes", budget.routes, limits);
-        const route = cloneRouteForClaim(routeTemplate, claimRef);
-        const routeBytes = Buffer.byteLength(JSON.stringify(route), "utf8");
-        assertClaimGateRouteLimit("routeBytes", routeBytes, limits);
-        budget.totalRouteBytes += routeBytes;
-        assertClaimGateRouteLimit("totalRouteBytes", budget.totalRouteBytes, limits);
-        routesByClaim.get(claimRef).push({ route, digest: canonicalDigest(route) });
+        const gateLocation = `model.gates.${gateIndex}`;
+        const gate = readRouteIndexArrayValue(gates, gateIndex, gateLocation);
+        let gateSemantics;
+        const declaredCommands = readOptionalRouteIndexDataProperty(
+          gate,
+          "commands",
+          `${gateLocation}.commands`
+        );
+        let commands;
+        if (Array.isArray(declaredCommands)) {
+          commands = assertRouteIndexArray(declaredCommands, `${gateLocation}.commands`);
+        } else {
+          const legacyCommand = readOptionalRouteIndexDataProperty(
+            gate,
+            "command",
+            `${gateLocation}.command`
+          );
+          commands = legacyCommand ? [gate] : [];
+        }
+        budget.commands += commands.length;
+        assertClaimGateRouteLimit("commands", budget.commands, limits);
+
+        for (let commandIndex = 0; commandIndex < commands.length; commandIndex += 1) {
+          reserveClaimGateRouteWork(budget, limits, 1);
+          const command = readRouteIndexArrayValue(
+            commands,
+            commandIndex,
+            `${gateLocation}.commands.${commandIndex}`
+          );
+          const location = `model.gates.${gateIndex}.commands.${commandIndex}`;
+          const commandClaimRefs = normalizeBoundedCommandClaimRefs(
+            readOptionalRouteIndexDataProperty(command, "claimRefs", `${location}.claimRefs`),
+            `${location}.claimRefs`,
+            limits,
+            budget
+          );
+          const matchingClaimRefs = commandClaimRefs.filter((claimRef) => (
+            selectedClaimRefs.has(claimRef)
+          ));
+          if (matchingClaimRefs.length === 0) continue;
+          gateSemantics ??= compileBoundedGateSemantics(gate, gateLocation, limits, budget);
+          const commandId = normalizeBoundedOptionalRouteText(
+            readOptionalRouteIndexDataProperty(command, "id", `${location}.id`),
+            `${location}.id`,
+            limits
+          ) ?? null;
+          const commandScope = normalizeBoundedGateScope(
+            readOptionalRouteIndexDataProperty(command, "appliesTo", `${location}.appliesTo`),
+            `${location}.appliesTo`,
+            limits,
+            budget
+          );
+          reserveClaimGateRouteWork(budget, limits, moduleRefs.length);
+          const effectiveModuleRefs = moduleRefs.filter((moduleRef) => (
+            normalizedGateScopeSelectsModule(
+              gateSemantics.scope,
+              gateSemantics.selectorId,
+              moduleRef,
+              fullGateId
+            )
+              && normalizedCommandScopeSelectsModule(commandScope, moduleRef)
+          ));
+
+          const routeTemplate = compileBoundedRouteTemplate({
+            commandValues: readBoundedRouteCommandValues(command, location),
+            commandId,
+            effectiveModuleRefs,
+            gateId: gateSemantics.id,
+            limits,
+            location,
+            budget
+          });
+          for (const claimRef of matchingClaimRefs) {
+            reserveClaimGateRouteWork(budget, limits, 1);
+            budget.routes += 1;
+            assertClaimGateRouteLimit("routes", budget.routes, limits);
+            const route = cloneRouteForClaim(routeTemplate, claimRef);
+            const routeBytes = Buffer.byteLength(JSON.stringify(route), "utf8");
+            assertClaimGateRouteLimit("routeBytes", routeBytes, limits);
+            budget.totalRouteBytes += routeBytes;
+            assertClaimGateRouteLimit("totalRouteBytes", budget.totalRouteBytes, limits);
+            routesByClaim.get(claimRef).push({ route, digest: canonicalDigest(route) });
+          }
+        }
+      }
+
+      for (const claimRef of normalizedClaimRefs) {
+        const compiled = routesByClaim.get(claimRef);
+        compiled.sort((left, right) => {
+          reserveClaimGateRouteWork(budget, limits, 1);
+          return compareCompiledClaimGateRoutes(left, right);
+        });
+        routesByClaim.set(claimRef, compiled.map((entry) => entry.route));
       }
     }
-  }
-
-  for (const claimRef of normalizedClaimRefs) {
-    const compiled = routesByClaim.get(claimRef);
-    compiled.sort((left, right) => {
-      reserveClaimGateRouteWork(budget, limits, 1);
-      return compareCompiledClaimGateRoutes(left, right);
+    return brandCompiledClaimGateRouteIndex({
+      routesByClaim,
+      model,
+      claimRefs: normalizedClaimRefs,
+      limits,
+      inputGuard
     });
-    routesByClaim.set(claimRef, compiled.map((entry) => entry.route));
+  } finally {
+    activeClaimGateRouteInputGuard = priorInputGuard;
   }
-  return brandCompiledClaimGateRouteIndex(routesByClaim, model, normalizedClaimRefs);
 }
 
 function compileBoundedGateSemantics(gate, location, limits, budget) {
@@ -400,53 +417,369 @@ function compileBoundedGateSemantics(gate, location, limits, budget) {
 }
 
 export function reuseCompiledClaimGateRouteIndex(index, options = {}) {
+  return projectCompiledClaimGateRouteIndex(index, options).routesByClaim;
+}
+
+export function projectCompiledClaimGateRouteIndex(index, options = {}) {
+  const priorInputGuard = activeClaimGateRouteInputGuard;
+  activeClaimGateRouteInputGuard = null;
+  try {
+    return projectCompiledClaimGateRouteIndexWithoutGuardCapture(index, options);
+  } finally {
+    activeClaimGateRouteInputGuard = priorInputGuard;
+  }
+}
+
+function projectCompiledClaimGateRouteIndexWithoutGuardCapture(index, options) {
+  assertNotRouteIndexProxy(index, "index");
+  const compiled = ((typeof index === "object" && index !== null)
+    || typeof index === "function")
+    ? COMPILED_CLAIM_GATE_ROUTE_INDEXES.get(index)
+    : undefined;
+  if (!compiled) {
+    throw invalidCompiledClaimGateRouteIndexError();
+  }
+
+  const projection = normalizeCompiledClaimGateRouteProjectionOptions(options, compiled);
+  if (projection.model !== compiled.model) {
+    throw invalidCompiledClaimGateRouteIndexError({ reason: "model-identity-mismatch" });
+  }
+  const missingClaimRefs = projection.claimRefs.filter((claimRef) => (
+    !compiled.claimRefSet.has(claimRef)
+  ));
+  if (missingClaimRefs.length > 0) {
+    throw invalidCompiledClaimGateRouteIndexError({
+      reason: "claim-coverage-incomplete",
+      claimRefs: missingClaimRefs
+    });
+  }
+  assertCompiledClaimGateRouteProjectionLimits(compiled, projection.limits);
+  assertClaimGateRouteInputGuardCurrent(compiled.inputGuard);
+  if (canonicalDigest({
+    claimRefs: compiled.claimRefs,
+    entries: compiled.entries,
+    observation: compiled.observation,
+    routePolicyContentDigest: compiled.inputGuard.contentDigest
+  }) !== compiled.productDigest) {
+    throw invalidCompiledClaimGateRouteIndexError({ reason: "product-content-drift" });
+  }
+
+  const authoritativeEntries = new Map(compiled.entries);
+  const routesByClaim = new Map(projection.claimRefs.map((claimRef) => [
+    claimRef,
+    structuredClone(authoritativeEntries.get(claimRef))
+  ]));
+  return { routesByClaim, observation: compiled.observation };
+}
+
+function brandCompiledClaimGateRouteIndex({
+  routesByClaim,
+  model,
+  claimRefs,
+  limits,
+  inputGuard
+}) {
+  const token = Object.freeze(Object.create(null));
+  const usage = Object.freeze({ ...claimGateRouteLimitUsage(limits) });
+  const entries = deepFreezeRouteProductValue(
+    [...routesByClaim.entries()].map(([claimRef, routes]) => [
+      claimRef,
+      structuredClone(routes)
+    ])
+  );
+  const observation = Object.freeze({
+    schemaVersion: 1,
+    workUnits: usage.workUnits,
+    routes: usage.routes,
+    totalRouteBytes: usage.totalRouteBytes
+  });
+  const compiled = {
+    model,
+    claimRefs: Object.freeze([...claimRefs]),
+    claimRefSet: new Set(claimRefs),
+    entries,
+    limits: Object.freeze({ ...limits }),
+    usage,
+    inputGuard: sealClaimGateRouteInputGuard(inputGuard),
+    observation
+  };
+  compiled.productDigest = canonicalDigest({
+    claimRefs: compiled.claimRefs,
+    entries: compiled.entries,
+    observation,
+    routePolicyContentDigest: compiled.inputGuard.contentDigest
+  });
+  COMPILED_CLAIM_GATE_ROUTE_INDEXES.set(token, compiled);
+  return token;
+}
+
+function normalizeCompiledClaimGateRouteProjectionOptions(options, compiled) {
   assertPlainRouteIndexObject(
     options,
     "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID",
-    "Claim Gate route index reuse options must be a plain object."
+    "Compiled Claim Gate route projection options must be a plain object."
   );
-  const model = Object.hasOwn(options, "model")
-    ? readRouteIndexDataProperty(options, "model", "reuse")
-    : undefined;
-  const claimRefs = Object.hasOwn(options, "claimRefs")
-    ? readRouteIndexDataProperty(options, "claimRefs", "reuse")
-    : [];
-  const compiled = COMPILED_CLAIM_GATE_ROUTE_INDEXES.get(index);
-  const requestedClaimRefs = [];
-  if (Array.isArray(claimRefs)) {
-    assertRouteIndexArray(claimRefs, "reuse.claimRefs");
-    for (let itemIndex = 0; itemIndex < claimRefs.length; itemIndex += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(claimRefs, String(itemIndex));
-      if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "string") {
-        throw claimGateRouteIndexError(
-          "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID",
-          "Claim Gate route index reuse requires dense string claimRefs."
-        );
-      }
-      requestedClaimRefs.push(descriptor.value);
+  const allowedOptionKeys = new Set(["model", "claimRefs", "limits"]);
+  for (const key in options) {
+    if (!Object.hasOwn(options, key)) continue;
+    if (!allowedOptionKeys.has(key)) {
+      throw invalidCompiledClaimGateRouteIndexError({
+        reason: "unsupported-option",
+        field: key
+      });
     }
-  }
-  const exactClaimRefs = [...new Set(requestedClaimRefs)].sort();
-  if (!compiled
-    || compiled.model !== model
-    || !Array.isArray(claimRefs)
-    || exactClaimRefs.some((claimRef) => !compiled.claimRefs.has(claimRef))) {
-    throw claimGateRouteIndexError(
-      "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID",
-      "A supplied Claim Gate route index must be compiler-produced for the same Model and cover every requested Claim.",
-      { claimRefs: exactClaimRefs }
+    assertRouteIndexDataProperty(
+      options,
+      key,
+      "projection",
+      "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID"
     );
   }
-  return new Map(compiled.entries.map(([claimRef, routes]) => [claimRef, structuredClone(routes)]));
+  const model = Object.hasOwn(options, "model")
+    ? readRouteIndexDataProperty(
+        options,
+        "model",
+        "projection",
+        "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID"
+      )
+    : undefined;
+  const rawClaimRefs = Object.hasOwn(options, "claimRefs")
+    ? readRouteIndexDataProperty(
+        options,
+        "claimRefs",
+        "projection",
+        "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID"
+      )
+    : compiled.claimRefs;
+  const rawLimits = Object.hasOwn(options, "limits")
+    ? readRouteIndexDataProperty(
+        options,
+        "limits",
+        "projection",
+        "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID"
+      )
+    : {};
+  const limits = compileClaimGateRouteProjectionLimits(rawLimits, compiled.limits);
+  let claimRefs;
+  try {
+    claimRefs = normalizeRequestedClaimRefs(rawClaimRefs, limits, { workUnits: 0 });
+  } catch (error) {
+    if (error?.code === "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID") {
+      throw invalidCompiledClaimGateRouteIndexError({ reason: "claim-coverage-invalid" });
+    }
+    throw error;
+  }
+  return { model, claimRefs, limits };
 }
 
-function brandCompiledClaimGateRouteIndex(index, model, claimRefs) {
-  COMPILED_CLAIM_GATE_ROUTE_INDEXES.set(index, {
+function compileClaimGateRouteProjectionLimits(supplied, compiledLimits) {
+  assertPlainRouteIndexObject(
+    supplied,
+    "CLAIM_GATE_ROUTE_INDEX_LIMIT_INVALID",
+    "Compiled Claim Gate route projection limits must be a plain object."
+  );
+  const projected = { ...compiledLimits };
+  for (const dimension in supplied) {
+    if (!Object.hasOwn(supplied, dimension)) continue;
+    if (!Object.hasOwn(CLAIM_GATE_ROUTE_INDEX_LIMITS, dimension)) {
+      throw claimGateRouteIndexError(
+        "CLAIM_GATE_ROUTE_INDEX_LIMIT_INVALID",
+        "Compiled Claim Gate route projection limits contain an unsupported dimension.",
+        { dimension }
+      );
+    }
+    const requested = readRouteIndexDataProperty(
+      supplied,
+      dimension,
+      "projection.limits",
+      "CLAIM_GATE_ROUTE_INDEX_LIMIT_INVALID"
+    );
+    const compiledLimit = compiledLimits[dimension];
+    if (!Number.isSafeInteger(requested)
+      || requested < 0
+      || requested > compiledLimit) {
+      throw claimGateRouteIndexError(
+        "CLAIM_GATE_ROUTE_INDEX_LIMIT_INVALID",
+        "A projection limit must be a non-negative safe integer no greater than its compilation limit.",
+        { dimension, compiledLimit, requested }
+      );
+    }
+    projected[dimension] = requested;
+  }
+  return projected;
+}
+
+function assertCompiledClaimGateRouteProjectionLimits(compiled, limits) {
+  for (const dimension of Object.keys(CLAIM_GATE_ROUTE_INDEX_LIMITS)) {
+    assertClaimGateRouteLimit(dimension, compiled.usage[dimension], limits);
+  }
+}
+
+function invalidCompiledClaimGateRouteIndexError(details) {
+  return claimGateRouteIndexError(
+    "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID",
+    "A compiled Claim Gate route index must be compiler-produced for the same unchanged Model and cover every requested Claim.",
+    details
+  );
+}
+
+function deepFreezeRouteProductValue(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const key of Object.keys(value)) deepFreezeRouteProductValue(value[key]);
+  return Object.freeze(value);
+}
+
+function createClaimGateRouteInputGuard(model) {
+  return {
     model,
-    claimRefs: new Set(claimRefs),
-    entries: [...index.entries()].map(([claimRef, routes]) => [claimRef, structuredClone(routes)])
+    records: [],
+    seen: new WeakMap(),
+    objectIds: new WeakMap(),
+    nextObjectId: 1
+  };
+}
+
+function sealClaimGateRouteInputGuard(guard) {
+  const semanticRecords = guard.records.map((record) => {
+    if (record.type === "descriptor") {
+      return {
+        type: record.type,
+        location: record.location,
+        key: record.key,
+        present: record.present,
+        ...(record.present ? { value: guardedValueIdentity(guard, record.value) } : {})
+      };
+    }
+    if (record.type === "prototype") {
+      return {
+        type: record.type,
+        location: record.location,
+        value: guardedValueIdentity(guard, record.value)
+      };
+    }
+    return {
+      type: record.type,
+      location: record.location,
+      value: record.value
+    };
   });
-  return index;
+  for (const record of guard.records) {
+    if (record.type === "enumerable-keys") Object.freeze(record.value);
+    Object.freeze(record);
+  }
+  return Object.freeze({
+    model: guard.model,
+    records: Object.freeze([...guard.records]),
+    contentDigest: canonicalDigest(semanticRecords)
+  });
+}
+
+function guardedValueIdentity(guard, value) {
+  if ((typeof value === "object" && value !== null) || typeof value === "function") {
+    let id = guard.objectIds.get(value);
+    if (!id) {
+      id = guard.nextObjectId;
+      guard.nextObjectId += 1;
+      guard.objectIds.set(value, id);
+    }
+    return { kind: "object", id };
+  }
+  if (value === undefined) return { kind: "undefined" };
+  if (typeof value === "number" && Object.is(value, -0)) return { kind: "number", value: "-0" };
+  return { kind: typeof value, value };
+}
+
+function recordClaimGateRouteGuard(value, token, createRecord) {
+  const guard = activeClaimGateRouteInputGuard;
+  if (!guard || !value || typeof value !== "object") return;
+  let tokens = guard.seen.get(value);
+  if (!tokens) {
+    tokens = new Set();
+    guard.seen.set(value, tokens);
+  }
+  if (tokens.has(token)) return;
+  tokens.add(token);
+  guard.records.push(createRecord());
+}
+
+function recordClaimGateRoutePrototype(value, location) {
+  recordClaimGateRouteGuard(value, "prototype", () => ({
+    type: "prototype",
+    object: value,
+    location,
+    value: Object.getPrototypeOf(value)
+  }));
+}
+
+function recordClaimGateRouteArrayLength(value, location) {
+  recordClaimGateRouteGuard(value, "array-length", () => ({
+    type: "array-length",
+    object: value,
+    location,
+    value: value.length
+  }));
+}
+
+function recordClaimGateRouteEnumerableKeys(value, location, keys) {
+  recordClaimGateRouteGuard(value, "enumerable-keys", () => ({
+    type: "enumerable-keys",
+    object: value,
+    location,
+    value: [...keys]
+  }));
+}
+
+function guardedRouteIndexOwnDescriptor(value, key, location) {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  recordClaimGateRouteGuard(value, `descriptor:${key}`, () => ({
+    type: "descriptor",
+    object: value,
+    key,
+    location,
+    present: Boolean(descriptor),
+    value: descriptor && "value" in descriptor ? descriptor.value : undefined,
+    data: Boolean(descriptor && "value" in descriptor)
+  }));
+  return descriptor;
+}
+
+function assertClaimGateRouteInputGuardCurrent(guard) {
+  for (const record of guard.records) {
+    let current;
+    if (record.type === "prototype") {
+      current = Object.getPrototypeOf(record.object);
+      if (current !== record.value) throwRouteInputDrift(record.location);
+      continue;
+    }
+    if (record.type === "array-length") {
+      if (record.object.length !== record.value) throwRouteInputDrift(record.location);
+      continue;
+    }
+    if (record.type === "enumerable-keys") {
+      let index = 0;
+      for (const key in record.object) {
+        if (!Object.hasOwn(record.object, key)) continue;
+        if (key !== record.value[index]) throwRouteInputDrift(record.location);
+        index += 1;
+      }
+      if (index !== record.value.length) throwRouteInputDrift(record.location);
+      continue;
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(record.object, record.key);
+    if (Boolean(descriptor) !== record.present
+      || (record.present && (!record.data
+        || !("value" in descriptor)
+        || !Object.is(descriptor.value, record.value)))) {
+      throwRouteInputDrift(record.location);
+    }
+  }
+}
+
+function throwRouteInputDrift(location) {
+  throw invalidCompiledClaimGateRouteIndexError({
+    reason: "model-content-drift",
+    location
+  });
 }
 
 function readBoundedRouteCommandValues(command, location) {
@@ -483,12 +816,14 @@ function assertRouteIndexArray(value, location) {
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
     throw invalidClaimGateRouteJsonError(location);
   }
+  recordClaimGateRoutePrototype(value, location);
+  recordClaimGateRouteArrayLength(value, location);
   return value;
 }
 
 function readRouteIndexArrayValue(value, index, location) {
   assertRouteIndexArray(value, location.slice(0, location.lastIndexOf(".")) || location);
-  const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+  const descriptor = guardedRouteIndexOwnDescriptor(value, String(index), location);
   if (!descriptor) return undefined;
   if (!("value" in descriptor)) {
     throw claimGateRouteIndexError(
@@ -510,7 +845,8 @@ function readOptionalRouteIndexDataProperty(value, key, location) {
   if (prototype !== Object.prototype && prototype !== null) {
     throw invalidClaimGateRouteJsonError(location);
   }
-  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  recordClaimGateRoutePrototype(value, location);
+  const descriptor = guardedRouteIndexOwnDescriptor(value, key, location);
   if (!descriptor) return undefined;
   if (!("value" in descriptor)) {
     throw claimGateRouteIndexError(
@@ -597,10 +933,14 @@ function compileClaimGateRouteIndexLimits(supplied) {
     }
     compiled[dimension] = requested;
   }
+  CLAIM_GATE_ROUTE_LIMIT_USAGES.set(
+    compiled,
+    Object.fromEntries(Object.keys(CLAIM_GATE_ROUTE_INDEX_LIMITS).map((dimension) => [dimension, 0]))
+  );
   return compiled;
 }
 
-function normalizeRequestedClaimRefs(rawClaimRefs, limits) {
+function normalizeRequestedClaimRefs(rawClaimRefs, limits, budget) {
   if (!Array.isArray(rawClaimRefs)) {
     throw claimGateRouteIndexError(
       "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
@@ -611,6 +951,7 @@ function normalizeRequestedClaimRefs(rawClaimRefs, limits) {
   assertClaimGateRouteLimit("claimRefs", rawClaimRefs.length, limits);
   const normalized = new Set();
   for (let index = 0; index < rawClaimRefs.length; index += 1) {
+    reserveClaimGateRouteWork(budget, limits, 1);
     const descriptor = Object.getOwnPropertyDescriptor(rawClaimRefs, String(index));
     if (!descriptor || !("value" in descriptor)) {
       throw claimGateRouteIndexError(
@@ -671,7 +1012,11 @@ function normalizeBoundedRouteStringList(values, location, limits, budget) {
   const normalized = new Set();
   for (let index = 0; index < values.length; index += 1) {
     reserveClaimGateRouteWork(budget, limits, 1);
-    const descriptor = Object.getOwnPropertyDescriptor(values, String(index));
+    const descriptor = guardedRouteIndexOwnDescriptor(
+      values,
+      String(index),
+      `${location}.${index}`
+    );
     if (!descriptor) continue;
     if (!("value" in descriptor)) {
       throw claimGateRouteIndexError(
@@ -772,7 +1117,8 @@ function cloneBoundedRouteJson(value, context) {
   if (!value || typeof value !== "object") throw invalidClaimGateRouteJsonError(location);
   assertNotRouteIndexProxy(value, location);
   if (ancestors.has(value)) throw invalidClaimGateRouteJsonError(location);
-  const toJsonDescriptor = Object.getOwnPropertyDescriptor(value, "toJSON");
+  recordClaimGateRoutePrototype(value, location);
+  const toJsonDescriptor = guardedRouteIndexOwnDescriptor(value, "toJSON", `${location}.toJSON`);
   if (toJsonDescriptor
     && (!("value" in toJsonDescriptor) || typeof toJsonDescriptor.value === "function")) {
     throw invalidClaimGateRouteJsonError(`${location}.toJSON`);
@@ -783,12 +1129,17 @@ function cloneBoundedRouteJson(value, context) {
       throw invalidClaimGateRouteJsonError(location);
     }
     const minimumBytes = 2 + Math.max(0, value.length - 1);
+    recordClaimGateRouteArrayLength(value, location);
     consumeBoundedRouteBytes(routeBudget, limits, minimumBytes, location);
     assertPotentialClaimGateRouteWork(budget, limits, value.length);
     const result = new Array(value.length);
     ancestors.add(value);
     for (let index = 0; index < value.length; index += 1) {
-      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      const descriptor = guardedRouteIndexOwnDescriptor(
+        value,
+        String(index),
+        `${location}.${index}`
+      );
       if (!descriptor || !("value" in descriptor)) {
         ancestors.delete(value);
         throw invalidClaimGateRouteJsonError(`${location}.${index}`);
@@ -809,36 +1160,40 @@ function cloneBoundedRouteJson(value, context) {
   }
   consumeBoundedRouteBytes(routeBudget, limits, 2, location);
   const result = Object.create(null);
+  const enumerableKeys = [];
   let propertyCount = 0;
   ancestors.add(value);
   for (const key in value) {
     if (!Object.hasOwn(value, key)) continue;
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    assertBoundedRouteText(key, `${location}.[key]`, limits);
+    const keyLocation = `${location}.${key}`;
+    const descriptor = guardedRouteIndexOwnDescriptor(value, key, keyLocation);
     if (!descriptor || !("value" in descriptor)) {
       ancestors.delete(value);
-      throw invalidClaimGateRouteJsonError(`${location}.${key}`);
+      throw invalidClaimGateRouteJsonError(keyLocation);
     }
-    assertBoundedRouteText(key, `${location}.${key}`, limits);
     if (propertyCount > 0) consumeBoundedRouteBytes(routeBudget, limits, 1, location);
     consumeBoundedRouteBytes(
       routeBudget,
       limits,
       Buffer.byteLength(JSON.stringify(key), "utf8") + 1,
-      `${location}.${key}`
+      keyLocation
     );
+    enumerableKeys.push(key);
     Object.defineProperty(result, key, {
       configurable: true,
       enumerable: true,
       value: cloneBoundedRouteJson(descriptor.value, {
         ...context,
         depth: depth + 1,
-        location: `${location}.${key}`
+        location: keyLocation
       }),
       writable: true
     });
     propertyCount += 1;
   }
   ancestors.delete(value);
+  recordClaimGateRouteEnumerableKeys(value, location, enumerableKeys);
   return result;
 }
 
@@ -874,8 +1229,9 @@ function readBoundedModelReference(value, location, limits) {
   if (prototype !== Object.prototype && prototype !== null) {
     throw invalidClaimGateRouteJsonError(location);
   }
+  recordClaimGateRoutePrototype(value, location);
   for (const key of ["id", "module", "moduleId", "target"]) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    const descriptor = guardedRouteIndexOwnDescriptor(value, key, `${location}.${key}`);
     if (!descriptor) continue;
     if (!("value" in descriptor)) {
       throw claimGateRouteIndexError(
@@ -922,6 +1278,9 @@ function normalizeBoundedOptionalRouteText(value, location, limits) {
 }
 
 function assertBoundedRouteText(value, location, limits) {
+  if (value.length > limits.textBytes) {
+    assertClaimGateRouteLimit("textBytes", value.length, limits, location);
+  }
   const observed = Buffer.byteLength(value, "utf8");
   assertClaimGateRouteLimit("textBytes", observed, limits, location);
 }
@@ -943,6 +1302,8 @@ function assertPotentialClaimGateRouteWork(budget, limits, units) {
 }
 
 function assertClaimGateRouteLimit(dimension, observed, limits, location) {
+  const usage = CLAIM_GATE_ROUTE_LIMIT_USAGES.get(limits);
+  if (usage) usage[dimension] = Math.max(usage[dimension], observed);
   const limit = limits[dimension];
   if (observed <= limit) return;
   throw claimGateRouteIndexError(
@@ -956,6 +1317,11 @@ function assertClaimGateRouteLimit(dimension, observed, limits, location) {
     },
     413
   );
+}
+
+function claimGateRouteLimitUsage(limits) {
+  return CLAIM_GATE_ROUTE_LIMIT_USAGES.get(limits)
+    ?? Object.fromEntries(Object.keys(CLAIM_GATE_ROUTE_INDEX_LIMITS).map((dimension) => [dimension, 0]));
 }
 
 function assertPlainRouteIndexObject(value, code, message) {

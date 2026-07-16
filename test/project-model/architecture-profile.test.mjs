@@ -12,6 +12,7 @@ import {
 } from "../../src/core/change-compiler.mjs";
 import {
   loadProjectModel,
+  projectCompiledClaimGateRouteIndex,
   projectModelContentDigest,
   validateProjectModel
 } from "../../src/core/project-model.mjs";
@@ -28,8 +29,18 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
   const allClaimRefs = model.contracts
     .flatMap((contract) => contract.claims)
     .map((claim) => claim.id);
-  const routeIndex = compileClaimGateRouteIndex(model, { claimRefs: allClaimRefs });
+  const routeProduct = compileClaimGateRouteIndex(model, { claimRefs: allClaimRefs });
+  const routeProjection = projectCompiledClaimGateRouteIndex(routeProduct, {
+    model,
+    claimRefs: allClaimRefs
+  });
+  const routeIndex = routeProjection.routesByClaim;
   assert.deepEqual([...routeIndex.keys()], [...new Set(allClaimRefs)].sort());
+  assert.equal(Object.isFrozen(routeProjection.observation), true);
+  assert.equal(Reflect.set(routeProjection.observation, "routes", 0), false);
+  for (const dimension of ["workUnits", "routes", "totalRouteBytes"]) {
+    assert.equal(Number.isSafeInteger(routeProjection.observation[dimension]), true);
+  }
   for (const claimRef of allClaimRefs) {
     assert.deepEqual(
       routeIndex.get(claimRef),
@@ -109,7 +120,7 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
     source: multiSource,
     changeFacts: multiSourceFacts
   });
-  const multiSourceRouteIndex = compileClaimGateRouteIndex(multiSourceModel, {
+  const multiSourceRouteIndex = compileProjectedClaimGateRouteIndex(multiSourceModel, {
     claimRefs: [PROFILE_CLAIM, SECOND_PROFILE_SOURCE_CLAIM]
   });
   const sharedCommandRoutes = [PROFILE_CLAIM, SECOND_PROFILE_SOURCE_CLAIM]
@@ -158,8 +169,26 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
   assert.ok(profile.entities.gaps.some((item) => item.id === "architecture-acceptance-profile-not-projected"));
   assertProfileContainsNoAggregateOrBody(profile);
 
+  const callerProjection = projectCompiledClaimGateRouteIndex(routeProduct, {
+    model,
+    claimRefs: allClaimRefs
+  });
+  callerProjection.routesByClaim.get(PROFILE_CLAIM)[0].command[0] = "caller-forgery";
+  callerProjection.routesByClaim.clear();
+  assert.equal(Reflect.set(routeProduct, "routesByClaim", new Map()), false);
+  assert.deepEqual(
+    compileArchitectureProfile(
+      { model, source, changeFacts },
+      { claimGateRouteIndex: routeProduct }
+    ),
+    profile,
+    "Profile projection ignores caller-visible token and prior route-projection mutation"
+  );
+
   const { profileDigest, ...content } = profile;
   assert.equal(profileDigest, canonicalDigest(content));
+  assert.equal(JSON.stringify(profile).includes('"observation"'), false);
+  assert.equal(JSON.stringify(profile).includes('"workUnits"'), false);
   assert.ok(Buffer.byteLength(JSON.stringify(profile), "utf8") <= ARCHITECTURE_PROFILE_LIMITS.profileBytes);
 });
 
@@ -170,6 +199,11 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
   const allClaimRefs = model.contracts
     .flatMap((contract) => contract.claims)
     .map((claim) => claim.id);
+  const completeRouteProduct = compileClaimGateRouteIndex(model, { claimRefs: allClaimRefs });
+  const completeRouteProjection = projectCompiledClaimGateRouteIndex(completeRouteProduct, {
+    model,
+    claimRefs: allClaimRefs
+  });
   assert.throws(
     () => compileClaimGateRouteIndex(model, {
       claimRefs: allClaimRefs,
@@ -182,6 +216,54 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
     ),
     "a caller-tightened route budget fails closed inside the shared compiler Interface"
   );
+  for (const dimension of ["workUnits", "routes", "totalRouteBytes"]) {
+    const observed = completeRouteProjection.observation[dimension];
+    assert.ok(observed > 0);
+    assert.throws(
+      () => projectCompiledClaimGateRouteIndex(completeRouteProduct, {
+        model,
+        claimRefs: allClaimRefs,
+        limits: { [dimension]: observed - 1 }
+      }),
+      (error) => (
+        error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED"
+          && error?.statusCode === 413
+          && error?.details?.dimension === dimension
+      ),
+      `a tighter ${dimension} budget is charged against compiler-recorded usage`
+    );
+  }
+  const reentrantClaimRefs = [PROFILE_CLAIM];
+  const reentrantProduct = compileClaimGateRouteIndex(model, {
+    claimRefs: reentrantClaimRefs
+  });
+  const originalLocaleCompare = String.prototype.localeCompare;
+  let reentrantProjectionObserved = false;
+  let outerProduct;
+  try {
+    String.prototype.localeCompare = function (...args) {
+      if (!reentrantProjectionObserved) {
+        reentrantProjectionObserved = true;
+        projectCompiledClaimGateRouteIndex(reentrantProduct, {
+          model,
+          claimRefs: reentrantClaimRefs
+        });
+      }
+      return Reflect.apply(originalLocaleCompare, this, args);
+    };
+    outerProduct = compileClaimGateRouteIndex(model, { claimRefs: allClaimRefs });
+  } finally {
+    String.prototype.localeCompare = originalLocaleCompare;
+  }
+  assert.equal(reentrantProjectionObserved, true);
+  reentrantClaimRefs[0] = "mutated-process-local-projection-input";
+  assert.doesNotThrow(
+    () => projectCompiledClaimGateRouteIndex(outerProduct, {
+      model,
+      claimRefs: allClaimRefs
+    }),
+    "a reentrant consumer projection cannot contaminate the active compiler guard"
+  );
   const unmatchedModel = structuredClone(model);
   const oversizedUnmatchedText = "unmatched".repeat(512);
   unmatchedModel.gates.unshift({
@@ -193,10 +275,22 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
     .find((gate) => gate.id === "architecture-profile")
     .commands.unshift({ id: oversizedUnmatchedText, claimRefs: ["unselected-claim"] });
   assert.deepEqual(
-    compileClaimGateRouteIndex(unmatchedModel, { claimRefs: [PROFILE_CLAIM] })
+    compileProjectedClaimGateRouteIndex(unmatchedModel, { claimRefs: [PROFILE_CLAIM] })
       .get(PROFILE_CLAIM),
     compileClaimGateRoutes(model, PROFILE_CLAIM),
     "unmatched Gate and command fields remain outside selected Claim route semantics"
+  );
+  const unmatchedRouteProduct = compileClaimGateRouteIndex(unmatchedModel, {
+    claimRefs: [PROFILE_CLAIM]
+  });
+  unmatchedModel.gates[0].commands[0].claimRefs[0] = PROFILE_CLAIM;
+  assert.throws(
+    () => projectCompiledClaimGateRouteIndex(unmatchedRouteProduct, {
+      model: unmatchedModel,
+      claimRefs: [PROFILE_CLAIM]
+    }),
+    (error) => error?.code === "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID",
+    "an unmatched command cannot become selected after compilation"
   );
   const accessorModel = structuredClone(model);
   const accessorCommand = accessorModel.gates
@@ -225,7 +319,7 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
     value: specialOracle,
     writable: true
   });
-  const specialRoute = compileClaimGateRouteIndex(accessorModel, {
+  const specialRoute = compileProjectedClaimGateRouteIndex(accessorModel, {
     claimRefs: [PROFILE_CLAIM]
   }).get(PROFILE_CLAIM).find((route) => (
     route.gateId === "architecture-profile" && route.commandId === accessorCommand.id
@@ -235,9 +329,10 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
   assert.equal(Object.hasOwn(specialRoute.oracle, "__proto__"), true);
   assert.throws(
     () => validateProjectModel(model, {
-      claimGateRouteIndexRequest: new Map([[PROFILE_CLAIM, []]])
+      claimGateRouteIndex: new Map([[PROFILE_CLAIM, []]]),
+      claimRefs: [PROFILE_CLAIM]
     }),
-    (error) => error?.code === "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID"
+    (error) => error?.code === "CLAIM_GATE_ROUTE_INDEX_REUSE_INVALID"
   );
   const forgedModel = structuredClone(model);
   const forgedClaim = forgedModel.contracts
@@ -308,7 +403,63 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
       acceptanceDigest: canonicalDigest(`historical-acceptance-${index}`)
     })
   );
+  const wrongIdentityModel = structuredClone(model);
+  const wrongIdentitySource = profileSource(wrongIdentityModel);
+  const driftModel = structuredClone(model);
+  const driftClaimRefs = driftModel.contracts
+    .flatMap((contract) => contract.claims)
+    .map((claim) => claim.id);
+  const driftRouteProduct = compileClaimGateRouteIndex(driftModel, {
+    claimRefs: driftClaimRefs
+  });
+  driftModel.gates
+    .find((gate) => gate.id === "architecture-profile")
+    .commands[0]
+    .command[2] = "test/project-model/project-model.test.mjs";
+  driftModel.digest = projectModelContentDigest(driftModel);
+  const driftSource = profileSource(driftModel);
+  const incompleteRouteProduct = compileClaimGateRouteIndex(model, {
+    claimRefs: [PROFILE_CLAIM]
+  });
+  const deserializedRouteProduct = structuredClone(completeRouteProduct);
   const attacks = [
+    {
+      name: "forged process-local Claim Gate route product",
+      code: "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+      source,
+      facts: legalFacts,
+      options: { claimGateRouteIndex: Object.freeze({}) }
+    },
+    {
+      name: "deserialized Claim Gate route product without compiler brand",
+      code: "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+      source,
+      facts: legalFacts,
+      options: { claimGateRouteIndex: deserializedRouteProduct }
+    },
+    {
+      name: "Claim Gate route product bound to a different Model identity",
+      code: "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+      model: wrongIdentityModel,
+      source: wrongIdentitySource,
+      facts: legalFacts,
+      options: { claimGateRouteIndex: completeRouteProduct }
+    },
+    {
+      name: "Claim Gate route product whose bound Model content drifted",
+      code: "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+      model: driftModel,
+      source: driftSource,
+      facts: legalFacts,
+      options: { claimGateRouteIndex: driftRouteProduct }
+    },
+    {
+      name: "Claim Gate route product with incomplete Contract Claim coverage",
+      code: "ARCHITECTURE_PROFILE_PROVIDER_INVALID",
+      source,
+      facts: legalFacts,
+      options: { claimGateRouteIndex: incompleteRouteProduct }
+    },
     {
       name: "array JSON hook before metadata cloning",
       code: "ARCHITECTURE_PROFILE_INPUT_INVALID",
@@ -489,11 +640,22 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
         model: attack.model ?? model,
         source: attack.source,
         changeFacts: attack.facts
-      }),
+      }, attack.options),
       (error) => error?.code === attack.code,
       attack.name
     );
   }
+
+  assert.throws(
+    () => compileArchitectureProfile({
+      model,
+      source,
+      changeFacts: legalFacts,
+      claimGateRouteIndex: completeRouteProduct
+    }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_INPUT_INVALID",
+    "serialized Profile input cannot carry a process-local route product"
+  );
 
   for (const forbiddenField of ["score", "body", "package", "output"]) {
     const forbiddenModel = structuredClone(model);
@@ -512,6 +674,11 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
     );
   }
 });
+
+function compileProjectedClaimGateRouteIndex(model, options) {
+  const product = compileClaimGateRouteIndex(model, options);
+  return projectCompiledClaimGateRouteIndex(product, { model, ...options }).routesByClaim;
+}
 
 function createChangeFacts(model, source) {
   const route = compileClaimGateRoutes(model, PROFILE_CLAIM)[0];
