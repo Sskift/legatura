@@ -36,9 +36,9 @@
     {
       "id": "architecture-acceptance-profile-not-projected",
       "status": "open",
-      "affects": ["project-model", "local-workbench"],
+      "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
-      "statement": "The Development Plan and Change alignment are machine-readable, but Project Atlas does not yet project Outcome to Claim, Gate, Evidence, Residual Uncertainty, and Knowledge Gap as one architecture acceptance profile.",
+      "statement": "The Development Plan and Change alignment are machine-readable, but no bounded, snapshot-consistent Project Atlas profile yet projects Outcome to Claim, Gate, current or historical Evidence, Residual Uncertainty, and Knowledge Gap from their existing fact authorities.",
       "expansionTrigger": "Before LGT-010 can become achieved."
     },
     {
