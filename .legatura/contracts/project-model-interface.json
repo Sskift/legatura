@@ -22,6 +22,10 @@
     {
       "id": "change-aligns-with-active-plan",
       "statement": "When plan alignment is required, an ordinary Change can compile only against active Development Outcomes in its frozen Governance Baseline; plan amendments are authority-bound and isolated from implementation."
+    },
+    {
+      "id": "architecture-profile-relations-are-exact",
+      "statement": "Given Project Model and Change record inputs, the Architecture Acceptance Profile compiler produces a deterministic bounded projection that preserves exact references and relations across Outcome, Criterion, Claim, Gate, Evidence, Residual Uncertainty, and Knowledge Gap; it never represents an Outcome Contribution as Criterion satisfaction."
     }
   ]
 }

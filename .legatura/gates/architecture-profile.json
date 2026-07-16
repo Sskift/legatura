@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "id": "architecture-profile",
+  "name": "Architecture Acceptance Profile Proof Gate",
+  "purpose": "Produce direct, Module-owned Evidence for the Architecture Acceptance Profile Closure Contract through fixed test entrypoints that fail closed until their implementations exist.",
+  "appliesTo": [
+    "project-model",
+    "change-kernel",
+    "local-workbench"
+  ],
+  "commands": [
+    {
+      "id": "architecture-profile-project-model-proof",
+      "appliesTo": ["project-model"],
+      "command": [
+        "node",
+        "--test",
+        "test/project-model/architecture-profile.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "architecture-profile-relations-are-exact"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Project Model Architecture Acceptance Profile proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a missing fixed Project Model profile proof test entrypoint",
+          "unbounded or nondeterministic Architecture Acceptance Profile compilation",
+          "lossy, dangling, or invented relations across Outcome, Criterion, Claim, Gate, Evidence, Residual Uncertainty, and Knowledge Gap",
+          "Outcome Contributions represented as Criterion satisfaction"
+        ]
+      },
+      "residualUncertainty": [
+        "Profile compilation evaluates supplied snapshots; source stabilization and Evidence currency classification remain Change Kernel responsibilities."
+      ]
+    },
+    {
+      "id": "architecture-profile-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/architecture-profile.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "architecture-profile-binds-rechecked-source-snapshot"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel Architecture Acceptance Profile proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a missing fixed Change Kernel profile proof test entrypoint",
+          "Architecture Acceptance Profiles emitted from an unstable Project Model, Git-content, or Change Store source set",
+          "Evidence classified as current without exact Project Model, Git-content, and verification-subject bindings",
+          "current Evidence conflated with sealed historical or invalid Evidence"
+        ]
+      },
+      "residualUncertainty": [
+        "Snapshot stabilization covers one local single-writer workspace; Accepted history is neither portable across fresh clones nor authenticated for multi-writer use."
+      ]
+    },
+    {
+      "id": "architecture-profile-local-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--test",
+        "test/local-workbench/architecture-profile.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "architecture-profile-preserves-assurance-dimensions"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Local Workbench Architecture Acceptance Profile proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a missing fixed Local Workbench profile proof test entrypoint",
+          "CLI, HTTP, or browser view-model loss or conflation of Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap",
+          "aggregate scores, percentages, confidence, or green-light status that collapse distinct assurance dimensions",
+          "top-level profile payloads that include source, package, stdout, or stderr bodies instead of bounded references"
+        ]
+      },
+      "residualUncertainty": [
+        "Browser DOM rendering and interaction remain outside this proof Gate; the browser view model is verified without a real browser.",
+        "The real cross-interface HTTP-to-Kernel lifecycle remains a full-Gate concern.",
+        "Fresh clones and other workspaces cannot reconstruct ignored local Accepted history; cross-workspace profile portability remains an explicit Knowledge Gap."
+      ]
+    }
+  ]
+}

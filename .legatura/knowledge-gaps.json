@@ -39,7 +39,20 @@
       "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The Development Plan and Change alignment are machine-readable, but no bounded, snapshot-consistent Project Atlas profile yet projects Outcome to Claim, Gate, current or historical Evidence, Residual Uncertainty, and Knowledge Gap from their existing fact authorities.",
+      "proofClaimRefs": [
+        "architecture-profile-relations-are-exact",
+        "architecture-profile-binds-rechecked-source-snapshot",
+        "architecture-profile-preserves-assurance-dimensions"
+      ],
       "expansionTrigger": "Before LGT-010 can become achieved."
+    },
+    {
+      "id": "accepted-history-not-portable",
+      "status": "open",
+      "affects": ["change-kernel", "local-workbench"],
+      "owner": "governance-maintainer",
+      "statement": "Accepted Change history lives only in Git-ignored local runtime state, so a fresh clone or another workspace cannot reproduce the historical Evidence portion of an Architecture Acceptance Profile from versioned repository content alone.",
+      "expansionTrigger": "Before Architecture Acceptance Profiles are exchanged across clones or workspaces, used for remote review, or relied on as durable audit artifacts."
     },
     {
       "id": "outcome-contribution-not-machine-validated",

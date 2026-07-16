@@ -14,6 +14,10 @@
     {
       "id": "installed-cli-is-executable",
       "statement": "The installed legatura binary remains an executable entrypoint through package-manager symlinks."
+    },
+    {
+      "id": "architecture-profile-preserves-assurance-dimensions",
+      "statement": "The CLI output, loopback HTTP response, and browser view model preserve Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap as separate assurance dimensions; they expose no aggregate score, percentage, confidence, or green-light status."
     }
   ]
 }
