@@ -31,6 +31,9 @@ const INTEGRITY_EVIDENCE_FIELDS = [
   "residualUncertainty"
 ];
 
+const MAX_CHANGE_PLAN_REFS = 64;
+const MAX_CHANGE_PLAN_REF_LENGTH = 256;
+
 const COMPILED_CONTEXT_KEYS = new Set([
   "schemaVersion",
   "compiledFrom",
@@ -166,9 +169,11 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
     governanceBaseline,
     verificationObligations
   });
+  const planRefs = planOutcomes.map((outcome) => outcome.id);
 
   return {
     ...change,
+    planRefs,
     ...(outcomeAlignment ? { outcomeAlignmentSchemaVersion: 1 } : {}),
     integrityTarget,
     outcomeAlignment,
@@ -181,7 +186,7 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
       governanceBaselineDigest: governanceBaseline.digest,
       primaryModule: primaryModule.id,
       changeKind: change.changeKind,
-      planRefs: planOutcomes.map((outcome) => outcome.id),
+      planRefs,
       outcomeAlignmentDigest: outcomeAlignment ? canonicalDigest(outcomeAlignment) : null,
       assuranceStatus: primaryModule.status
     }
@@ -340,7 +345,7 @@ function compileContextCapsule({
 function selectDevelopmentOutcomes(change, governanceBaseline) {
   const policy = governanceBaseline.projectDocument?.changePolicy ?? {};
   const changeKind = readString(change.changeKind) ?? "implementation";
-  const planRefs = normalizeStringList(change.planRefs);
+  const planRefs = parseChangePlanRefs(change.planRefs);
   if (!CHANGE_KINDS.includes(changeKind)) {
     throw compilerError(
       "CHANGE_KIND_INVALID",
@@ -395,9 +400,9 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
   }
 
   const inactive = planRefs
-    .map((id) => outcomesById.get(id))
-    .filter((outcome) => outcome.status !== "active")
-    .map((outcome) => ({ id: outcome.id, status: outcome.status }));
+    .map((id) => ({ id, outcome: outcomesById.get(id) }))
+    .filter(({ outcome }) => outcome.status !== "active")
+    .map(({ id, outcome }) => ({ id, status: outcome.status }));
   if (inactive.length > 0) {
     throw compilerError(
       "CHANGE_PLAN_REF_NOT_ACTIVE",
@@ -406,7 +411,10 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
     );
   }
 
-  const selected = planRefs.map((id) => outcomesById.get(id));
+  const selected = planRefs.map((id) => ({
+    ...cloneJson(outcomesById.get(id)),
+    id
+  }));
   const integrityOutcomes = selected.filter((outcome) => outcome.kind === "integrity-maintenance");
   if (changeKind === "implementation" && integrityOutcomes.length > 0) {
     throw compilerError(
@@ -459,7 +467,108 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
     }
   }
 
-  return selected.map(cloneJson);
+  return selected;
+}
+
+export function parseChangePlanRefs(value) {
+  if (value === undefined) return [];
+  if (typeof value === "string") {
+    const planRef = value.trim();
+    if (!planRef) {
+      throw invalidPlanRefsError(value, [{
+        receivedType: "string",
+        reason: "blank-string"
+      }]);
+    }
+    if (planRef.length > MAX_CHANGE_PLAN_REF_LENGTH) {
+      throw invalidPlanRefsError(value, [{
+        receivedType: "string",
+        reason: "too-long",
+        length: planRef.length,
+        maxLength: MAX_CHANGE_PLAN_REF_LENGTH
+      }]);
+    }
+    return [planRef];
+  }
+  if (!Array.isArray(value)) {
+    const receivedType = inputType(value);
+    throw invalidPlanRefsError(value, [{
+      receivedType,
+      reason: "non-string"
+    }]);
+  }
+  if (value.length > MAX_CHANGE_PLAN_REFS) {
+    throw invalidPlanRefsError(value, [{
+      receivedType: "array",
+      reason: "too-many-entries",
+      count: value.length,
+      maxCount: MAX_CHANGE_PLAN_REFS
+    }]);
+  }
+
+  const invalidEntries = [];
+  const planRefs = [];
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) {
+      invalidEntries.push({
+        index,
+        receivedType: "missing",
+        reason: "sparse-entry"
+      });
+      continue;
+    }
+    const entry = value[index];
+    if (typeof entry !== "string") {
+      invalidEntries.push({
+        index,
+        receivedType: inputType(entry),
+        reason: "non-string"
+      });
+      continue;
+    }
+    const planRef = entry.trim();
+    if (!planRef) {
+      invalidEntries.push({
+        index,
+        receivedType: "string",
+        reason: "blank-string"
+      });
+      continue;
+    }
+    if (planRef.length > MAX_CHANGE_PLAN_REF_LENGTH) {
+      invalidEntries.push({
+        index,
+        receivedType: "string",
+        reason: "too-long",
+        length: planRef.length,
+        maxLength: MAX_CHANGE_PLAN_REF_LENGTH
+      });
+      continue;
+    }
+    planRefs.push(planRef);
+  }
+  if (invalidEntries.length > 0) {
+    throw invalidPlanRefsError(value, invalidEntries);
+  }
+  return unique(planRefs);
+}
+
+function invalidPlanRefsError(value, invalidEntries) {
+  return compilerError(
+    "CHANGE_PLAN_REF_INVALID",
+    "Change planRefs must be absent, a non-empty string of at most 256 trimmed characters, or a dense list of at most 64 such strings.",
+    {
+      field: "planRefs",
+      receivedType: inputType(value),
+      invalidEntries
+    }
+  );
+}
+
+function inputType(value) {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
 }
 
 function compileOutcomeAlignment({

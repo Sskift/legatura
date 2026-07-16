@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "id": "plan-refs-adapter",
+  "name": "Change planRefs Adapter Proof Gate",
+  "purpose": "Produce direct Change Kernel Evidence that create and patch adapters preserve the strict canonical planRefs contract before local persistence.",
+  "appliesTo": ["change-kernel"],
+  "commands": [
+    {
+      "id": "plan-refs-adapter-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/plan-refs-adapter.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "change-aligns-with-active-plan"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel planRefs adapter proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "adapter-contract-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a missing fixed Change Kernel planRefs adapter proof test entrypoint",
+          "create inputs whose malformed planRefs are silently discarded before compilation or persistence",
+          "patch inputs whose malformed planRefs are silently discarded before compilation or persistence",
+          "conflicting planRef and planRefs aliases accepted without an explicit conflict error",
+          "a Change Store record containing non-canonical planRefs after an accepted create or patch input"
+        ]
+      },
+      "residualUncertainty": [
+        "This proof is bounded to Change Kernel create and patch adapters and the local JSON Change Store; other transports and authenticated multi-writer persistence remain outside this Gate."
+      ]
+    }
+  ]
+}

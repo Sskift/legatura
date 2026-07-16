@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
-import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.mjs";
+import {
+  compileChangeAgainstGovernance,
+  parseChangePlanRefs
+} from "../../src/core/change-compiler.mjs";
 import { compileOutcomeTransitions } from "../../src/core/outcome-transitions.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
@@ -400,6 +403,139 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
     ["LGT-001-C1"]
   );
   assert.ok(compiled.contextCapsule.knowledgeGaps.some((gap) => gap.id === "fixture-gap"));
+
+  const scalarPlanRef = compileChangeAgainstGovernance(outcomeChange({
+    planRefs: "  LGT-001  "
+  }), uniqueBaseline);
+  assert.deepEqual(scalarPlanRef.planRefs, ["LGT-001"]);
+  assert.deepEqual(scalarPlanRef.compilation.planRefs, ["LGT-001"]);
+
+  const deduplicatedPlanRefs = compileChangeAgainstGovernance(outcomeChange({
+    planRefs: [" LGT-001 ", "LGT-001"]
+  }), uniqueBaseline);
+  assert.deepEqual(deduplicatedPlanRefs.planRefs, ["LGT-001"]);
+  assert.deepEqual(deduplicatedPlanRefs.compilation.planRefs, ["LGT-001"]);
+  assert.deepEqual(parseChangePlanRefs([" LGT-001 ", "LGT-001"]), ["LGT-001"]);
+  assert.deepEqual(parseChangePlanRefs("x".repeat(256)), ["x".repeat(256)]);
+  assert.deepEqual(parseChangePlanRefs(Array(64).fill("LGT-001")), ["LGT-001"]);
+
+  const paddedOutcomeModel = baseModel();
+  enableOutcomeCriteria(paddedOutcomeModel);
+  paddedOutcomeModel.plan.outcomes[0].id = " LGT-001 ";
+  assert.equal(validateProjectModel(paddedOutcomeModel).valid, true);
+  const canonicalOutcomeRefs = compileChangeAgainstGovernance(outcomeChange({
+    planRefs: " LGT-001 "
+  }), governanceBaseline(paddedOutcomeModel));
+  assert.deepEqual(canonicalOutcomeRefs.planRefs, ["LGT-001"]);
+  assert.deepEqual(canonicalOutcomeRefs.compilation.planRefs, ["LGT-001"]);
+  assert.deepEqual(canonicalOutcomeRefs.outcomeAlignment.selectedOutcomeRefs, ["LGT-001"]);
+  assert.equal(canonicalOutcomeRefs.outcomeAlignment.contributions[0].outcomeRef, "LGT-001");
+  assert.equal(canonicalOutcomeRefs.contextCapsule.planOutcomes[0].id, "LGT-001");
+
+  const optionalPlanModel = baseModel();
+  enableOutcomeCriteria(optionalPlanModel);
+  optionalPlanModel.projectDocument.changePolicy.requirePlanRefs = false;
+  const optionalPlanBaseline = governanceBaseline(optionalPlanModel);
+  for (const planRefs of [undefined, []]) {
+    const optionalPlanChange = compileChangeAgainstGovernance(
+      outcomeChange({ planRefs }),
+      optionalPlanBaseline
+    );
+    assert.deepEqual(optionalPlanChange.planRefs, []);
+    assert.deepEqual(optionalPlanChange.compilation.planRefs, []);
+  }
+
+  const sparsePlanRefs = [];
+  sparsePlanRefs[1] = "LGT-001";
+  const oversizedSparsePlanRefs = new Array(1_000_000);
+  const invalidPlanRefCases = [{
+    name: "explicit null",
+    planRefs: null,
+    receivedType: "null",
+    invalidEntries: [{ receivedType: "null", reason: "non-string" }]
+  }, {
+    name: "blank scalar string",
+    planRefs: "   ",
+    receivedType: "string",
+    invalidEntries: [{ receivedType: "string", reason: "blank-string" }]
+  }, {
+    name: "String wrapper object",
+    planRefs: new String("LGT-001"),
+    receivedType: "object",
+    invalidEntries: [{ receivedType: "object", reason: "non-string" }]
+  }, {
+    name: "mixed lossy list",
+    planRefs: ["LGT-001", "  ", { id: "LGT-404" }, 42, null, ["LGT-001"], undefined],
+    receivedType: "array",
+    invalidEntries: [
+      { index: 1, receivedType: "string", reason: "blank-string" },
+      { index: 2, receivedType: "object", reason: "non-string" },
+      { index: 3, receivedType: "number", reason: "non-string" },
+      { index: 4, receivedType: "null", reason: "non-string" },
+      { index: 5, receivedType: "array", reason: "non-string" },
+      { index: 6, receivedType: "undefined", reason: "non-string" }
+    ]
+  }, {
+    name: "sparse list",
+    planRefs: sparsePlanRefs,
+    receivedType: "array",
+    invalidEntries: [{ index: 0, receivedType: "missing", reason: "sparse-entry" }]
+  }, {
+    name: "oversized scalar string",
+    planRefs: "x".repeat(100_000),
+    receivedType: "string",
+    invalidEntries: [{
+      receivedType: "string",
+      reason: "too-long",
+      length: 100_000,
+      maxLength: 256
+    }]
+  }, {
+    name: "oversized list entry",
+    planRefs: ["LGT-001", "x".repeat(257)],
+    receivedType: "array",
+    invalidEntries: [{
+      index: 1,
+      receivedType: "string",
+      reason: "too-long",
+      length: 257,
+      maxLength: 256
+    }]
+  }, {
+    name: "huge sparse list",
+    planRefs: oversizedSparsePlanRefs,
+    receivedType: "array",
+    invalidEntries: [{
+      receivedType: "array",
+      reason: "too-many-entries",
+      count: 1_000_000,
+      maxCount: 64
+    }]
+  }];
+  for (const invalidCase of invalidPlanRefCases) {
+    let observed;
+    try {
+      compileChangeAgainstGovernance(
+        outcomeChange({ planRefs: invalidCase.planRefs }),
+        uniqueBaseline
+      );
+    } catch (error) {
+      observed = error;
+    }
+    assert.equal(observed?.code, "CHANGE_PLAN_REF_INVALID", invalidCase.name);
+    assert.equal(observed?.statusCode, 422, invalidCase.name);
+    assert.equal(
+      observed?.message,
+      "Change planRefs must be absent, a non-empty string of at most 256 trimmed characters, or a dense list of at most 64 such strings.",
+      invalidCase.name
+    );
+    assert.deepEqual(observed?.details, {
+      field: "planRefs",
+      receivedType: invalidCase.receivedType,
+      invalidEntries: invalidCase.invalidEntries
+    }, invalidCase.name);
+    assert.ok(observed.details.invalidEntries.length <= 64, invalidCase.name);
+  }
 
   const dependencyModel = baseModel();
   enableOutcomeCriteria(dependencyModel, [], "dependency-works");

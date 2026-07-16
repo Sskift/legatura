@@ -12,6 +12,7 @@
       "validateProjectModel(model)",
       "publicProjectModel(model)",
       "compileChangeAgainstGovernance(change, baseline)",
+      "parseChangePlanRefs(value)",
       "compileOutcomeTransitions(input)",
       "compileClaimGateRoutes(model, claimRef)",
       "assertKnowledgeGapProofContractsPreserved(input)"
@@ -20,13 +21,15 @@
       "Dependencies are visible only through owned Contracts.",
       "A supplied Context Capsule may narrow but never broaden generated scope.",
       "Unrelated Claims require an explicit authority-bound mapping.",
+      "Change planRefs are a bounded strict value object: only absence, a non-empty string of at most 256 trimmed characters, or a dense list of at most 64 such strings is accepted, and every compiler projection uses the same trimmed, first-occurrence canonical Outcome references without discarding invalid entries.",
       "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome.",
       "Stable Outcome Criteria exactly mirror exit criteria and their declared Claim and Knowledge Gap sets.",
       "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint.",
       "Enforced Outcome alignment admits only exact Contributions or explicit non-progress exception requests bound to frozen Development Plan authority.",
       "Outcome status deltas compile only from an append-only ledger whose prior Accepted Package proofs, exact Claim Evidence, closed Gaps, and authority assessments cover the frozen route semantics.",
       "A Knowledge Gap Closure Contract requires at least one executable Gate route per proof Claim and freezes exact proof Claim ownership, Gate and command identity, command, timeout, effective Module applicability, oracle, applicability, discriminatory power, and residual uncertainty while permitting unrelated Claims and raw scope edits that do not change that effective route; closure requires prior sealed implementation Contributions whose direct positive Gate Evidence covers every proof Claim.",
-      "A newly declared Closure proof Claim uses a dedicated fixed test entrypoint that fails closed before its implementation can produce direct Evidence."
+      "A newly declared Closure proof Claim uses a dedicated fixed test entrypoint that fails closed before its implementation can produce direct Evidence.",
+      "Change Kernel create and patch adapters must reject malformed or conflicting planRefs inputs before JSON persistence and store only the canonical compiler value."
     ]
   },
   "paths": {
@@ -42,6 +45,7 @@
       ".legatura/knowledge-gaps.json",
       ".legatura/.gitignore",
       ".legatura/gates/architecture-profile.json",
+      ".legatura/gates/plan-refs-adapter.json",
       ".legatura/gates/minimum.json",
       ".legatura/gates/full.json",
       ".legatura/modules/project-model.json",
