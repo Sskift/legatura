@@ -13,6 +13,7 @@ import {
 } from "../../src/core/project-model.mjs";
 
 const PROFILE_CLAIM = "architecture-profile-relations-are-exact";
+const SECOND_PROFILE_SOURCE_CLAIM = "context-capsule-cannot-broaden-scope";
 
 test("Architecture Profiles preserve exact typed relations without aggregating assurance", async () => {
   const model = await loadProjectModel(process.cwd());
@@ -72,6 +73,33 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
   assert.match(crossClaim.authorityDecisionDigest, /^sha256:/u);
   const crossEvidence = profile.entities.evidence.find((item) => item.id === crossClaim.evidenceRef);
   assert.deepEqual(crossEvidence.claimEnvelopeRefs, [PROFILE_CLAIM]);
+
+  const multiSourceModel = structuredClone(model);
+  const multiSourceCommand = multiSourceModel.gates
+    .find((gate) => gate.id === "architecture-profile")
+    .commands[0];
+  multiSourceCommand.claimRefs.push(SECOND_PROFILE_SOURCE_CLAIM);
+  multiSourceModel.digest = projectModelContentDigest(multiSourceModel);
+  const multiSource = profileSource(multiSourceModel);
+  const multiSourceFacts = createChangeFacts(multiSourceModel, multiSource);
+  const multiSourceEvidence = multiSourceFacts[0].evidence[0];
+  multiSourceEvidence.claimEnvelopeRefs.push(SECOND_PROFILE_SOURCE_CLAIM);
+  multiSourceEvidence.claimAssociations.push({
+    ...structuredClone(multiSourceEvidence.claimAssociations[1]),
+    sourceClaimRef: SECOND_PROFILE_SOURCE_CLAIM
+  });
+  const multiSourceProfile = compileArchitectureProfile({
+    model: multiSourceModel,
+    source: multiSource,
+    changeFacts: multiSourceFacts
+  });
+  const sharedObligationRelations = multiSourceProfile.relations.currentEvidenceClaimAssociations
+    .filter((relation) => relation.obligationRef === "profile-cross-claim-obligation");
+  assert.deepEqual(
+    sharedObligationRelations.map((relation) => relation.sourceClaimRef).sort(),
+    [PROFILE_CLAIM, SECOND_PROFILE_SOURCE_CLAIM].sort(),
+    "one obligation retains every distinct exact source Claim route"
+  );
   assert.ok(profile.entities.residuals.some((item) => item.ownerKind === "route"));
   assert.ok(profile.entities.residuals.some((item) => item.ownerKind === "evidence"));
   assert.ok(profile.entities.gaps.some((item) => item.id === "architecture-acceptance-profile-not-projected"));
@@ -274,12 +302,22 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
     },
     {
       name: "conflicting duplicate obligation identity",
-      code: "ARCHITECTURE_PROFILE_DUPLICATE_IDENTITY",
+      code: "ARCHITECTURE_PROFILE_OBLIGATION_CONFLICT",
       source,
       facts: mutateFacts(legalFacts, (facts) => {
         const duplicate = structuredClone(facts[0].evidence[0].claimAssociations[0]);
         duplicate.obligationDigest = canonicalDigest("conflicting-obligation-content");
         facts[0].evidence[0].claimAssociations.push(duplicate);
+      })
+    },
+    {
+      name: "exact duplicate association occurrence",
+      code: "ARCHITECTURE_PROFILE_DUPLICATE_IDENTITY",
+      source,
+      facts: mutateFacts(legalFacts, (facts) => {
+        facts[0].evidence[0].claimAssociations.push(
+          structuredClone(facts[0].evidence[0].claimAssociations[0])
+        );
       })
     },
     {

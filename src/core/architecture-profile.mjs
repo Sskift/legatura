@@ -569,7 +569,8 @@ function compileModelGraph(model) {
     changes: new Set(),
     contributionOccurrences: new Set(),
     evidenceOccurrences: new Set(),
-    evidenceObligationOccurrences: new Set()
+    evidenceObligationBindings: new Map(),
+    evidenceClaimAssociationOccurrences: new Set()
   };
   const graph = {
     entities,
@@ -1125,10 +1126,33 @@ function compileEvidenceClaimAssociation({
     authorityDecisionDigest
   });
   const obligationOccurrence = `${occurrenceRef}\u0000${obligationRef}`;
-  if (graph.indices.evidenceObligationOccurrences.has(obligationOccurrence)) {
-    throw duplicateError("Evidence obligation", obligationRef);
+  const obligationBindingDigest = canonicalDigest({
+    associationKind: kind,
+    targetClaimRef,
+    obligationDigest,
+    authorityDecisionDigest
+  });
+  const priorObligationBinding = graph.indices.evidenceObligationBindings.get(obligationOccurrence);
+  if (priorObligationBinding && priorObligationBinding !== obligationBindingDigest) {
+    throw profileError(
+      "ARCHITECTURE_PROFILE_OBLIGATION_CONFLICT",
+      "One Evidence occurrence cannot assign conflicting semantics to the same Verification Obligation.",
+      { evidenceRef, obligationRef }
+    );
   }
-  graph.indices.evidenceObligationOccurrences.add(obligationOccurrence);
+  graph.indices.evidenceObligationBindings.set(obligationOccurrence, obligationBindingDigest);
+  const associationOccurrence = canonicalDigest({
+    occurrenceRef,
+    obligationRef,
+    targetClaimRef,
+    sourceClaimRef,
+    routeRef,
+    sourceId
+  });
+  if (graph.indices.evidenceClaimAssociationOccurrences.has(associationOccurrence)) {
+    throw duplicateError("Evidence Claim association", associationOccurrence);
+  }
+  graph.indices.evidenceClaimAssociationOccurrences.add(associationOccurrence);
   if (currency === "current") {
     pushRelation(graph, "currentEvidenceClaimAssociations", relation);
   } else if (currency === "sealed-historical") {
