@@ -560,11 +560,11 @@ function validateOutcomePolicy(changePolicy, errors) {
   }
   if (Object.hasOwn(changePolicy, "outcomeTransitionMode")) {
     const value = readString(changePolicy.outcomeTransitionMode);
-    if (value !== "declared") {
+    if (!value || !["declared", "enforced"].includes(value)) {
       errors.push(issue(
         "change-policy.outcomeTransitionMode.invalid",
         ".legatura/project.json",
-        "changePolicy.outcomeTransitionMode must remain declared until Transition enforcement is implemented."
+        "changePolicy.outcomeTransitionMode must be declared or enforced."
       ));
     }
   }

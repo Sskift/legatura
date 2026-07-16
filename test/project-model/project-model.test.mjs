@@ -99,7 +99,7 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   model.modules[0].publicContracts = ["dependency-api"];
   model.projectDocument.changePolicy.defaultGate = "missing-gate";
   model.projectDocument.changePolicy.outcomeAlignmentMode = true;
-  model.projectDocument.changePolicy.outcomeTransitionMode = "enforced";
+  model.projectDocument.changePolicy.outcomeTransitionMode = "automatic";
   model.projectDocument.changePolicy.outcomeCriterionSelection = "semantic-similarity";
   model.gates[0].commands[0].appliesTo = ["missing-module"];
   model.gates[0].commands[0].applicability.modules = ["dependency"];

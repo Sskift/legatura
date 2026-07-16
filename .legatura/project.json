@@ -105,7 +105,7 @@
     "contextExpansion": "recorded",
     "requirePlanRefs": true,
     "outcomeAlignmentMode": "enforced",
-    "outcomeTransitionMode": "declared",
+    "outcomeTransitionMode": "enforced",
     "outcomeCriterionSelection": "unique-claim-match-or-explicit-hint"
   }
 }
