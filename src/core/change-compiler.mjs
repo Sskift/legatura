@@ -188,6 +188,28 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
   };
 }
 
+export function compileOutcomeAlignmentAgainstGovernance(change, governanceBaseline) {
+  const primaryModuleId = readString(change?.primaryModule);
+  const primaryModule = governanceBaseline?.modules?.find((module) => module.id === primaryModuleId);
+  if (!primaryModule) {
+    throw compilerError(
+      "CHANGE_MODULE_UNKNOWN",
+      `Primary Module ${primaryModuleId ?? "unknown"} is not present in the frozen Governance Baseline.`,
+      { primaryModule: primaryModuleId ?? null, governanceBaselineDigest: governanceBaseline?.digest ?? null }
+    );
+  }
+  const planOutcomes = selectDevelopmentOutcomes(change, governanceBaseline);
+  const compilerInput = change.compilerInput ?? {};
+  return compileOutcomeAlignment({
+    change,
+    governanceBaseline,
+    primaryModule,
+    planOutcomes,
+    hints: compilerInput.outcomeContributionHints,
+    exceptions: compilerInput.outcomeExceptions
+  });
+}
+
 function compileIntegrityTarget(change) {
   const changeKind = readString(change.changeKind) ?? "implementation";
   if (!INTEGRITY_CHANGE_KINDS.includes(changeKind)) return null;

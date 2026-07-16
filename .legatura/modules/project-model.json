@@ -11,7 +11,8 @@
       "loadProjectModel(repoPath)",
       "validateProjectModel(model)",
       "publicProjectModel(model)",
-      "compileChangeAgainstGovernance(change, baseline)"
+      "compileChangeAgainstGovernance(change, baseline)",
+      "compileOutcomeTransitions(input)"
     ],
     "invariants": [
       "Dependencies are visible only through owned Contracts.",
@@ -20,7 +21,8 @@
       "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome.",
       "Stable Outcome Criteria exactly mirror exit criteria and their declared Claim and Knowledge Gap sets.",
       "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint.",
-      "Enforced Outcome alignment admits only exact Contributions or explicit non-progress exception requests bound to frozen Development Plan authority."
+      "Enforced Outcome alignment admits only exact Contributions or explicit non-progress exception requests bound to frozen Development Plan authority.",
+      "Outcome status deltas compile only from an append-only ledger whose prior Accepted Package proofs, exact Claim Evidence, closed Gaps, and authority assessments cover the frozen route semantics."
     ]
   },
   "paths": {

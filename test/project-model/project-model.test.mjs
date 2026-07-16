@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.mjs";
+import { compileOutcomeTransitions } from "../../src/core/outcome-transitions.mjs";
 import {
   loadProjectModel,
   publicProjectModel,
@@ -167,9 +168,14 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   assert.ok(codes.includes("plan.reference-scenario.identity.invalid"));
   assert.ok(codes.includes("plan.reference-scenario.acceptance.missing"));
   assert.ok(codes.includes("plan.bootstrap.invalid"));
+
+  const duplicateGapModel = baseModel();
+  duplicateGapModel.knowledgeGaps.push(structuredClone(duplicateGapModel.knowledgeGaps[0]));
+  assert.ok(validateProjectModel(duplicateGapModel).errors
+    .some((error) => error.code === "knowledge-gap.id.duplicate"));
 });
 
-test("Outcome Contributions use exact accessible Claims, stable Criteria, and explicit ambiguity", () => {
+test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidence, and history", () => {
   const uniqueModel = baseModel();
   enableOutcomeCriteria(uniqueModel);
   const uniqueBaseline = governanceBaseline(uniqueModel);
@@ -338,6 +344,293 @@ test("Outcome Contributions use exact accessible Claims, stable Criteria, and ex
   assert.deepEqual(enforcedException.outcomeAlignment.exceptions.map((entry) => entry.requiredAuthorityRef), [
     "maintainer"
   ]);
+
+  const transitionCase = transitionFixture();
+  const transitionCompiled = compileOutcomeTransitions(transitionCase);
+  const transitionRepeated = compileOutcomeTransitions(transitionCase);
+  assert.deepEqual(transitionCompiled, transitionRepeated);
+  assert.equal(transitionCompiled.schemaVersion, 1);
+  assert.equal(transitionCompiled.mode, "enforced");
+  assert.equal(transitionCompiled.status, "complete");
+  assert.equal(transitionCompiled.requiredAuthorityRef, "maintainer");
+  assert.equal(transitionCompiled.priorAcceptedPackagesDigest, transitionCase.priorAcceptedPackages.digest);
+  assert.match(transitionCompiled.digest, /^sha256:[a-f0-9]{64}$/u);
+  assert.deepEqual(transitionCompiled.appendedTransitions.map((entry) => ({
+    id: entry.id,
+    outcomeRef: entry.outcomeRef,
+    route: `${entry.from}->${entry.to}`,
+    criterionRefs: entry.criterionProofs.map((proof) => proof.criterionRef),
+    gapRefs: entry.gapDispositions.map((gap) => gap.gapRef)
+  })), [{
+    id: "LGT-001-T1",
+    outcomeRef: "LGT-001",
+    route: "active->achieved",
+    criterionRefs: ["LGT-001-C1", "LGT-001-C2"],
+    gapRefs: ["fixture-gap"]
+  }]);
+  const projectedProofs = transitionCompiled.appendedTransitions[0].criterionProofs;
+  assert.deepEqual(projectedProofs.map((proof) => proof.claimRefs), [
+    ["core-works"],
+    ["dependency-works"]
+  ]);
+  assert.ok(projectedProofs.every((proof) => (
+    proof.packages.length === 1
+      && proof.authorityAssessment.conclusion === "satisfied"
+      && proof.authorityAssessment.rationale.length > 20
+      && proof.authorityAssessment.residualUncertainty.length > 20
+      && proof.packages[0].evidenceBindings.length === 1
+      && proof.packages[0].evidenceBindings[0].observationStatus === "passed"
+      && /^sha256:[a-f0-9]{64}$/u.test(proof.packages[0].evidenceBindings[0].evidenceDigest)
+  )));
+  assert.deepEqual(
+    transitionCompiled.appendedTransitions[0].gapDispositions[0].packages.map((entry) => ({
+      changeId: entry.changeId,
+      acceptanceDigest: entry.acceptanceDigest
+    })),
+    [transitionCase.packageRef]
+  );
+
+  const transitionFailures = [
+    {
+      name: "missing stable Criterion proof",
+      code: "OUTCOME_TRANSITION_CRITERIA_INCOMPLETE",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomeTransitions[0].criterionAssessments.pop();
+      }
+    },
+    {
+      name: "wrong Claim coverage",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        const contribution = fixture.acceptedRecord.acceptance.package.outcomeAlignment.contributions
+          .find((entry) => entry.criterionRef === "LGT-001-C2");
+        contribution.claimRefs = ["core-works"];
+        const criterion = fixture.governanceBaseline.plan.outcomes[0].acceptance.criteria
+          .find((entry) => entry.id === "LGT-001-C2");
+        const claim = fixture.acceptedRecord.acceptance.package.claims
+          .find((entry) => entry.id === "core-works");
+        contribution.bindingDigest = canonicalDigest({
+          schemaVersion: 1,
+          changeId: fixture.acceptedRecord.id,
+          governanceBaselineDigest: fixture.governanceBaseline.digest,
+          outcome: { id: "LGT-001", statement: fixture.governanceBaseline.plan.outcomes[0].outcome },
+          criterion,
+          moduleRef: "core",
+          claims: [claim]
+        });
+        contribution.contributionId = `oc-${contribution.bindingDigest.slice("sha256:".length)}`;
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "non-progress exception used as proof",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        const alignment = fixture.acceptedRecord.acceptance.package.outcomeAlignment;
+        alignment.contributions = [];
+        alignment.exceptions = [{
+          outcomeRef: "LGT-001",
+          progress: "none",
+          transitionUse: "forbidden"
+        }];
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "inexact closed Gap disposition",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomeTransitions[0].gapDispositions = [];
+      }
+    },
+    {
+      name: "Knowledge Gap meaning rewritten during closure",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        fixture.currentModel.knowledgeGaps[0].statement = "A weaker uncertainty replaces the frozen Gap.";
+      }
+    },
+    {
+      name: "status change without a ledger entry",
+      code: "OUTCOME_TRANSITION_STATUS_UNBOUND",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomeTransitions = [];
+      }
+    },
+    {
+      name: "ledger entry without a status change",
+      code: "OUTCOME_TRANSITION_STATUS_UNBOUND",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomes[0].status = "active";
+      }
+    },
+    {
+      name: "unsupported lifecycle edge",
+      code: "OUTCOME_TRANSITION_ROUTE_FORBIDDEN",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomes[0].status = "planned";
+        fixture.currentModel.plan.outcomeTransitions[0].to = "planned";
+      }
+    },
+    {
+      name: "unfrozen plain Package catalog",
+      code: "OUTCOME_TRANSITION_PACKAGE_NOT_PRIOR",
+      mutate(fixture) {
+        fixture.priorAcceptedPackages = fixture.priorAcceptedPackages.entries;
+      }
+    },
+    {
+      name: "Evidence bound to another Change",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        fixture.acceptedRecord.acceptance.package.evidence[0].provenance.changeId = "another-change";
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "Evidence carried by a failed Gate run",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        fixture.acceptedRecord.acceptance.package.gateRuns[0].status = "failed";
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "Accepted timestamp disagrees with history",
+      code: "OUTCOME_TRANSITION_PACKAGE_SEAL_INVALID",
+      mutate(fixture) {
+        fixture.acceptedRecord.acceptance.acceptedAt = "2026-07-16T10:30:00.000Z";
+      }
+    },
+    {
+      name: "Package accepted after Candidate creation",
+      code: "OUTCOME_TRANSITION_PACKAGE_NOT_PRIOR",
+      mutate(fixture) {
+        const acceptedAt = "2030-01-01T00:00:00.000Z";
+        fixture.acceptedRecord.acceptance.acceptedAt = acceptedAt;
+        fixture.acceptedRecord.history[0].at = acceptedAt;
+      }
+    },
+    {
+      name: "Outcome semantics rewritten without a status delta",
+      code: "OUTCOME_TRANSITION_ROUTE_FORBIDDEN",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomes[0].status = "active";
+        fixture.currentModel.plan.outcomes[0].outcome = "A rewritten Outcome is not lifecycle evidence.";
+        fixture.currentModel.plan.outcomeTransitions = [];
+      }
+    },
+    {
+      name: "invalid frozen Governance Baseline seal",
+      code: "OUTCOME_TRANSITION_PACKAGE_SEAL_INVALID",
+      mutate(fixture) {
+        fixture.governanceBaseline.digest = `sha256:${"0".repeat(64)}`;
+      }
+    }
+  ];
+  for (const scenario of transitionFailures) {
+    const fixture = transitionFixture();
+    scenario.mutate(fixture);
+    assert.throws(
+      () => compileOutcomeTransitions(fixture),
+      (error) => error.code === scenario.code,
+      scenario.name
+    );
+  }
+
+  const satisfiedEvidence = transitionFixture();
+  satisfiedEvidence.acceptedRecord.acceptance.package.evidence[0].observation.status = "satisfied";
+  resealFixtureRecord(satisfiedEvidence);
+  assert.equal(compileOutcomeTransitions(satisfiedEvidence).status, "complete");
+
+  const rewrittenPrefix = transitionFixture();
+  const sealedPrefix = {
+    id: "LGT-000-T1",
+    outcomeRef: "LGT-000",
+    from: "active",
+    to: "retired",
+    rationale: "A prior sealed transition is immutable.",
+    packageRefs: [],
+    criterionAssessments: [],
+    gapDispositions: []
+  };
+  rewrittenPrefix.governanceBaseline.plan.outcomeTransitions = [sealedPrefix];
+  refreshGovernanceDigest(rewrittenPrefix.governanceBaseline);
+  rewrittenPrefix.currentModel.plan.outcomeTransitions = [
+    { ...structuredClone(sealedPrefix), rationale: "A rewritten historical rationale is forbidden." },
+    rewrittenPrefix.transition
+  ];
+  assert.throws(
+    () => compileOutcomeTransitions(rewrittenPrefix),
+    (error) => error.code === "OUTCOME_TRANSITION_LEDGER_REWRITE_FORBIDDEN"
+  );
+
+  const declaredMissingLedger = transitionFixture({ mode: "declared" });
+  declaredMissingLedger.currentModel.plan.outcomeTransitions = [];
+  const declaredCompilation = compileOutcomeTransitions(declaredMissingLedger);
+  assert.equal(declaredCompilation.status, "unresolved");
+  assert.deepEqual(declaredCompilation.unresolved, [{
+    outcomeRef: "LGT-001",
+    from: "active",
+    to: "achieved",
+    reason: "status-delta-has-no-appended-transition"
+  }]);
+
+  const conditionalActivation = transitionFixture();
+  const frozenTarget = conditionalActivation.governanceBaseline.plan.outcomes[0];
+  const currentTarget = conditionalActivation.currentModel.plan.outcomes[0];
+  frozenTarget.status = "conditional";
+  currentTarget.status = "active";
+  frozenTarget.acceptance.activationCriterionRefs = ["LGT-001-C1"];
+  currentTarget.acceptance.activationCriterionRefs = ["LGT-001-C1"];
+  frozenTarget.dependsOn = ["LGT-000"];
+  currentTarget.dependsOn = ["LGT-000"];
+  const achievedDependency = {
+    id: "LGT-000",
+    stage: "S1",
+    status: "achieved",
+    outcome: "A frozen bootstrap dependency is already achieved.",
+    dependsOn: [],
+    acceptance: { exitCriteria: ["Bootstrap records this prior Outcome."] }
+  };
+  conditionalActivation.governanceBaseline.plan.outcomes.push(achievedDependency);
+  conditionalActivation.currentModel.plan.outcomes.push(structuredClone(achievedDependency));
+  conditionalActivation.governanceBaseline.plan.bootstrapBaseline = {
+    head: "0000000000000000000000000000000000000000",
+    outcomeRefs: ["LGT-000"],
+    rationale: "The fixture dependency predates governed Transition history.",
+    residualUncertainty: "Only the fixture dependency is bootstrapped."
+  };
+  conditionalActivation.currentModel.plan.bootstrapBaseline = structuredClone(
+    conditionalActivation.governanceBaseline.plan.bootstrapBaseline
+  );
+  conditionalActivation.transition.from = "conditional";
+  conditionalActivation.transition.to = "active";
+  conditionalActivation.transition.criterionAssessments = conditionalActivation.transition.criterionAssessments
+    .filter((assessment) => assessment.criterionRef === "LGT-001-C1");
+  refreshGovernanceDigest(conditionalActivation.governanceBaseline);
+  const activationCompilation = compileOutcomeTransitions(conditionalActivation);
+  assert.deepEqual(activationCompilation.appendedTransitions[0].dependencyProofs, [{
+    outcomeRef: "LGT-000",
+    source: "bootstrap-baseline",
+    head: "0000000000000000000000000000000000000000"
+  }]);
+  assert.deepEqual(
+    activationCompilation.appendedTransitions[0].criterionProofs.map((proof) => proof.criterionRef),
+    ["LGT-001-C1"]
+  );
+
+  const unsatisfiedFrozenDependency = structuredClone(conditionalActivation);
+  unsatisfiedFrozenDependency.governanceBaseline.plan.outcomes
+    .find((outcome) => outcome.id === "LGT-000").status = "planned";
+  unsatisfiedFrozenDependency.currentModel.plan.outcomes
+    .find((outcome) => outcome.id === "LGT-000").status = "planned";
+  refreshGovernanceDigest(unsatisfiedFrozenDependency.governanceBaseline);
+  assert.throws(
+    () => compileOutcomeTransitions(unsatisfiedFrozenDependency),
+    (error) => error.code === "OUTCOME_TRANSITION_ROUTE_FORBIDDEN"
+      && error.details.dependencyRef === "LGT-000"
+  );
 });
 
 function enableOutcomeCriteria(model, additionalCriteria = [], claimRef = "core-works") {
@@ -409,6 +702,193 @@ function addForeignContract(model) {
     claims: [{ id: "foreign-works", statement: "The foreign Module remains correct." }]
   });
   model.projectDocument.assuranceBoundary.governed.push("foreign");
+}
+
+function transitionFixture({ mode = "enforced" } = {}) {
+  const baselineModel = baseModel();
+  enableOutcomeCriteria(baselineModel, [{
+    id: "LGT-001-C2",
+    statement: "The dependency behavior remains covered by discriminating Evidence.",
+    claimRefs: ["dependency-works"],
+    gapRefs: []
+  }]);
+  baselineModel.projectDocument.changePolicy.outcomeTransitionMode = mode;
+  baselineModel.plan.outcomeTransitions = [];
+  const governance = governanceBaseline(baselineModel);
+  const implementationChange = outcomeChange({
+    id: "accepted-transition-evidence",
+    claims: [
+      { id: "dependency-works", statement: "Dependency remains correct." },
+      { id: "core-works", statement: "Core remains correct." }
+    ]
+  });
+  const compiledImplementation = compileChangeAgainstGovernance(implementationChange, governance);
+  const acceptedRecord = sealedAcceptedRecord({
+    change: implementationChange,
+    governanceBaseline: governance,
+    outcomeAlignment: compiledImplementation.outcomeAlignment
+  });
+  const packageRef = {
+    changeId: acceptedRecord.id,
+    acceptanceDigest: acceptedRecord.acceptance.digest
+  };
+  const transition = {
+    id: "LGT-001-T1",
+    outcomeRef: "LGT-001",
+    from: "active",
+    to: "achieved",
+    rationale: "Both stable Criteria have exact prior Accepted Package Evidence.",
+    packageRefs: [structuredClone(packageRef), structuredClone(packageRef)],
+    criterionAssessments: ["LGT-001-C2", "LGT-001-C1"].map((criterionRef) => ({
+      criterionRef,
+      authorityAssessment: {
+        conclusion: "satisfied",
+        rationale: `The sealed implementation Package directly covers ${criterionRef}.`,
+        residualUncertainty: "The fixture authority identity is locally asserted."
+      }
+    })),
+    gapDispositions: [{
+      gapRef: "fixture-gap",
+      rationale: "The same sealed Package closes the exact bounded fixture Gap."
+    }]
+  };
+  const currentModel = structuredClone(baselineModel);
+  currentModel.plan.outcomes[0].status = "achieved";
+  currentModel.plan.outcomeTransitions = [transition];
+  currentModel.knowledgeGaps[0] = {
+    ...currentModel.knowledgeGaps[0],
+    status: "closed",
+    resolution: "The exact accepted transition fixture supplies discriminating Evidence.",
+    reopenTrigger: "Reopen if the sealed Package or exact Criterion Evidence binding is weakened.",
+    closedBy: [structuredClone(packageRef)]
+  };
+  return {
+    change: {
+      id: "achieve-fixture-outcome",
+      changeKind: "plan-amendment",
+      createdAt: "2026-07-16T12:00:00.000Z",
+      authorityDecision: {
+        status: "approved",
+        authority: "maintainer",
+        decidedBy: "fixture-maintainer",
+        decisionType: "normative-amendment",
+        rationale: "The exact prior Evidence satisfies every stable Criterion."
+      }
+    },
+    governanceBaseline: governance,
+    currentModel,
+    resolvedPackages: [acceptedRecord],
+    priorAcceptedPackages: acceptedPackageCatalog([packageRef]),
+    acceptedRecord,
+    packageRef,
+    transition
+  };
+}
+
+function sealedAcceptedRecord({ change, governanceBaseline, outcomeAlignment }) {
+  const acceptedAt = "2026-07-16T10:00:00.000Z";
+  const evidence = change.claims.map((claim) => ({
+    id: `evidence-${claim.id}`,
+    claim: structuredClone(claim),
+    oracle: {
+      kind: "deterministic-fixture-oracle",
+      description: `Reject an incorrect ${claim.id} behavior.`
+    },
+    observation: { status: "passed", exitCode: 0 },
+    provenance: {
+      kind: "gate-command",
+      changeId: change.id,
+      gateId: "minimum",
+      commandId: `verify-${claim.id}`,
+      verificationSubjectDigest: "sha256:fixture-subject",
+      projectModelDigest: "sha256:fixture-model",
+      git: { contentDigest: "sha256:fixture-git" }
+    },
+    applicability: { module: "core" },
+    discriminatoryPower: { rejects: [`incorrect-${claim.id}`] },
+    residualUncertainty: ["The synthetic fixture covers only its declared behavior."],
+    directSupportBindings: [{ claimId: claim.id, claimStatement: claim.statement }]
+  }));
+  const acceptedPackage = {
+    schemaVersion: 1,
+    changeId: change.id,
+    primaryModule: change.primaryModule,
+    changeKind: "implementation",
+    planRefs: structuredClone(change.planRefs),
+    claims: structuredClone(change.claims),
+    outcomeContributionHints: structuredClone(change.compilerInput?.outcomeContributionHints ?? []),
+    outcomeExceptions: structuredClone(change.compilerInput?.outcomeExceptions ?? []),
+    evidence,
+    gateRuns: [{
+      gateId: "minimum",
+      kind: "configured-gate",
+      status: "passed",
+      projectModelDigest: "sha256:fixture-model",
+      gitContentDigest: "sha256:fixture-git",
+      verificationSubjectDigest: "sha256:fixture-subject",
+      commandResults: evidence.map((item) => ({
+        id: item.provenance.commandId,
+        status: "passed",
+        exitCode: 0,
+        evidenceId: item.id
+      })),
+      evidenceIds: evidence.map((item) => item.id),
+      evidenceBindings: evidence.map((item) => ({ id: item.id, digest: canonicalDigest(item) }))
+    }],
+    outcomeAlignment: structuredClone(outcomeAlignment),
+    governanceBaseline: structuredClone(governanceBaseline)
+  };
+  const digest = canonicalDigest(acceptedPackage);
+  return {
+    id: change.id,
+    state: "Accepted",
+    history: [{ from: "EvidenceReady", to: "Accepted", at: acceptedAt, digest }],
+    acceptance: {
+      valid: false,
+      acceptedAt,
+      digest,
+      package: acceptedPackage
+    }
+  };
+}
+
+function resealFixtureRecord(fixture) {
+  const packageContent = fixture.acceptedRecord.acceptance.package;
+  for (const run of packageContent.gateRuns) {
+    for (const binding of run.evidenceBindings ?? []) {
+      const evidence = packageContent.evidence.find((item) => item.id === binding.id);
+      if (evidence) binding.digest = canonicalDigest(evidence);
+    }
+  }
+  const digest = canonicalDigest(packageContent);
+  fixture.acceptedRecord.acceptance.digest = digest;
+  fixture.acceptedRecord.history[0].digest = digest;
+  fixture.packageRef.acceptanceDigest = digest;
+  const retarget = (refs) => {
+    for (const ref of refs ?? []) {
+      if (ref.changeId === fixture.acceptedRecord.id) ref.acceptanceDigest = digest;
+    }
+  };
+  retarget(fixture.currentModel.plan.outcomeTransitions[0].packageRefs);
+  retarget(fixture.currentModel.knowledgeGaps[0].closedBy);
+  retarget(fixture.priorAcceptedPackages.entries);
+  fixture.priorAcceptedPackages = acceptedPackageCatalog(fixture.priorAcceptedPackages.entries);
+}
+
+function acceptedPackageCatalog(entries) {
+  const snapshot = {
+    schemaVersion: 1,
+    entries: structuredClone(entries).sort((left, right) => (
+      left.changeId.localeCompare(right.changeId)
+        || left.acceptanceDigest.localeCompare(right.acceptanceDigest)
+    ))
+  };
+  return { ...snapshot, digest: canonicalDigest(snapshot) };
+}
+
+function refreshGovernanceDigest(governanceBaseline) {
+  const { digest: ignored, ...snapshot } = governanceBaseline;
+  governanceBaseline.digest = canonicalDigest(snapshot);
 }
 
 function baseModel() {
@@ -498,7 +978,11 @@ function baseModel() {
         }
       }]
     },
-    knowledgeGaps: [{ id: "fixture-gap", statement: "The fixture leaves one bounded uncertainty." }],
+    knowledgeGaps: [{
+      id: "fixture-gap",
+      status: "open",
+      statement: "The fixture leaves one bounded uncertainty."
+    }],
     files: []
   };
 }

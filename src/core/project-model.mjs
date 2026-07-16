@@ -3,6 +3,9 @@ import path from "node:path";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import { INTEGRITY_CHANGE_KINDS } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
+import { validateOutcomeTransitionLedger } from "./outcome-transitions.mjs";
+
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
 export async function loadProjectModel(repoPath) {
   const root = path.join(repoPath, ".legatura");
@@ -282,6 +285,8 @@ export function validateProjectModel(model) {
   }
   validateOutcomePolicy(changePolicy, errors);
 
+  validateKnowledgeGaps(model.knowledgeGaps, errors);
+
   validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
 
   validateAssuranceBoundary(model, moduleIndex, errors, warnings);
@@ -298,6 +303,68 @@ export function validateProjectModel(model) {
       knowledgeGaps: model.knowledgeGaps.length
     }
   };
+}
+
+function validateKnowledgeGaps(knowledgeGaps, errors) {
+  const seen = new Set();
+  for (const [index, gap] of asArray(knowledgeGaps).entries()) {
+    const gapId = readId(gap);
+    const location = `.legatura/knowledge-gaps.json#${gapId ?? index}`;
+    if (!gapId) {
+      errors.push(issue("knowledge-gap.id.missing", location, "Every Knowledge Gap requires a stable id."));
+      continue;
+    }
+    if (seen.has(gapId)) {
+      errors.push(issue("knowledge-gap.id.duplicate", location, `Duplicate Knowledge Gap id: ${gapId}.`));
+      continue;
+    }
+    seen.add(gapId);
+    if (!readString(gap?.statement)) {
+      errors.push(issue("knowledge-gap.statement.missing", location, "Every Knowledge Gap requires a substantive statement."));
+    }
+    if (!["open", "closed"].includes(gap?.status)) {
+      errors.push(issue("knowledge-gap.status.invalid", location, "Knowledge Gap status must be open or closed."));
+      continue;
+    }
+    if (gap.status !== "closed") continue;
+    if (!readString(gap.resolution) || !readString(gap.reopenTrigger)) {
+      errors.push(issue(
+        "knowledge-gap.closure.incomplete",
+        location,
+        "A closed Knowledge Gap requires resolution and reopenTrigger."
+      ));
+    }
+    if (!Array.isArray(gap.closedBy) || gap.closedBy.length === 0) {
+      errors.push(issue(
+        "knowledge-gap.closed-by.missing",
+        location,
+        "A closed Knowledge Gap requires at least one Accepted Package reference."
+      ));
+      continue;
+    }
+    const refs = new Set();
+    for (const reference of gap.closedBy) {
+      const changeId = readString(reference?.changeId);
+      const acceptanceDigest = readString(reference?.acceptanceDigest);
+      const key = `${changeId ?? ""}\u0000${acceptanceDigest ?? ""}`;
+      if (!reference || typeof reference !== "object" || Array.isArray(reference)
+        || Object.keys(reference).some((field) => !["changeId", "acceptanceDigest"].includes(field))
+        || !changeId || !DIGEST_PATTERN.test(acceptanceDigest ?? "")) {
+        errors.push(issue(
+          "knowledge-gap.closed-by.invalid",
+          location,
+          "Knowledge Gap closedBy entries require only changeId and a canonical sha256 acceptanceDigest."
+        ));
+      } else if (refs.has(key)) {
+        errors.push(issue(
+          "knowledge-gap.closed-by.duplicate",
+          location,
+          "Knowledge Gap closedBy Package references must be unique."
+        ));
+      }
+      refs.add(key);
+    }
+  }
 }
 
 export function publicProjectModel(model) {
@@ -471,6 +538,9 @@ function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors)
       errors
     });
   }
+
+  const transitionValidation = validateOutcomeTransitionLedger(plan);
+  errors.push(...transitionValidation.errors);
 
   if (activeOutcomes === 0) {
     errors.push(issue("plan.active.missing", location, "Development Plan requires at least one active Outcome."));
