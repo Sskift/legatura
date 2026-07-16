@@ -10,6 +10,8 @@ import { createKernel } from "../../src/core/index.mjs";
 
 const execFileAsync = promisify(execFile);
 const GATE_CLAIM_ID = "minimum-behavior";
+const GAP_PROOF_CLAIM_ID = "gap-proof-behavior";
+const GAP_PROOF_ID = "governed-proof-gap";
 const CASE_DECISION = {
   status: "approved",
   authority: "maintainer",
@@ -68,7 +70,7 @@ test("self-reported manual Evidence cannot cover a Claim", async (t) => {
   );
 });
 
-test("tampering with a frozen Governance Baseline while retaining its digest is detected", async (t) => {
+test("frozen governance and Gap proof contracts are enforced across lifecycle boundaries", async (t) => {
   const fixture = await createFixture(t);
   const kernel = createKernel({ repoPath: fixture.repoPath });
   const changeId = "governance-snapshot-attack";
@@ -87,6 +89,8 @@ test("tampering with a frozen Governance Baseline while retaining its digest is 
     () => kernel.compileChange(changeId),
     (error) => error?.code === "GOVERNANCE_BASELINE_TAMPERED"
   );
+
+  await assertGapProofLifecycleGuards(t);
 });
 
 test("tampering with an Accepted Change Package invalidates reads and cannot be integrated", async (t) => {
@@ -418,6 +422,121 @@ async function createAcceptedChange(kernel, changeId) {
   return accepted;
 }
 
+async function assertGapProofLifecycleGuards(t) {
+  const compileFixture = await createFixture(t, {
+    proofContract: true,
+    gateWritesMarker: true
+  });
+  const compileKernel = createKernel({ repoPath: compileFixture.repoPath });
+  const compileChangeId = "proof-route-drift-before-compile";
+  await compileKernel.createChange(changeInput(compileChangeId));
+  await rewriteProofRoute(compileFixture.repoPath, "compile-time weakened oracle");
+  await assert.rejects(
+    () => compileKernel.compileChange(compileChangeId),
+    isProofRouteRewrite
+  );
+  const compileRefusal = await readRuntimeChange(compileFixture.repoPath, compileChangeId);
+  assert.equal(compileRefusal.state, "Candidate");
+  assert.deepEqual(compileRefusal.gateRuns, []);
+  assert.equal(compileRefusal.acceptance, null);
+  await assertFileMissing(compileFixture.gateMarkerPath);
+
+  const gateFixture = await createFixture(t, {
+    proofContract: true,
+    gateWritesMarker: true
+  });
+  const gateKernel = createKernel({ repoPath: gateFixture.repoPath });
+  const gateChangeId = "proof-route-drift-before-gate";
+  await gateKernel.createChange(changeInput(gateChangeId));
+  await gateKernel.compileChange(gateChangeId);
+  await rewriteProofRoute(gateFixture.repoPath, "gate-time weakened oracle");
+  await assert.rejects(
+    () => gateKernel.runGate(gateChangeId, "minimum"),
+    isProofRouteRewrite
+  );
+  const gateRefusal = await readRuntimeChange(gateFixture.repoPath, gateChangeId);
+  assert.equal(gateRefusal.state, "Submitted");
+  assert.deepEqual(gateRefusal.gateRuns, []);
+  assert.equal(gateRefusal.acceptance, null);
+  await assertFileMissing(gateFixture.gateMarkerPath);
+
+  const acceptFixture = await createFixture(t, {
+    proofContract: true,
+    gateWritesMarker: true
+  });
+  const acceptKernel = createKernel({ repoPath: acceptFixture.repoPath });
+  const acceptChangeId = "proof-route-drift-before-accept";
+  await acceptKernel.createChange(changeInput(acceptChangeId));
+  await acceptKernel.compileChange(acceptChangeId);
+  const evidenceReady = await acceptKernel.runGate(acceptChangeId, "minimum");
+  assert.equal(
+    evidenceReady.change.state,
+    "EvidenceReady",
+    JSON.stringify(evidenceReady.gateRuns)
+  );
+  await rm(acceptFixture.gateMarkerPath, { force: true });
+  await rewriteProofRoute(acceptFixture.repoPath, "accept-time weakened oracle");
+  await assert.rejects(
+    () => acceptKernel.acceptChange(acceptChangeId, CASE_DECISION),
+    isProofRouteRewrite
+  );
+  const acceptRefusal = await readRuntimeChange(acceptFixture.repoPath, acceptChangeId);
+  assert.equal(acceptRefusal.state, "EvidenceReady");
+  assert.deepEqual(acceptRefusal.gateRuns, evidenceReady.change.gateRuns);
+  assert.equal(acceptRefusal.authorityDecision, null);
+  assert.equal(acceptRefusal.acceptance, null);
+  await assertFileMissing(acceptFixture.gateMarkerPath);
+
+  const closureFixture = await createFixture(t, { proofContract: true });
+  const closureKernel = createKernel({ repoPath: closureFixture.repoPath });
+  const closureChangeId = "ordinary-change-forges-gap-closure";
+  await closureKernel.createChange(changeInput(closureChangeId));
+  await forgeGapClosure(closureFixture.repoPath);
+  await assert.rejects(
+    () => closureKernel.compileChange(closureChangeId),
+    (error) => error?.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error?.details?.problems?.includes("gap-closure-transition-uncompiled")
+  );
+  const closureRefusal = await readRuntimeChange(closureFixture.repoPath, closureChangeId);
+  assert.equal(closureRefusal.state, "Candidate");
+  assert.deepEqual(closureRefusal.gateRuns, []);
+  assert.equal(closureRefusal.acceptance, null);
+}
+
+function isProofRouteRewrite(error) {
+  return error?.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+    && error?.details?.claimRef === GAP_PROOF_CLAIM_ID
+    && error?.details?.problems?.includes("gate-route-semantic-mismatch");
+}
+
+async function rewriteProofRoute(repoPath, rejectedBehavior) {
+  const gatePath = path.join(repoPath, ".legatura", "gates", "minimum.json");
+  const gate = JSON.parse(await readFile(gatePath, "utf8"));
+  gate.commands[0].discriminatoryPower = { rejects: [rejectedBehavior] };
+  await writeJson(gatePath, gate);
+}
+
+async function forgeGapClosure(repoPath) {
+  const gapPath = path.join(repoPath, ".legatura", "knowledge-gaps.json");
+  const document = JSON.parse(await readFile(gapPath, "utf8"));
+  const gap = document.gaps.find((entry) => entry.id === GAP_PROOF_ID);
+  gap.status = "closed";
+  gap.resolution = "The ordinary Change falsely declares the governed uncertainty resolved.";
+  gap.reopenTrigger = "Any observation that exposes the forged closure.";
+  gap.closedBy = [{
+    changeId: "forged-accepted-package",
+    acceptanceDigest: `sha256:${"0".repeat(64)}`
+  }];
+  await writeJson(gapPath, document);
+}
+
+async function assertFileMissing(targetPath) {
+  await assert.rejects(
+    () => readFile(targetPath),
+    (error) => error?.code === "ENOENT"
+  );
+}
+
 function changeInput(id) {
   return {
     id,
@@ -462,9 +581,25 @@ function runtimeChangePath(repoPath, changeId) {
 
 async function createFixture(t, {
   gateAppliesTo = ["core"],
-  moduleInclude = ["src/**"]
+  moduleInclude = ["src/**"],
+  proofContract = false,
+  gateWritesMarker = false
 } = {}) {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "legatura-security-"));
+  const gateMarkerPath = path.join(
+    repoPath,
+    ".legatura",
+    "runtime",
+    "external-gate-ran.marker"
+  );
+  const gateCommand = gateWritesMarker
+    ? [
+        process.execPath,
+        "-e",
+        "require('node:fs').writeFileSync(process.argv[1], 'external gate ran')",
+        gateMarkerPath
+      ]
+    : [process.execPath, "-e", "process.exit(0)"];
   t.after(() => rm(repoPath, { force: true, recursive: true }));
   await Promise.all([
     mkdir(path.join(repoPath, ".legatura", "modules"), { recursive: true }),
@@ -507,7 +642,10 @@ async function createFixture(t, {
       claims: [{
         id: GATE_CLAIM_ID,
         statement: "The minimum governed behavior remains correct."
-      }]
+      }, ...(proofContract ? [{
+        id: GAP_PROOF_CLAIM_ID,
+        statement: "The governed Gap closes only through its exact independent proof route."
+      }] : [])]
     }),
     writeJson(path.join(repoPath, ".legatura", "gates", "minimum.json"), {
       id: "minimum",
@@ -515,8 +653,8 @@ async function createFixture(t, {
       appliesTo: gateAppliesTo,
       commands: [{
         id: "minimum-command",
-        command: [process.execPath, "-e", "process.exit(0)"],
-        claimRefs: [GATE_CLAIM_ID],
+        command: gateCommand,
+        claimRefs: [GATE_CLAIM_ID, ...(proofContract ? [GAP_PROOF_CLAIM_ID] : [])],
         oracle: {
           kind: "deterministic-process-exit",
           description: "The fixture command must exit successfully."
@@ -526,7 +664,17 @@ async function createFixture(t, {
         residualUncertainty: ["The fixture is intentionally bounded."]
       }]
     }),
-    writeJson(path.join(repoPath, ".legatura", "knowledge-gaps.json"), { gaps: [] }),
+    writeJson(path.join(repoPath, ".legatura", "knowledge-gaps.json"), {
+      gaps: proofContract ? [{
+        id: GAP_PROOF_ID,
+        status: "open",
+        statement: "The governed behavior remains unresolved until exact independent proof exists.",
+        affects: ["core"],
+        owner: "maintainer",
+        expansionTrigger: "The proof route or governed behavior changes.",
+        proofClaimRefs: [GAP_PROOF_CLAIM_ID]
+      }] : []
+    }),
     writeFile(path.join(repoPath, "src", "index.mjs"), "export const governed = true;\n")
   ]);
 
@@ -535,7 +683,7 @@ async function createFixture(t, {
   await execFileAsync("git", ["config", "user.email", "security@example.invalid"], { cwd: repoPath });
   await execFileAsync("git", ["add", "."], { cwd: repoPath });
   await execFileAsync("git", ["commit", "--quiet", "-m", "security baseline"], { cwd: repoPath });
-  return { repoPath };
+  return { repoPath, gateMarkerPath };
 }
 
 function writeJson(targetPath, value) {

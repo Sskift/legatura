@@ -21,6 +21,7 @@ import {
 } from "./evidence.mjs";
 import { readGitBinding } from "./git-binding.mjs";
 import {
+  assertKnowledgeGapProofContractsPreserved,
   loadProjectModel,
   publicProjectModel,
   validateProjectModel
@@ -129,6 +130,17 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
     return expected;
+  }
+
+  async function assertCurrentGovernanceContracts(change, currentModel, { modelValid = true } = {}) {
+    if (!modelValid) return null;
+    if (change.changeKind === "plan-amendment") {
+      return assertCurrentOutcomeTransitions(change, currentModel);
+    }
+    return assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: readGovernanceBaseline(change),
+      currentModel
+    });
   }
 
   async function createChange(input = {}) {
@@ -244,6 +256,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (change.claims.length === 0) {
       throw kernelError("CHANGE_CLAIM_REQUIRED", "A Change must declare at least one falsifiable Claim before submission.", 422);
     }
+    if (change.changeKind !== "plan-amendment") {
+      await assertCurrentGovernanceContracts(change, inspection);
+    }
     change = compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
     await observeCurrentChangeScope(change, inspection.git, inspection.plan);
     change.outcomeTransitionSchemaVersion = OUTCOME_TRANSITION_SCHEMA_VERSION;
@@ -277,15 +292,13 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     const model = await loadProjectModel(resolvedRepoPath);
     const validation = validateProjectModel(model);
     const governanceBaseline = readGovernanceBaseline(change);
+    await assertCurrentGovernanceContracts(change, model, { modelValid: validation.valid });
     const selectedGates = selectGates(governanceBaseline, request, change);
     if (change.state === "Integrated") {
       throw kernelError("CHANGE_SEALED", `Change ${change.id} is Integrated and cannot run more Gates.`, 409);
     }
     await observeCurrentChangeScope(change, inspection.git, model.plan);
     assertIntegrityFailureEvidenceCurrent(change);
-    if (change.state !== "Accepted" && validation.valid) {
-      await assertCurrentOutcomeTransitions(change, model);
-    }
     if (change.state === "Accepted") {
       if (!validation.valid) {
         throw kernelError("PROJECT_MODEL_INVALID", "The current Project Model is invalid.", 422, validation);
@@ -384,6 +397,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     change = await refreshChange(change);
     const inspection = await inspectProject();
     assertValidProject(inspection);
+    if (change.changeKind !== "plan-amendment" || change.compilation) {
+      await assertCurrentGovernanceContracts(change, inspection);
+    }
     if (change.compilation) {
       await observeCurrentChangeScope(change, inspection.git, inspection.plan);
       assertIntegrityFailureEvidenceCurrent(change);
@@ -443,7 +459,6 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     assertOutcomeExceptionBinding(change);
     assertCompiledChangeCurrent(change);
-    await assertCurrentOutcomeTransitions(change, inspection);
     const expectedAuthorities = readExpectedAuthorities(readGovernanceBaseline(change), change);
     const authorityValidation = validateAuthorityDecision(
       change.authorityDecision,

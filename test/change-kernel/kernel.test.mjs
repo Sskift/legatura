@@ -10,6 +10,10 @@ import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { readExpectedAuthorities } from "../../src/core/evidence.mjs";
 
 const execFileAsync = promisify(execFile);
+const TRANSITION_GAP_ID = "transition-evidence-gap";
+const TRANSITION_GAP_PROOF_CLAIM_ID = "transition-gap-proof-exact";
+const TRANSITION_GAP_PROOF_STATEMENT =
+  "The fixture Outcome Gap closes only through its exact configured proof route.";
 
 test("inspectProject exposes validated Project Model and repository state", async () => {
   const fixture = await createFixture();
@@ -303,11 +307,33 @@ test("integrity maintenance requires content-exact failed Evidence and Plan auth
 test("plan amendments preserve history, isolate implementation, and use Plan authority", async () => {
   const fixture = await createFixture();
   await enablePlanPolicy(fixture.repoPath);
+  await enableTransitionGapProofContract(fixture.repoPath);
   const kernel = createKernel({ repoPath: fixture.repoPath, clock: monotonicClock() });
+  const declaredModel = await kernel.inspectProject();
+  assert.equal(declaredModel.valid, true, JSON.stringify(declaredModel.validation.errors));
 
   const planPath = path.join(fixture.repoPath, ".legatura/plan.json");
   const plan = JSON.parse(await readFile(planPath, "utf8"));
   const proofA = await acceptTransitionProof(kernel, "transition-proof-a");
+  const proofPackage = proofA.change.acceptance.package;
+  assert.deepEqual(
+    proofPackage.governanceBaseline.knowledgeGaps.find((gap) => gap.id === TRANSITION_GAP_ID)
+      .proofClaimRefs,
+    [TRANSITION_GAP_PROOF_CLAIM_ID]
+  );
+  assert.ok(proofPackage.claims.some((claim) => (
+    claim.id === TRANSITION_GAP_PROOF_CLAIM_ID
+      && claim.statement === TRANSITION_GAP_PROOF_STATEMENT
+  )));
+  const proofEvidence = proofPackage.evidence.find((evidence) => (
+    evidence.provenance?.kind === "gate-command"
+      && evidence.directSupportBindings?.some((binding) => (
+        binding.claimId === TRANSITION_GAP_PROOF_CLAIM_ID
+          && binding.claimStatement === TRANSITION_GAP_PROOF_STATEMENT
+      ))
+  ));
+  assert.equal(proofEvidence?.provenance?.gateId, "minimum");
+  assert.equal(proofEvidence?.provenance?.commandId, "transition-gap-proof");
   const historyChange = await kernel.createChange({
     title: "Preserve permanent Outcome identity across amendments",
     changeKind: "plan-amendment",
@@ -403,7 +429,10 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
           residualUncertainty: "The synthetic fixture covers only its declared behavior boundary."
         }
       }],
-      gapDispositions: []
+      gapDispositions: [{
+        gapRef: TRANSITION_GAP_ID,
+        rationale: "The same prior Package directly proves the separately governed Gap Closure Contract."
+      }]
     }];
     return next;
   };
@@ -422,6 +451,7 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   }]);
 
   await writeJson(planPath, transitionPlan(proofB.reference));
+  await closeTransitionGap(fixture.repoPath, proofB.reference);
   await assert.rejects(
     kernel.compileChange(historyChange.id),
     (error) => error.code === "OUTCOME_TRANSITION_PACKAGE_NOT_PRIOR"
@@ -429,14 +459,15 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
 
   const amendedPlan = transitionPlan(proofA.reference);
   await writeJson(planPath, amendedPlan);
+  await closeTransitionGap(fixture.repoPath, proofA.reference);
   const compilePatch = {
     knowledgeClosure: {
       status: "complete",
       entries: [{
         kind: "model-amendment",
-        refs: [".legatura/plan.json"],
-        statement: "The fixture Development Plan records an Evidence-bound achieved Outcome Transition.",
-        rationale: "Future Changes inherit both the terminal status and its append-only proof history."
+        refs: [".legatura/knowledge-gaps.json", ".legatura/plan.json"],
+        statement: "The fixture Plan records an Evidence-bound Transition and closes its exact governed Gap.",
+        rationale: "Future Changes inherit the terminal status, Gap disposition, and append-only proof history."
       }]
     },
     authorityDecision: {
@@ -444,8 +475,8 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
       authority: "project-maintainer",
       decidedBy: "maintainer@example.test",
       decisionType: "normative-amendment",
-      rationale: "Approve the isolated Development Plan Transition from exact prior Evidence.",
-      amendmentRefs: [".legatura/plan.json"]
+      rationale: "Approve the isolated Plan Transition and exact Gap closure from prior Evidence.",
+      amendmentRefs: [".legatura/knowledge-gaps.json", ".legatura/plan.json"]
     }
   };
   let planCompiled = await kernel.compileChange(historyChange.id, compilePatch);
@@ -459,6 +490,32 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
     proofA.reference
   );
   assert.ok(compiledProof.evidenceBindings.length > 0);
+  const compiledGapProof = planCompiled.outcomeTransitionCompilation.appendedTransitions[0]
+    .gapDispositions[0];
+  assert.deepEqual(compiledGapProof.proofClaimRefs, [TRANSITION_GAP_PROOF_CLAIM_ID]);
+  assert.deepEqual(
+    compiledGapProof.packages.map((entry) => ({
+      changeId: entry.changeId,
+      acceptanceDigest: entry.acceptanceDigest,
+      claimRefs: entry.claimRefs,
+      evidenceRoutes: entry.evidenceBindings.map((binding) => ({
+        provenanceKind: binding.provenanceKind,
+        gateId: binding.gateId,
+        commandId: binding.commandId,
+        claimRefs: binding.claimRefs
+      }))
+    })),
+    [{
+      ...proofA.reference,
+      claimRefs: [TRANSITION_GAP_PROOF_CLAIM_ID],
+      evidenceRoutes: [{
+        provenanceKind: "gate-command",
+        gateId: "minimum",
+        commandId: "transition-gap-proof",
+        claimRefs: [TRANSITION_GAP_PROOF_CLAIM_ID]
+      }]
+    }]
+  );
 
   const candidateRecordPath = path.join(
     fixture.repoPath,
@@ -977,13 +1034,88 @@ async function enablePlanPolicy(repoPath) {
   await git(repoPath, "commit", "-qm", "enable plan policy");
 }
 
+async function enableTransitionGapProofContract(repoPath) {
+  const contractPath = path.join(repoPath, ".legatura/contracts/core-behavior.json");
+  const contract = JSON.parse(await readFile(contractPath, "utf8"));
+  contract.claims.push({
+    id: TRANSITION_GAP_PROOF_CLAIM_ID,
+    statement: TRANSITION_GAP_PROOF_STATEMENT
+  });
+  await writeJson(contractPath, contract);
+
+  const gatePath = path.join(repoPath, ".legatura/gates/minimum.json");
+  const gate = JSON.parse(await readFile(gatePath, "utf8"));
+  gate.commands.push({
+    id: "transition-gap-proof",
+    command: [process.execPath, "-e", "process.exit(0)"],
+    timeoutMs: 30_000,
+    appliesTo: ["core"],
+    claimRefs: [TRANSITION_GAP_PROOF_CLAIM_ID],
+    oracle: {
+      kind: "fixture-gap-proof",
+      description: "The exact fixture Gap proof command exits zero."
+    },
+    applicability: { phase: "acceptance" },
+    discriminatoryPower: {
+      rejects: ["A non-zero proof process exit rejects the governed Gap Closure Claim."]
+    },
+    residualUncertainty: ["Only the synthetic fixture Gap proof boundary is covered."]
+  });
+  await writeJson(gatePath, gate);
+
+  const gapPath = path.join(repoPath, ".legatura/knowledge-gaps.json");
+  await writeJson(gapPath, {
+    schemaVersion: 1,
+    gaps: [{
+      id: TRANSITION_GAP_ID,
+      status: "open",
+      statement: "Exact Evidence has not yet closed the fixture Outcome Gap.",
+      affects: ["core"],
+      owner: "project-maintainer",
+      expansionTrigger: "The proof route or bounded fixture behavior changes.",
+      proofClaimRefs: [TRANSITION_GAP_PROOF_CLAIM_ID]
+    }]
+  });
+
+  const planPath = path.join(repoPath, ".legatura/plan.json");
+  const plan = JSON.parse(await readFile(planPath, "utf8"));
+  const outcome = plan.outcomes.find((entry) => entry.id === "LGT-903");
+  outcome.acceptance.gapRefs = [TRANSITION_GAP_ID];
+  outcome.acceptance.criteria[0].gapRefs = [TRANSITION_GAP_ID];
+  await writeJson(planPath, plan);
+
+  await git(
+    repoPath,
+    "add",
+    ".legatura/contracts/core-behavior.json",
+    ".legatura/gates/minimum.json",
+    ".legatura/knowledge-gaps.json",
+    ".legatura/plan.json"
+  );
+  await git(repoPath, "commit", "-qm", "declare transition Gap proof contract");
+}
+
+async function closeTransitionGap(repoPath, packageRef) {
+  const gapPath = path.join(repoPath, ".legatura/knowledge-gaps.json");
+  const document = JSON.parse(await readFile(gapPath, "utf8"));
+  const gap = document.gaps.find((entry) => entry.id === TRANSITION_GAP_ID);
+  gap.status = "closed";
+  gap.resolution = "The exact prior Package directly proves the governed fixture Gap Claim.";
+  gap.reopenTrigger = "Reopen if the Package seal, proof Claim, or configured Gate route changes.";
+  gap.closedBy = [structuredClone(packageRef)];
+  await writeJson(gapPath, document);
+}
+
 async function acceptTransitionProof(kernel, id) {
   const change = await kernel.createChange({
     id,
     title: `Prove the stable Transition fixture with ${id}`,
     primaryModule: "core",
     planRefs: ["LGT-903"],
-    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }],
+    claims: [
+      { id: "behavior-correct", statement: "The governed behavior remains correct." },
+      { id: TRANSITION_GAP_PROOF_CLAIM_ID, statement: TRANSITION_GAP_PROOF_STATEMENT }
+    ],
     knowledgeClosure: {
       status: "complete",
       noNewKnowledge: true,
