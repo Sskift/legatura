@@ -672,13 +672,6 @@ function compileOutcomeAlignment({
     }
   }
 
-  if (mode === "enforced" && compiledExceptions.length > 0) {
-    throw compilerError(
-      "OUTCOME_EXCEPTION_AUTHORITY_UNENFORCED",
-      "An enforced Outcome exception requires Change Kernel routing to Plan authority before it can compile.",
-      { exceptions: compiledExceptions }
-    );
-  }
   if (mode === "enforced" && unresolved.length > 0) {
     const codeByReason = {
       ambiguous: "OUTCOME_CRITERION_AMBIGUOUS",

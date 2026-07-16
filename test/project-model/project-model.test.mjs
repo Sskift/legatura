@@ -323,20 +323,21 @@ test("Outcome Contributions use exact accessible Claims, stable Criteria, and ex
     () => compileChangeAgainstGovernance(foreignChange, enforcedInaccessibleBaseline),
     (error) => error.code === "OUTCOME_CONTRIBUTION_REQUIRED"
   );
-  assert.throws(
-    () => compileChangeAgainstGovernance({
-      ...foreignChange,
-      compilerInput: {
-        ...foreignChange.compilerInput,
-        outcomeExceptions: [{
-          outcomeRef: "LGT-001",
-          reason: "Required work has no honest accessible Criterion mapping.",
-          residualUncertainty: "The exception records no Outcome progress."
-        }]
-      }
-    }, enforcedInaccessibleBaseline),
-    (error) => error.code === "OUTCOME_EXCEPTION_AUTHORITY_UNENFORCED"
-  );
+  const enforcedException = compileChangeAgainstGovernance({
+    ...foreignChange,
+    compilerInput: {
+      ...foreignChange.compilerInput,
+      outcomeExceptions: [{
+        outcomeRef: "LGT-001",
+        reason: "Required work has no honest accessible Criterion mapping.",
+        residualUncertainty: "The exception records no Outcome progress."
+      }]
+    }
+  }, enforcedInaccessibleBaseline);
+  assert.equal(enforcedException.outcomeAlignment.status, "pending-authority");
+  assert.deepEqual(enforcedException.outcomeAlignment.exceptions.map((entry) => entry.requiredAuthorityRef), [
+    "maintainer"
+  ]);
 });
 
 function enableOutcomeCriteria(model, additionalCriteria = [], claimRef = "core-works") {

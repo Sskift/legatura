@@ -19,7 +19,8 @@
       "Unrelated Claims require an explicit authority-bound mapping.",
       "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome.",
       "Stable Outcome Criteria exactly mirror exit criteria and their declared Claim and Knowledge Gap sets.",
-      "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint."
+      "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint.",
+      "Enforced Outcome alignment admits only exact Contributions or explicit non-progress exception requests bound to frozen Development Plan authority."
     ]
   },
   "paths": {
