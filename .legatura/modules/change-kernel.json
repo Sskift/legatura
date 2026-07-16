@@ -19,6 +19,7 @@
       "Declared Knowledge Gap Closure Contracts are rechecked before ordinary Change compilation, Gate execution, and acceptance; only the Outcome Transition compiler may authorize a Gap closure delta.",
       "A Change id can produce at most one Accepted Package; invalidated historical acceptance requires a new follow-up Change.",
       "Plan amendments cannot remove or reinterpret stable Outcome Criteria or add Criteria during an Outcome status transition.",
+      "Project Model owns strict planRefs value semantics; Change Kernel owns presence-based planRef alias conflicts and must adapt create and patch inputs before persistence so the Store contains only canonical planRefs.",
       "Integration requires current full assurance when policy demands it."
     ]
   },
@@ -32,6 +33,7 @@
       "test/change-kernel/security-invariants.test.mjs",
       "test/change-kernel/trust-invariants.test.mjs",
       "test/change-kernel/integration-assurance.test.mjs",
+      "test/change-kernel/plan-refs-adapter.test.mjs",
       ".legatura/modules/change-kernel.json",
       ".legatura/contracts/change-kernel-interface.json"
     ],
@@ -53,6 +55,10 @@
     {
       "path": "test/change-kernel/integration-assurance.test.mjs",
       "command": "node --test test/change-kernel/integration-assurance.test.mjs"
+    },
+    {
+      "path": "test/change-kernel/plan-refs-adapter.test.mjs",
+      "command": "node --test test/change-kernel/plan-refs-adapter.test.mjs"
     }
   ],
   "publicContracts": ["change-kernel-interface"],
