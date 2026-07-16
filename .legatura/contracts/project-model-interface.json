@@ -30,6 +30,10 @@
     {
       "id": "knowledge-gap-blockers-are-enforced",
       "statement": "The Project Model treats blocker relations as separate monotonic closure-consumption constraints, validates canonical append-only blocksGapClosureRefs and exact blocksOutcomeTransitionRoutes declared by open Knowledge Gaps that already own governed Closure Contracts, and rejects unknown or already-closed Gap targets, invalid Outcome routes, duplicates, self-edges, cycles, prior-relation removal or mutation, additions after source closure, and mixed declaration with a named closure or matching Transition. For each candidate Outcome status delta it derives the exact Gap disposition set from frozen Criterion Gaps, matching baseline-open Outcome-route blockers, and every required Gap's transitive baseline-open blockers; a blocker clears only when its own unchanged open-to-closed Closure Contract proof compiles atomically in that Transition, never from a status edit alone."
+    },
+    {
+      "id": "module-claim-gate-projections-are-exact",
+      "statement": "From one compiler-produced opaque Claim Gate route product bound to the exact unchanged Project Model, Project Model compiles under one aggregate bounded budget the complete canonical Claim descriptors visible through each requested Module's publicContracts and dependency via Contracts, plus the complete acceptance-eligible original Gate and command routes for those Claims and explicitly selected Module/Claim pairs. Explicit selections may address frozen-Plan target or cross-source Claims but never widen authoring visibility; routes admitted only by integration- or release-only full-Gate expansion are excluded; original route shape, order, and canonical digest are preserved; and forged, wrong-Model, content-drifted, incomplete-coverage, malformed, unknown-Module, or over-limit inputs fail closed without requiring a consumer to traverse Contracts or reinterpret Gate scope, command scope, or effective Module applicability."
     }
   ]
 }

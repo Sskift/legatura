@@ -31,6 +31,10 @@
     {
       "id": "workbench-semantics-are-kernel-compiled",
       "statement": "The Change Kernel compiles one bounded Workbench semantic projection from a stabilized composite Project Model, Git, and Change Store snapshot: authoring options contain the complete canonical set of exact Claims visible through each Module's owned or dependency Contracts and every acceptance-eligible Gate and command route projected for them by the same current Project Model route product as the Architecture Profile; existing-Change compile, Gate, and accept actions contain the complete canonical set permitted by the frozen Governance Baseline and Kernel lifecycle policy; their exact Claim-route annotations derive from the compiler-owned Verification Plan; and every unavailable action carries a non-empty duplicate-free disabled-reason code list containing only workbenchDisabledReasonCodes in workbenchDisabledReasonPrecedence order."
+    },
+    {
+      "id": "workbench-semantics-consume-project-model-projections",
+      "statement": "The Change Kernel obtains Workbench authoring Claim visibility and acceptance-eligible current or frozen-Plan routes only through Project Model's bounded module Claim/Gate projection over each corresponding opaque route product. It does not traverse Contract publicContracts or dependency via relations, interpret Gate or command scope, or filter route effectiveModuleRefs, while retaining ownership only of stable source orchestration, lifecycle action policy, disabled-reason ordering, and compiler-bound Verification Plan validation."
     }
   ],
   "valueObjects": {

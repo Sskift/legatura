@@ -28,7 +28,7 @@
       "Project Model owns strict planRefs value semantics; Change Kernel owns presence-based planRef alias conflicts and must adapt create and patch inputs before persistence so the Store contains only canonical planRefs.",
       "Project and Change read queries fail closed unless at most three observations contain two consecutive identical source digests; a stabilized Change query observes Model, Git, and Store once per round, projects every record without writes, preserves historical state and acceptance, and returns bounded list summaries while full Evidence and package bodies remain detail-only.",
       "An Architecture Profile query compiles one Project Model-owned Claim Gate route product covering every Contract Claim in the stabilized current Model, passes that exact process-local product into Profile compilation, and compiles at most one product per unique verified frozen Governance Baseline over the union of actually referenced non-builtin source Claims; one query-level ceiling charges each unique product's compiler-owned workUnits, routes, and totalRouteBytes plus bounded Kernel route projection work once, cache hits are not recharged, and operational observations never become assurance or Evidence.",
-      "One stabilized Workbench query reuses the Architecture Profile's current-Model route product to project the complete canonical owned and dependency Contract Claim choices; existing-Change compile, Gate, and accept actions project the complete canonical set allowed by the frozen Governance Baseline and Kernel lifecycle selection semantics, annotate exact Claim routes only from the compiler-owned Verification Plan, and do not prune an otherwise runnable Gate merely because it covers no Change Claim; every unavailable action emits the non-empty duplicate-free subset of change-kernel-interface workbenchDisabledReasonCodes in declared precedence order, and no adapter may reconstruct these decisions from raw Project Model or Change fields.",
+      "One stabilized Workbench query reuses the Architecture Profile's current-Model route product and consumes Project Model's bounded module Claim/Gate projection over each corresponding current or frozen-Plan route product for all authoring visibility and acceptance routes; it does not traverse Contract publicContracts or dependency via relations, interpret Gate or command scope, or filter route effectiveModuleRefs. Change Kernel alone projects lifecycle-permitted compile, Gate, and accept actions, validates exact Claim-route annotations from the compiler-owned Verification Plan, preserves otherwise runnable Gates that cover no Change Claim, and emits every unavailable action's non-empty duplicate-free disabled-reason code subset in declared precedence order; no adapter may reconstruct these decisions from raw Project Model or Change fields.",
       "Integration requires current full assurance when policy demands it."
     ]
   },
@@ -45,6 +45,7 @@
       "test/change-kernel/plan-refs-adapter.test.mjs",
       "test/change-kernel/architecture-profile.test.mjs",
       "test/change-kernel/workbench-semantics.test.mjs",
+      "test/change-kernel/project-model-projection-adoption.test.mjs",
       ".legatura/modules/change-kernel.json",
       ".legatura/contracts/change-kernel-interface.json"
     ],

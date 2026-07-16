@@ -3,8 +3,42 @@
   "id": "workbench-semantics",
   "name": "Workbench Semantic Projection Proof Gate",
   "purpose": "Produce direct Module-owned Evidence that Kernel and Workbench projections preserve exact authoring and action semantics without adapter-side governance compilation.",
-  "appliesTo": ["change-kernel", "local-workbench"],
+  "appliesTo": ["project-model", "change-kernel", "local-workbench"],
   "commands": [
+    {
+      "id": "workbench-semantics-project-model-projection-proof",
+      "appliesTo": ["project-model"],
+      "command": [
+        "node",
+        "--test",
+        "test/project-model/module-claim-gate-projection.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["module-claim-gate-projections-are-exact"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Project Model module Claim/Gate projection proof entrypoint must exist, prove the bounded batch Interface, and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-semantic-projection-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "publicContracts or dependency via Contract Claims omitted, invented, duplicated, or exposed to an unrelated Module",
+          "frozen-Plan target or cross-source route selection that broadens authoring Claim visibility",
+          "a requested Module and Claim pair with no acceptance route omitted instead of retained as an empty route list",
+          "acceptance routes produced by consumer-side Gate scope, command scope, or effective Module filtering",
+          "integration- or release-only full-Gate expansion admitted as an acceptance route",
+          "route shape, order, or canonical digest rewritten by the module projection",
+          "forged, wrong-Model, incomplete, drifted, serialized, or aggregate-budget-exceeding route-product input"
+        ]
+      },
+      "residualUncertainty": [
+        "Stable composite source orchestration and lifecycle action policy remain Change Kernel responsibilities.",
+        "Local Workbench projection and browser adoption are proved separately."
+      ]
+    },
     {
       "id": "workbench-semantics-change-kernel-proof",
       "appliesTo": ["change-kernel"],
@@ -36,6 +70,37 @@
       "residualUncertainty": [
         "Local Workbench projection and real adapter adoption are proved by a separate Module-owned command.",
         "Browser DOM interaction remains outside this Gate and belongs to LGT-014."
+      ]
+    },
+    {
+      "id": "workbench-semantics-change-kernel-adoption-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/project-model-projection-adoption.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-semantics-consume-project-model-projections"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel adoption proof entrypoint must exist, prove exclusive consumption of Project Model module Claim/Gate projections, and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-semantic-projection-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "Kernel traversal of Contract ownership or dependency visibility for Workbench authoring Claims",
+          "Kernel interpretation of Gate scope, command scope, or effective Module applicability",
+          "current or frozen-Plan acceptance routes obtained outside Project Model's bounded batch projection",
+          "loss of Kernel ownership over stable source orchestration, lifecycle policy, disabled-reason ordering, or compiler-bound Verification Plan validation"
+        ]
+      },
+      "residualUncertainty": [
+        "Local Workbench projection and browser adoption are proved by a separate Module-owned command.",
+        "The proof covers one local single-writer stable query; multi-writer history remains outside the current assurance boundary."
       ]
     },
     {
