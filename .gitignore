@@ -1,0 +1,8 @@
+.DS_Store
+.env*
+!.env.example
+.legatura/runtime/
+node_modules/
+coverage/
+*.log
+*.tgz

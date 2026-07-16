@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "local-workbench",
+  "name": "Local Workbench",
+  "status": "provisional",
+  "summary": "Projects the Change Kernel through the installed CLI, loopback HTTP interface, browser UI, and package delivery surface.",
+  "factAuthority": "local-workbench-facts",
+  "decisionAuthority": "module-maintainer",
+  "interface": {
+    "entrypoints": [
+      "legatura open <repo>",
+      "legatura inspect <repo>",
+      "createServer(options)",
+      "startServer(options)",
+      "loopback HTTP Change interface"
+    ],
+    "invariants": [
+      "The server binds only to loopback.",
+      "HTTP input and errors remain bounded and structured.",
+      "The UI does not invent normative project truth."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/cli.mjs",
+      "src/server.mjs",
+      "public/**",
+      "test/server/**",
+      "README.md",
+      "SECURITY.md",
+      "package.json",
+      "package-lock.json",
+      ".gitignore",
+      ".github/**",
+      ".legatura/modules/local-workbench.json",
+      ".legatura/contracts/local-workbench-interface.json"
+    ],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "test/server/**",
+      "command": "node --test test/server"
+    }
+  ],
+  "publicContracts": ["local-workbench-interface"],
+  "dependencies": [
+    {
+      "module": "change-kernel",
+      "via": "change-kernel-interface",
+      "access": "interface-only"
+    }
+  ]
+}

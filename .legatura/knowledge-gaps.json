@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "gaps": [
+    {
+      "id": "module-path-ownership-not-machine-audited",
+      "status": "open",
+      "affects": ["project-model"],
+      "owner": "governance-maintainer",
+      "statement": "Validation does not yet reject overlapping Module paths or tracked files owned by no Module.",
+      "expansionTrigger": "Before automatic worker write capabilities are enabled."
+    },
+    {
+      "id": "minimum-gate-is-not-module-selective",
+      "status": "open",
+      "affects": ["project-model", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "The current policy has one default Gate and executes every command in that Gate; command applicability is descriptive, not a runtime selector.",
+      "expansionTrigger": "When the minimum suite becomes materially slower or another Module is added."
+    },
+    {
+      "id": "subprocess-boundary-not-characterized",
+      "status": "open",
+      "affects": ["assurance-runtime"],
+      "owner": "module-maintainer",
+      "statement": "Timeout, signal, byte truncation, encoding, and cross-platform subprocess behavior lack direct boundary tests.",
+      "expansionTrigger": "Before Assurance Runtime becomes governed."
+    },
+    {
+      "id": "browser-projection-not-e2e-tested",
+      "status": "open",
+      "affects": ["local-workbench"],
+      "owner": "module-maintainer",
+      "statement": "The browser projection has no DOM-level test proving that it preserves Project Model and Change semantics.",
+      "expansionTrigger": "Before Local Workbench becomes governed."
+    },
+    {
+      "id": "worker-and-identity-trust-opaque",
+      "status": "open",
+      "affects": ["change-kernel", "worker-execution", "identity-provider"],
+      "owner": "governance-maintainer",
+      "statement": "Workers have no capability sandbox and authority identities are local unauthenticated assertions.",
+      "expansionTrigger": "Before remote workers, multi-user acceptance, or signed attestations."
+    }
+  ]
+}

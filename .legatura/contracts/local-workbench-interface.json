@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "local-workbench-interface",
+  "name": "Local Workbench Interface",
+  "owner": "local-workbench",
+  "consumers": [],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent", "package-surface"],
+  "claims": [
+    {
+      "id": "workbench-is-loopback-and-bounded",
+      "statement": "The workbench serves its bounded Change interface only on loopback and returns structured bounded HTTP errors."
+    },
+    {
+      "id": "installed-cli-is-executable",
+      "statement": "The installed legatura binary remains an executable entrypoint through package-manager symlinks."
+    }
+  ]
+}

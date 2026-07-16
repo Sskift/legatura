@@ -1,0 +1,38 @@
+{
+  "name": "legatura",
+  "version": "0.0.1",
+  "private": true,
+  "description": "A local-first trusted change control plane for multi-agent software work.",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Sskift/legatura.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Sskift/legatura/issues"
+  },
+  "homepage": "https://github.com/Sskift/legatura#readme",
+  "keywords": [
+    "agents",
+    "change-control",
+    "evidence",
+    "multi-agent",
+    "software-assurance"
+  ],
+  "type": "module",
+  "files": [
+    "public/",
+    "src/"
+  ],
+  "bin": {
+    "legatura": "src/cli.mjs"
+  },
+  "scripts": {
+    "open": "node src/cli.mjs open",
+    "test": "node --test",
+    "check": "node --check src/cli.mjs && node --check src/server.mjs && node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

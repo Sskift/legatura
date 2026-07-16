@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#f4f5f1" />
+    <title>Legatura · 可信变更工作台</title>
+    <meta
+      name="description"
+      content="用于理解项目、控制软件变更并审查证据的本地工作台。"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">跳到主要内容</a>
+
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#atlas" aria-label="Legatura 首页">
+          <span class="brand-mark" aria-hidden="true"><span></span></span>
+          <span>
+            <strong>Legatura</strong>
+            <small>可信变更工作台</small>
+          </span>
+        </a>
+
+        <nav class="section-nav" aria-label="页面区域">
+          <a href="#atlas" data-nav="atlas">项目全景</a>
+          <a href="#workspace" data-nav="workspace">变更工作区</a>
+          <a href="#review" data-nav="review">审查与接纳</a>
+        </nav>
+
+        <div class="topbar-actions">
+          <div class="connection-state" id="connection-state" aria-live="polite">
+            <span class="state-dot" aria-hidden="true"></span>
+            <span>正在连接</span>
+          </div>
+          <button class="button button-primary button-compact" id="open-create-change" type="button">
+            <span aria-hidden="true">＋</span>
+            创建变更
+          </button>
+        </div>
+      </header>
+
+      <div class="global-message" id="global-message" role="status" aria-live="polite" hidden></div>
+
+      <main id="main-content">
+        <section class="page-section atlas-section" id="atlas" aria-labelledby="atlas-title">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">01 · 项目全景</p>
+              <h1 id="atlas-title">先看清项目，再改变它。</h1>
+              <p class="section-description">
+                当前基线、可治理边界与已知缺口汇聚在这里。未知会被明确标出，不会被包装成确定结论。
+              </p>
+            </div>
+            <button class="button button-secondary button-compact" id="refresh-project" type="button">
+              刷新项目
+            </button>
+          </div>
+
+          <div id="project-loading" class="loading-grid" aria-label="正在载入项目">
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-wide"></div>
+          </div>
+
+          <div id="project-error" class="state-panel state-panel-error" hidden>
+            <span class="state-symbol" aria-hidden="true">!</span>
+            <div>
+              <strong>项目全景暂时无法载入</strong>
+              <p id="project-error-message"></p>
+              <button class="text-button" id="retry-project" type="button">重新尝试</button>
+            </div>
+          </div>
+
+          <div id="project-empty" class="state-panel" hidden>
+            <span class="state-symbol" aria-hidden="true">○</span>
+            <div>
+              <strong>还没有可展示的项目模型</strong>
+              <p>项目完成扫描并建立模型后，模块、边界和门禁会出现在这里。</p>
+            </div>
+          </div>
+
+          <div id="project-content" hidden>
+            <div class="project-identity">
+              <div class="project-title-group">
+                <span class="project-avatar" id="project-avatar" aria-hidden="true">P</span>
+                <div>
+                  <div class="title-line">
+                    <h2 id="project-name">项目</h2>
+                    <span class="status-pill" id="project-model-status" hidden></span>
+                  </div>
+                  <p id="project-path" class="muted copyable-text"></p>
+                </div>
+              </div>
+              <div class="project-updated" id="project-updated" hidden></div>
+            </div>
+
+            <div class="summary-grid">
+              <article class="summary-card baseline-card">
+                <div class="card-label">
+                  <span class="label-icon label-icon-dark" aria-hidden="true">B</span>
+                  Governance Baseline
+                </div>
+                <strong class="summary-value summary-value-code" id="baseline-value">—</strong>
+                <p id="baseline-detail">当前变更所依据的精确项目事实与源码版本。</p>
+              </article>
+
+              <article class="summary-card">
+                <div class="card-label">
+                  <span class="label-icon label-icon-green" aria-hidden="true">A</span>
+                  Assurance Boundary
+                </div>
+                <div class="boundary-bar" id="boundary-bar" aria-label="可治理边界"></div>
+                <div class="boundary-legend" id="boundary-legend"></div>
+              </article>
+
+              <article class="summary-card gate-summary-card">
+                <div class="card-label">
+                  <span class="label-icon label-icon-amber" aria-hidden="true">G</span>
+                  Gate Health
+                </div>
+                <div class="gate-health-value" id="gate-health-value">
+                  <strong>—</strong>
+                </div>
+                <p id="gate-health-detail">门禁结果尚未载入。</p>
+              </article>
+            </div>
+
+            <div class="atlas-grid">
+              <article class="panel module-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="panel-kicker">职责与依赖</p>
+                    <h3>模块关系</h3>
+                  </div>
+                  <span class="count-badge" id="module-count">0 个模块</span>
+                </div>
+                <div id="module-map" class="module-map"></div>
+                <div id="module-map-empty" class="inline-empty" hidden>
+                  尚未声明模块关系。
+                </div>
+              </article>
+
+              <div class="side-stack">
+                <article class="panel compact-panel">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="panel-kicker">已知未知</p>
+                      <h3>Knowledge Gaps</h3>
+                    </div>
+                    <span class="count-badge count-badge-warn" id="gap-count">0</span>
+                  </div>
+                  <div class="item-list" id="knowledge-gaps"></div>
+                  <div id="knowledge-gaps-empty" class="inline-empty" hidden>
+                    当前没有登记的知识缺口。
+                  </div>
+                </article>
+
+                <article class="panel compact-panel">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="panel-kicker">项目保护</p>
+                      <h3>门禁状态</h3>
+                    </div>
+                  </div>
+                  <div class="item-list gate-list" id="project-gates"></div>
+                  <div id="project-gates-empty" class="inline-empty" hidden>
+                    当前没有声明项目门禁。
+                  </div>
+                </article>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-section workspace-section" id="workspace" aria-labelledby="workspace-title">
+          <div class="section-heading section-heading-tight">
+            <div>
+              <p class="eyebrow">02 · 变更工作区</p>
+              <h2 id="workspace-title">把意图编译成受控的工程事务。</h2>
+              <p class="section-description">
+                每个变更都有明确主张、边界、上下文和证明义务。执行者可以替换，变更制度保持不变。
+              </p>
+            </div>
+            <button class="button button-primary" id="open-create-change-secondary" type="button">
+              创建一个变更
+            </button>
+          </div>
+
+          <div class="workspace-shell">
+            <aside class="change-rail" aria-labelledby="change-list-title">
+              <div class="rail-heading">
+                <div>
+                  <p class="panel-kicker">Changes</p>
+                  <h3 id="change-list-title">变更列表</h3>
+                </div>
+                <button class="icon-button" id="refresh-changes" type="button" aria-label="刷新变更列表" title="刷新变更列表">↻</button>
+              </div>
+              <div id="changes-loading" class="list-loading" aria-label="正在载入变更">
+                <div class="skeleton skeleton-row"></div>
+                <div class="skeleton skeleton-row"></div>
+                <div class="skeleton skeleton-row"></div>
+              </div>
+              <div id="changes-error" class="rail-state" hidden>
+                <strong>无法载入变更</strong>
+                <p id="changes-error-message"></p>
+                <button class="text-button" id="retry-changes" type="button">重试</button>
+              </div>
+              <div id="changes-empty" class="rail-state" hidden>
+                <span class="empty-orbit" aria-hidden="true"></span>
+                <strong>还没有变更</strong>
+                <p>从一个清晰的软件需求开始。</p>
+                <button class="text-button" id="create-first-change" type="button">创建第一个变更</button>
+              </div>
+              <div class="change-list" id="change-list" role="list"></div>
+            </aside>
+
+            <div class="change-detail" id="change-detail">
+              <div id="change-detail-loading" class="detail-loading" hidden>
+                <div class="skeleton skeleton-title"></div>
+                <div class="skeleton skeleton-block"></div>
+                <div class="skeleton skeleton-block"></div>
+              </div>
+
+              <div id="change-detail-error" class="state-panel state-panel-error state-panel-inset" hidden>
+                <span class="state-symbol" aria-hidden="true">!</span>
+                <div>
+                  <strong>变更详情暂时无法载入</strong>
+                  <p id="change-detail-error-message"></p>
+                  <button class="text-button" id="retry-change-detail" type="button">重新尝试</button>
+                </div>
+              </div>
+
+              <div id="change-unselected" class="detail-empty">
+                <span class="detail-empty-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+                <h3>选择一个变更</h3>
+                <p>查看它的意图、影响范围、上下文与证明义务。</p>
+              </div>
+
+              <div id="change-detail-content" hidden>
+                <header class="change-header">
+                  <div>
+                    <div class="change-meta-line">
+                      <span class="change-id" id="change-id"></span>
+                      <span class="status-pill" id="change-status"></span>
+                    </div>
+                    <h3 id="change-title"></h3>
+                    <p id="change-summary" class="change-summary" hidden></p>
+                  </div>
+                  <div class="change-actions">
+                    <button class="button button-secondary" id="compile-change" type="button">
+                      编译变更
+                    </button>
+                    <a class="button button-ghost" href="#review">查看审查</a>
+                  </div>
+                </header>
+
+                <div class="change-section intent-block">
+                  <div class="subsection-heading">
+                    <span class="step-index">01</span>
+                    <div>
+                      <p class="panel-kicker">Intent</p>
+                      <h4>这次为什么改变</h4>
+                    </div>
+                  </div>
+                  <div class="intent-grid">
+                    <div class="statement-card statement-primary">
+                      <span class="statement-label">意图</span>
+                      <div id="change-intent"></div>
+                    </div>
+                    <div class="statement-card">
+                      <span class="statement-label">可证伪主张</span>
+                      <div class="structured-list" id="change-claims"></div>
+                    </div>
+                    <div class="statement-card">
+                      <span class="statement-label">明确不做</span>
+                      <div class="structured-list" id="change-non-goals"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="change-section">
+                  <div class="subsection-heading">
+                    <span class="step-index">02</span>
+                    <div>
+                      <p class="panel-kicker">Context Capsule</p>
+                      <h4>执行者真正需要知道的内容</h4>
+                    </div>
+                  </div>
+                  <div id="context-capsule" class="context-capsule"></div>
+                  <div id="context-capsule-empty" class="inline-empty inline-empty-bordered" hidden>
+                    变更编译后，这里会出现经过授权的最小上下文。
+                  </div>
+                </div>
+
+                <div class="change-section two-column-section">
+                  <div>
+                    <div class="subsection-heading subsection-heading-small">
+                      <span class="step-index">03</span>
+                      <div>
+                        <p class="panel-kicker">Impact Set</p>
+                        <h4>会影响哪里</h4>
+                      </div>
+                    </div>
+                    <div id="impact-set" class="impact-set"></div>
+                    <div id="impact-set-empty" class="inline-empty inline-empty-bordered" hidden>
+                      尚未计算影响范围。
+                    </div>
+                  </div>
+
+                  <div>
+                    <div class="subsection-heading subsection-heading-small">
+                      <span class="step-index">04</span>
+                      <div>
+                        <p class="panel-kicker">Verification Obligations</p>
+                        <h4>需要证明什么</h4>
+                      </div>
+                    </div>
+                    <div id="verification-obligations" class="obligation-list"></div>
+                    <div id="verification-obligations-empty" class="inline-empty inline-empty-bordered" hidden>
+                      尚未生成证明义务。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page-section review-section" id="review" aria-labelledby="review-title">
+          <div class="section-heading section-heading-tight">
+            <div>
+              <p class="eyebrow">03 · 审查与接纳</p>
+              <h2 id="review-title">绿色结果不是结论，证据链才是。</h2>
+              <p class="section-description">
+                审查证据支持了哪些主张、还剩什么不确定性，以及新知识是否已经妥善归宿。
+              </p>
+            </div>
+            <div class="review-change-reference" id="review-change-reference" hidden></div>
+          </div>
+
+          <div id="review-unselected" class="state-panel review-empty">
+            <span class="state-symbol" aria-hidden="true">○</span>
+            <div>
+              <strong>先选择一个变更</strong>
+              <p>选中变更后，这里会显示它的证据、决策与接纳条件。</p>
+            </div>
+          </div>
+
+          <div id="review-content" hidden>
+            <div class="review-grid">
+              <article class="panel evidence-panel">
+                <div class="panel-heading">
+                  <div>
+                    <p class="panel-kicker">Evidence</p>
+                    <h3>证据强度</h3>
+                  </div>
+                  <span class="status-pill" id="evidence-overall" hidden></span>
+                </div>
+                <div class="evidence-dimensions" id="evidence-dimensions"></div>
+                <div id="evidence-empty" class="inline-empty" hidden>
+                  当前还没有可审查的证据。
+                </div>
+                <div class="evidence-records" id="evidence-records"></div>
+              </article>
+
+              <div class="review-side-stack">
+                <article class="panel compact-panel uncertainty-panel">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="panel-kicker">Residual Uncertainty</p>
+                      <h3>仍未证明的部分</h3>
+                    </div>
+                  </div>
+                  <div class="item-list" id="residual-uncertainty"></div>
+                  <div id="residual-uncertainty-empty" class="inline-empty" hidden>
+                    当前没有登记剩余不确定性。
+                  </div>
+                </article>
+
+                <article class="panel compact-panel closure-panel">
+                  <div class="panel-heading">
+                    <div>
+                      <p class="panel-kicker">Knowledge Closure</p>
+                      <h3>新知识的归宿</h3>
+                    </div>
+                    <span class="status-pill" id="closure-status" hidden></span>
+                  </div>
+                  <div class="item-list" id="knowledge-closure"></div>
+                  <div id="knowledge-closure-empty" class="inline-empty" hidden>
+                    当前还没有 Knowledge Closure 记录。
+                  </div>
+                </article>
+              </div>
+            </div>
+
+            <article class="decision-panel">
+              <div class="decision-copy">
+                <p class="panel-kicker">Decision Queue</p>
+                <h3>需要人决定的，只留下真正的语义与例外。</h3>
+                <p id="decision-summary">框架会自动完成可推导的检查，仅把无法合法自动判断的事项交给负责人。</p>
+              </div>
+              <div class="decision-list" id="decision-queue"></div>
+              <div id="decision-queue-empty" class="decision-empty" hidden>
+                <span aria-hidden="true">✓</span>
+                当前没有待处理决定
+              </div>
+            </article>
+
+            <article class="acceptance-bar">
+              <div class="acceptance-main">
+                <div class="acceptance-seal" id="acceptance-seal" aria-hidden="true">A</div>
+                <div>
+                  <p class="panel-kicker">Accepted Change Package</p>
+                  <h3 id="acceptance-title">准备接纳这个精确变更</h3>
+                  <p id="acceptance-detail">
+                    接纳会绑定当前基线、变更内容、证据与决策。内容变化后需要重新验证。
+                  </p>
+                </div>
+              </div>
+              <div class="acceptance-actions">
+                <div class="gate-actions" id="change-gates"></div>
+                <button class="button button-accept" id="accept-change" type="button">
+                  接纳变更包
+                </button>
+              </div>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span>Legatura 在本机治理变更，不治理执行者。</span>
+        <span id="footer-baseline"></span>
+      </footer>
+    </div>
+
+    <dialog class="change-dialog" id="create-change-dialog" aria-labelledby="create-dialog-title">
+      <form method="dialog" id="create-change-form">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">New Change</p>
+            <h2 id="create-dialog-title">描述你希望发生的改变</h2>
+          </div>
+          <button class="icon-button dialog-close" id="close-create-change" value="cancel" type="button" aria-label="关闭">×</button>
+        </div>
+        <p class="dialog-intro">
+          写清用户可观察到的结果即可。框架会在下一步编译主张、边界和证明义务。
+        </p>
+        <label class="field">
+          <span>变更标题 <small>便于识别</small></span>
+          <input id="new-change-title" name="title" type="text" maxlength="120" autocomplete="off" placeholder="例如：让重试失败给出明确下一步" />
+        </label>
+        <label class="field">
+          <span>主要修改区域 <small>受治理模块</small></span>
+          <select id="new-change-module" name="primaryModule" required>
+            <option value="">正在读取可用模块…</option>
+          </select>
+          <small class="field-help" id="new-change-module-help">一个 Change 只选择一个主要职责边界；跨模块影响会在编译后显式展开。</small>
+        </label>
+        <label class="field">
+          <span>变更意图 <small>必填</small></span>
+          <textarea id="new-change-intent" name="intent" rows="6" required placeholder="谁在什么情况下需要什么结果？什么现象表示它已经正确完成？"></textarea>
+        </label>
+        <fieldset class="field claim-fieldset">
+          <legend>已有契约主张 <small>优先复用项目已有的判断标准</small></legend>
+          <div class="claim-picker" id="new-change-known-claims"></div>
+          <small class="field-help" id="new-change-claims-help">选择主要修改区域后，会显示它拥有的公开契约主张。</small>
+        </fieldset>
+        <p class="field-help">
+          新语义不能在普通 Change 中临时自证；请先通过独立的 Project Model 修订建立 Contract Claim 与 Oracle。
+        </p>
+        <label class="field">
+          <span>明确不做 <small>可选，每行一项</small></span>
+          <textarea id="new-change-non-goals" name="nonGoals" rows="3" placeholder="例如：本次不改变公开 Contract"></textarea>
+        </label>
+        <div id="create-change-error" class="form-error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button class="button button-ghost" id="cancel-create-change" type="button">取消</button>
+          <button class="button button-primary" id="submit-create-change" type="submit">创建并打开</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="change-dialog accept-dialog" id="accept-change-dialog" aria-labelledby="accept-dialog-title">
+      <form method="dialog" id="accept-change-form">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Accept Change Package</p>
+            <h2 id="accept-dialog-title">完成知识归档与授权</h2>
+          </div>
+          <button class="icon-button dialog-close" id="close-accept-change" value="cancel" type="button" aria-label="关闭">×</button>
+        </div>
+        <p class="dialog-intro" id="accept-dialog-change"></p>
+
+        <div id="accept-closure-fields">
+          <label class="field">
+            <span>本次发现如何归档 <small>Knowledge Closure</small></span>
+            <select id="accept-closure-kind" name="closureKind">
+              <option value="ephemeral">没有需要长期写回的新知识</option>
+              <option value="model-amendment" disabled>项目模型修订（需先写入版本化文件）</option>
+              <option value="model-gap" disabled>模型缺口（需先写入 knowledge-gaps.json）</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>归档说明 <small>必填</small></span>
+            <textarea id="accept-closure-summary" name="closureSummary" rows="3" placeholder="说明哪些知识被写回、登记为缺口，或为什么仅保留为执行记录。"></textarea>
+          </label>
+        </div>
+
+        <div class="field-pair">
+          <label class="field">
+            <span>决策职责 <small>Decision Authority</small></span>
+            <select id="accept-authority" name="authority" required>
+              <option value="">请选择有权作出决定的职责</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>决定类型 <small>作用范围</small></span>
+            <select id="accept-decision-type" name="decisionType" required>
+              <option value="case-decision">仅对当前变更有效</option>
+              <option value="normative-amendment">修改长期项目规范</option>
+              <option value="waiver" disabled>临时豁免（MVP 暂不支持）</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>决定理由 <small>必填</small></span>
+          <textarea id="accept-rationale" name="rationale" rows="3" required placeholder="说明为什么现有证据足以支持接纳，以及你接受了哪些剩余不确定性。"></textarea>
+        </label>
+
+        <label class="field" id="accept-amendment-field" hidden>
+          <span>规范修订引用 <small>每行一项</small></span>
+          <textarea id="accept-amendment-refs" name="amendmentRefs" rows="3" placeholder="引用 Knowledge Closure 中的 Model Amendment，或填写将被更新的规范对象。"></textarea>
+        </label>
+
+        <label class="confirmation-check">
+          <input id="accept-confirmation" type="checkbox" required />
+          <span>我确认接纳的是当前精确基线、变更内容、证据与剩余不确定性。</span>
+        </label>
+        <div id="accept-change-error" class="form-error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button class="button button-ghost" id="cancel-accept-change" type="button">取消</button>
+          <button class="button button-accept" id="submit-accept-change" type="submit">确认接纳</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "assurance-runtime",
+  "name": "Assurance Runtime",
+  "status": "provisional",
+  "summary": "Turns repository and process state into bounded, content-addressed observations without making acceptance decisions.",
+  "factAuthority": "assurance-runtime-facts",
+  "decisionAuthority": "module-maintainer",
+  "interface": {
+    "entrypoints": [
+      "canonicalStringify(value)",
+      "canonicalDigest(value)",
+      "executeCommand(runner, specification)",
+      "normalizeGateCommand(value)",
+      "readGitBinding(repoPath, runner)"
+    ],
+    "invariants": [
+      "Observations never decide whether a Change is acceptable.",
+      "Truncated Git observations fail closed."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/core/canonical.mjs",
+      "src/core/command-runner.mjs",
+      "src/core/git-binding.mjs",
+      "test/core/git-binding.test.mjs",
+      ".legatura/modules/assurance-runtime.json",
+      ".legatura/contracts/assurance-runtime-interface.json"
+    ],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "test/core/git-binding.test.mjs",
+      "command": "node --test test/core/git-binding.test.mjs"
+    }
+  ],
+  "publicContracts": ["assurance-runtime-interface"],
+  "dependencies": []
+}

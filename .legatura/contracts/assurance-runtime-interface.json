@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "assurance-runtime-interface",
+  "name": "Assurance Runtime Interface",
+  "owner": "assurance-runtime",
+  "consumers": ["project-model", "change-kernel"],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent"],
+  "claims": [
+    {
+      "id": "repository-binding-is-content-exact",
+      "statement": "A repository binding identifies HEAD, tracked differences, and content digests for every visible untracked file."
+    },
+    {
+      "id": "repository-binding-fails-closed",
+      "statement": "A truncated Git observation is reported as unavailable and cannot become exact repository Evidence."
+    },
+    {
+      "id": "command-observation-is-explicit",
+      "statement": "A declared command returns explicit exit status, stdout, stderr, signal, and truncation state without deciding acceptance."
+    }
+  ]
+}

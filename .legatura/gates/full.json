@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "id": "full",
+  "name": "Full Integration Gate",
+  "purpose": "Run the complete repository and package suite against the sealed Accepted Change Package before integration.",
+  "appliesTo": ["integration", "release"],
+  "commands": [
+    {
+      "id": "full-repository-suite",
+      "command": ["npm", "run", "check"],
+      "timeoutMs": 180000,
+      "claimRefs": [
+        "repository-binding-is-content-exact",
+        "repository-binding-fails-closed",
+        "command-observation-is-explicit",
+        "project-model-references-are-consistent",
+        "context-capsule-cannot-broaden-scope",
+        "unrelated-claims-require-explicit-mapping",
+        "change-lifecycle-requires-preconditions",
+        "evidence-cannot-self-ratify",
+        "accepted-package-binds-exact-content",
+        "integration-requires-current-full-assurance",
+        "workbench-is-loopback-and-bounded",
+        "installed-cli-is-executable"
+      ],
+      "oracle": {
+        "kind": "repository-check-exit",
+        "description": "Syntax checks and every repository test must exit zero for the current sealed acceptance subject."
+      },
+      "applicability": {
+        "phase": "integration",
+        "repository": "legatura"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "functional regressions",
+          "trust-invariant regressions",
+          "tampered integration assurance",
+          "frozen-baseline regressions",
+          "cross-interface regressions"
+        ]
+      },
+      "residualUncertainty": [
+        "Local tests do not establish authenticated provenance.",
+        "They do not provide OS sandboxing or production deployment assurance."
+      ]
+    },
+    {
+      "id": "package-dry-run",
+      "command": ["npm", "pack", "--dry-run", "--json"],
+      "timeoutMs": 60000,
+      "claimRefs": ["installed-cli-is-executable"],
+      "oracle": {
+        "kind": "npm-package-dry-run-exit",
+        "description": "npm must resolve the current repository into a package manifest without mutating the repository."
+      },
+      "applicability": {
+        "phase": "integration",
+        "surface": "npm package"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "invalid package metadata",
+          "missing package entrypoint files",
+          "package construction failures"
+        ]
+      },
+      "residualUncertainty": [
+        "A dry run does not install the tarball into every supported platform or package manager."
+      ]
+    }
+  ]
+}

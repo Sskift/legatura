@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "id": "change-kernel",
+  "name": "Change Kernel",
+  "status": "governed",
+  "summary": "Owns the trusted Change state machine and produces content-addressed Accepted Change Packages.",
+  "factAuthority": "change-kernel-facts",
+  "decisionAuthority": "module-maintainer",
+  "interface": {
+    "entrypoints": ["createKernel(options)", "EVIDENCE_FIELDS"],
+    "invariants": [
+      "Workers and submitted Evidence cannot ratify their own output.",
+      "Acceptance binds exact governance, repository content, Evidence, Closure, and authority.",
+      "Integration requires current full assurance when policy demands it."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/core/index.mjs",
+      "src/core/kernel.mjs",
+      "src/core/evidence.mjs",
+      "src/core/change-store.mjs",
+      "test/core/kernel.test.mjs",
+      "test/core/security-invariants.test.mjs",
+      "test/core/trust-invariants.test.mjs",
+      "test/core/integration-assurance.test.mjs",
+      ".legatura/modules/change-kernel.json",
+      ".legatura/contracts/change-kernel-interface.json"
+    ],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "test/core/kernel.test.mjs",
+      "command": "node --test test/core/kernel.test.mjs"
+    },
+    {
+      "path": "test/core/security-invariants.test.mjs",
+      "command": "node --test test/core/security-invariants.test.mjs"
+    },
+    {
+      "path": "test/core/trust-invariants.test.mjs",
+      "command": "node --test test/core/trust-invariants.test.mjs"
+    },
+    {
+      "path": "test/core/integration-assurance.test.mjs",
+      "command": "node --test test/core/integration-assurance.test.mjs"
+    }
+  ],
+  "publicContracts": ["change-kernel-interface"],
+  "dependencies": [
+    {
+      "module": "project-model",
+      "via": "project-model-interface",
+      "access": "interface-only"
+    },
+    {
+      "module": "assurance-runtime",
+      "via": "assurance-runtime-interface",
+      "access": "interface-only"
+    }
+  ]
+}

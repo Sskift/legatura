@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "legatura",
+    "name": "Legatura",
+    "description": "A trusted change framework for agentic software engineering."
+  },
+  "normativeSources": [
+    {
+      "id": "product-intent",
+      "path": "README.md",
+      "kind": "product-intent"
+    },
+    {
+      "id": "domain-language",
+      "path": "CONTEXT.md",
+      "kind": "ubiquitous-language"
+    },
+    {
+      "id": "package-surface",
+      "path": "package.json",
+      "kind": "package-interface"
+    }
+  ],
+  "authorities": {
+    "fact": [
+      {
+        "id": "assurance-runtime-facts",
+        "module": "assurance-runtime",
+        "owns": "Canonical digests, process observations, and exact Git bindings."
+      },
+      {
+        "id": "project-model-facts",
+        "module": "project-model",
+        "owns": "Project Model interpretation, validation, Context Capsules, impact, and verification planning."
+      },
+      {
+        "id": "change-kernel-facts",
+        "module": "change-kernel",
+        "owns": "Change lifecycle, Evidence coverage, acceptance, integration assurance, and package integrity."
+      },
+      {
+        "id": "local-workbench-facts",
+        "module": "local-workbench",
+        "owns": "CLI, loopback HTTP interface, browser projection, and package delivery behavior."
+      }
+    ],
+    "decision": [
+      {
+        "id": "module-maintainer",
+        "may": ["case-decision", "normative-amendment"]
+      },
+      {
+        "id": "governance-maintainer",
+        "may": ["case-decision", "normative-amendment"]
+      }
+    ]
+  },
+  "assuranceBoundary": {
+    "governed": [
+      {
+        "module": "project-model",
+        "reason": "Relationships, scope compilation, and Claim mappings are executable and covered by invariant tests."
+      },
+      {
+        "module": "change-kernel",
+        "reason": "Lifecycle, Evidence, authority, tamper resistance, and integration transitions have adversarial tests."
+      }
+    ],
+    "provisional": [
+      {
+        "module": "assurance-runtime",
+        "reason": "Git fail-closed behavior is tested, but subprocess timeout, truncation, and platform behavior need direct characterization."
+      },
+      {
+        "module": "local-workbench",
+        "reason": "CLI and HTTP behavior are tested, but the browser UI lacks DOM-level end-to-end verification."
+      }
+    ],
+    "opaque": [
+      {
+        "module": "worker-execution",
+        "reason": "Worker spawning and filesystem capability enforcement do not exist yet."
+      },
+      {
+        "module": "identity-provider",
+        "reason": "Local decidedBy values are not authenticated or signed."
+      }
+    ]
+  },
+  "changePolicy": {
+    "defaultGate": "minimum",
+    "fullGate": "full",
+    "fullGateBefore": ["integrated"],
+    "contextExpansion": "recorded"
+  }
+}

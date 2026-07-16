@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "minimum",
+  "name": "Minimum Acceptance Gate",
+  "purpose": "Run the smallest current suite that exercises every acceptance-phase Contract Claim.",
+  "appliesTo": [
+    "assurance-runtime",
+    "project-model",
+    "change-kernel",
+    "local-workbench"
+  ],
+  "commands": [
+    {
+      "id": "minimum-contract-suite",
+      "command": [
+        "node",
+        "--test",
+        "test/core/git-binding.test.mjs",
+        "test/core/project-model.test.mjs",
+        "test/core/kernel.test.mjs",
+        "test/core/security-invariants.test.mjs",
+        "test/server/cli.test.mjs",
+        "test/server/server.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "repository-binding-is-content-exact",
+        "repository-binding-fails-closed",
+        "command-observation-is-explicit",
+        "project-model-references-are-consistent",
+        "context-capsule-cannot-broaden-scope",
+        "unrelated-claims-require-explicit-mapping",
+        "change-lifecycle-requires-preconditions",
+        "evidence-cannot-self-ratify",
+        "accepted-package-binds-exact-content",
+        "workbench-is-loopback-and-bounded",
+        "installed-cli-is-executable"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The selected acceptance and adversarial tests must exit zero."
+      },
+      "applicability": {
+        "modules": [
+          "assurance-runtime",
+          "project-model",
+          "change-kernel",
+          "local-workbench"
+        ],
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "invalid Project Model relationships",
+          "scope broadening",
+          "self-ratifying or forged Evidence",
+          "stale or content-altered acceptance",
+          "truncated Git binding output",
+          "bounded HTTP and installed CLI regressions"
+        ]
+      },
+      "residualUncertainty": [
+        "No OS-level worker isolation is exercised.",
+        "Decision identity is not authenticated.",
+        "Browser DOM behavior and non-current-host subprocess behavior are not exercised."
+      ]
+    }
+  ]
+}

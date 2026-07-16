@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "id": "project-model",
+  "name": "Project Model Compiler",
+  "status": "governed",
+  "summary": "Validates durable project truth and compiles it into bounded worker context and verification obligations.",
+  "factAuthority": "project-model-facts",
+  "decisionAuthority": "governance-maintainer",
+  "interface": {
+    "entrypoints": [
+      "loadProjectModel(repoPath)",
+      "validateProjectModel(model)",
+      "publicProjectModel(model)",
+      "compileChangeAgainstGovernance(change, baseline)"
+    ],
+    "invariants": [
+      "Dependencies are visible only through owned Contracts.",
+      "A supplied Context Capsule may narrow but never broaden generated scope.",
+      "Unrelated Claims require an explicit authority-bound mapping."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/core/project-model.mjs",
+      "src/core/change-compiler.mjs",
+      "test/core/project-model.test.mjs",
+      "CONTEXT.md",
+      ".legatura/project.json",
+      ".legatura/knowledge-gaps.json",
+      ".legatura/.gitignore",
+      ".legatura/gates/minimum.json",
+      ".legatura/gates/full.json",
+      ".legatura/modules/project-model.json",
+      ".legatura/contracts/project-model-interface.json"
+    ],
+    "exclude": [".legatura/runtime/**"]
+  },
+  "focusedTests": [
+    {
+      "path": "test/core/project-model.test.mjs",
+      "command": "node --test test/core/project-model.test.mjs"
+    },
+    {
+      "path": "test/core/security-invariants.test.mjs",
+      "command": "node --test test/core/security-invariants.test.mjs"
+    }
+  ],
+  "publicContracts": ["project-model-interface"],
+  "dependencies": [
+    {
+      "module": "assurance-runtime",
+      "via": "assurance-runtime-interface",
+      "access": "interface-only"
+    }
+  ]
+}
