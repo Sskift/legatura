@@ -829,11 +829,13 @@ test("repository content changes invalidate the exact Accepted Change Package", 
   assert.equal(accepted.acceptance.valid, true);
 
   await writeFile(path.join(fixture.repoPath, "README.md"), "changed after acceptance\n");
-  const invalidated = await kernel.getChange(change.id);
+  const observed = await kernel.getChange(change.id);
 
-  assert.equal(invalidated.acceptance.valid, false);
-  assert.equal(invalidated.state, "Submitted");
-  assert.match(invalidated.acceptance.invalidationReason, /content changed/iu);
+  assert.equal(observed.acceptance.valid, true, "a read preserves historical acceptance");
+  assert.equal(observed.state, "Accepted");
+  assert.equal(observed.observation.seal.intact, true);
+  assert.equal(observed.observation.currentApplicability.status, "stale");
+  assert.equal(observed.readiness.evidenceReady, false);
   await assert.rejects(
     kernel.compileChange(change.id),
     (error) => error.code === "CHANGE_SEALED"

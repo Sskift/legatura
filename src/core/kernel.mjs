@@ -37,6 +37,9 @@ const CHANGE_SCHEMA_VERSION = 1;
 const OUTCOME_ALIGNMENT_SCHEMA_VERSION = 1;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const STATES = ["Candidate", "Submitted", "EvidenceReady", "Accepted", "Integrated"];
+const STABLE_OBSERVATION_LIMIT = 3;
+const CHANGE_SUMMARY_TEXT_LIMIT = 240;
+const CHANGE_SUMMARY_PLAN_REF_LIMIT = 8;
 
 export function createKernel({ repoPath, clock, commandRunner } = {}) {
   if (typeof repoPath !== "string" || !repoPath.trim()) {
@@ -53,7 +56,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return result;
   }
 
-  async function inspectProject() {
+  async function observeProjectOnce() {
     const [model, git] = await Promise.all([
       loadProjectModel(resolvedRepoPath),
       readGitBinding(resolvedRepoPath, commandRunner)
@@ -67,22 +70,58 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       });
       validation.valid = false;
     }
-    return {
+    const inspection = {
       valid: validation.valid,
       repoPath: resolvedRepoPath,
       ...publicProjectModel(model),
       git: cloneJson(git),
       validation
     };
+    return {
+      digest: canonicalDigest({
+        projectModelDigest: inspection.digest,
+        gitContentDigest: inspection.git.contentDigest
+      }),
+      inspection
+    };
+  }
+
+  async function inspectProject() {
+    const stable = await readStableObservation({
+      observe: observeProjectOnce,
+      code: "PROJECT_SNAPSHOT_UNSTABLE",
+      message: "Project Model and Git sources did not stabilize within the bounded observation window."
+    });
+    return cloneJson(stable.inspection);
+  }
+
+  async function observeChangeQueryOnce() {
+    const [project, records] = await Promise.all([
+      observeProjectOnce(),
+      store.list()
+    ]);
+    const changeStoreDigest = compileChangeStoreDigest(records);
+    return {
+      digest: canonicalDigest({
+        projectModelGitDigest: project.digest,
+        changeStoreDigest
+      }),
+      inspection: project.inspection,
+      records
+    };
+  }
+
+  async function inspectChangeQuery() {
+    return readStableObservation({
+      observe: observeChangeQueryOnce,
+      code: "CHANGE_QUERY_SNAPSHOT_UNSTABLE",
+      message: "Project Model, Git, and Change Store sources did not stabilize within the bounded observation window."
+    });
   }
 
   async function listChanges() {
-    const records = await store.list();
-    const refreshed = [];
-    for (const record of records) {
-      refreshed.push(await refreshChange(record));
-    }
-    return refreshed.map(cloneJson);
+    const snapshot = await inspectChangeQuery();
+    return snapshot.records.map((record) => summarizeChangeForRead(record, snapshot));
   }
 
   async function observeCurrentChangeScope(change, git, currentPlan) {
@@ -300,10 +339,13 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   }
 
   async function getChange(idOrInput) {
-    const change = await requireChange(readChangeId(idOrInput));
-    const refreshed = await refreshChange(change);
-    const inspection = await inspectProject();
-    return cloneJson({ ...refreshed, readiness: readReadiness(refreshed, inspection) });
+    const changeId = readChangeId(idOrInput);
+    const snapshot = await inspectChangeQuery();
+    const change = snapshot.records.find((record) => record?.id === changeId);
+    if (!change) {
+      throw kernelError("CHANGE_NOT_FOUND", `Change not found: ${changeId}.`, 404, { changeId });
+    }
+    return projectChangeDetailForRead(change, snapshot);
   }
 
   async function compileChange(idOrInput, optionalPatch = {}) {
@@ -311,7 +353,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     assertCompilePatchInput(patch);
     const planRefsInput = adaptChangePlanRefsInput(patch);
     let change = await requireChange(changeId);
-    change = await refreshChange(change);
+    change = await refreshChangeForWrite(change);
     if (change.acceptance || change.state === "Accepted" || change.state === "Integrated") {
       throw kernelError(
         "CHANGE_SEALED",
@@ -345,7 +387,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function runGate(idOrInput, optionalGateId) {
     const request = readGateRequest(idOrInput, optionalGateId);
     let change = await requireChange(request.changeId);
-    change = await refreshChange(change);
+    change = await refreshChangeForWrite(change);
     if (change.claims.length === 0) {
       throw kernelError("CHANGE_CLAIM_REQUIRED", "Compile the Change with at least one Claim before running Gates.", 422);
     }
@@ -362,8 +404,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     await assertGovernanceWatermarkCurrent(change);
     const inspection = await inspectProject();
     const observedAt = now();
-    const model = await loadProjectModel(resolvedRepoPath);
-    const validation = validateProjectModel(model);
+    const model = inspection;
+    const validation = inspection.validation;
     const governanceBaseline = readGovernanceBaseline(change);
     await assertCurrentGovernanceContracts(change, model, { modelValid: validation.valid });
     const selectedGates = selectGates(governanceBaseline, request, change);
@@ -467,7 +509,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function acceptChange(idOrInput, optionalDecision) {
     const request = readAcceptanceRequest(idOrInput, optionalDecision);
     let change = await requireChange(request.changeId);
-    change = await refreshChange(change);
+    change = await refreshChangeForWrite(change);
     await assertGovernanceWatermarkCurrent(change);
     const inspection = await inspectProject();
     assertValidProject(inspection);
@@ -580,7 +622,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return store.save(change);
   }
 
-  async function refreshChange(change) {
+  async function refreshChangeForWrite(change) {
     const inspection = await inspectProject();
     const next = cloneJson(change);
     next.currentGit = inspection.git;
@@ -782,6 +824,321 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     runGate: (...args) => serializeOperation(() => runGate(...args)),
     acceptChange: (...args) => serializeOperation(() => acceptChange(...args))
   };
+}
+
+async function readStableObservation({ observe, code, message }) {
+  let previous = await observe();
+  const digests = [previous.digest];
+  for (let count = 2; count <= STABLE_OBSERVATION_LIMIT; count += 1) {
+    const current = await observe();
+    digests.push(current.digest);
+    if (current.digest === previous.digest) return current;
+    previous = current;
+  }
+  throw kernelError(code, message, 409, {
+    observedDigests: digests,
+    observationCount: digests.length
+  });
+}
+
+function projectChangeDetailForRead(change, snapshot) {
+  const persisted = cloneJson(change);
+  const observed = projectChangeOntoInspection(change, snapshot.inspection);
+  return cloneJson({
+    ...persisted,
+    observation: compileChangeObservationSafely(change, snapshot),
+    readiness: compileReadinessForRead(observed, snapshot.inspection)
+  });
+}
+
+function summarizeChangeForRead(change, snapshot) {
+  const observation = compileChangeObservationSafely(change, snapshot);
+  const planRefs = Array.isArray(change?.planRefs) ? change.planRefs : [];
+  const title = boundedSummaryText(change?.intent?.title);
+  const request = boundedSummaryText(change?.intent?.request);
+  const summary = {
+    schemaVersion: CHANGE_SCHEMA_VERSION,
+    id: readString(change?.id) ?? "unknown",
+    state: boundedSummaryText(change?.state) ?? "unknown",
+    intent: {
+      ...(title ? { title } : {}),
+      ...(request ? { request } : {})
+    },
+    ...(readString(change?.primaryModule)
+      ? { primaryModule: boundedSummaryText(change.primaryModule) }
+      : {}),
+    changeKind: boundedSummaryText(change?.changeKind) ?? "implementation",
+    planRefs: planRefs
+      .slice(0, CHANGE_SUMMARY_PLAN_REF_LIMIT)
+      .map((value) => boundedSummaryText(value))
+      .filter(Boolean),
+    createdAt: boundedSummaryText(change?.createdAt),
+    updatedAt: boundedSummaryText(change?.updatedAt),
+    counts: {
+      planRefCount: planRefs.length,
+      claimCount: arrayLength(change?.claims),
+      obligationCount: arrayLength(change?.verificationObligations),
+      evidenceCount: arrayLength(change?.evidence),
+      gateRunCount: arrayLength(change?.gateRuns)
+    },
+    observation: summarizeChangeObservation(observation)
+  };
+  if (planRefs.length > CHANGE_SUMMARY_PLAN_REF_LIMIT
+    || isSummaryTextTruncated(change?.intent?.title)
+    || isSummaryTextTruncated(change?.intent?.request)) {
+    summary.truncated = {
+      title: isSummaryTextTruncated(change?.intent?.title),
+      request: isSummaryTextTruncated(change?.intent?.request),
+      planRefs: planRefs.length > CHANGE_SUMMARY_PLAN_REF_LIMIT
+    };
+  }
+  return cloneJson(summary);
+}
+
+function compileChangeStoreDigest(records) {
+  const entries = [];
+  const seen = new Set();
+  const problems = [];
+  for (const [index, record] of records.entries()) {
+    const changeId = readString(record?.id);
+    if (!changeId) {
+      problems.push({ index, problem: "change-id-missing" });
+      continue;
+    }
+    if (seen.has(changeId)) {
+      problems.push({ changeId, problem: "change-id-duplicate" });
+      continue;
+    }
+    seen.add(changeId);
+    entries.push({ changeId, recordDigest: canonicalDigest(record) });
+  }
+  if (problems.length > 0) {
+    throw kernelError(
+      "CHANGE_STORE_SNAPSHOT_INVALID",
+      "Change Store records require unique non-empty ids before they can form a source snapshot.",
+      500,
+      { problems: problems.slice(0, 20), problemCount: problems.length }
+    );
+  }
+  return canonicalDigest(entries.sort((left, right) => left.changeId.localeCompare(right.changeId)));
+}
+
+function compileChangeObservationSafely(change, snapshot) {
+  try {
+    return compileChangeObservation(change, snapshot);
+  } catch (error) {
+    return {
+      schemaVersion: 1,
+      sourceSnapshotDigest: snapshot.digest,
+      classification: {
+        available: false,
+        errorCode: boundedSummaryText(error?.code) ?? "CHANGE_OBSERVATION_INVALID"
+      }
+    };
+  }
+}
+
+function compileReadinessForRead(change, inspection) {
+  try {
+    return readReadiness(change, inspection);
+  } catch (error) {
+    return {
+      available: false,
+      errorCode: boundedSummaryText(error?.code) ?? "CHANGE_READINESS_INVALID"
+    };
+  }
+}
+
+function summarizeChangeObservation(observation) {
+  if (observation.classification?.available === false) {
+    return { classification: cloneJson(observation.classification) };
+  }
+  return {
+    bindingMatches: cloneJson(observation.bindings.matches),
+    seal: {
+      present: observation.seal.present,
+      ...(observation.seal.present
+        ? {
+            intact: observation.seal.intact,
+            packageIntact: observation.seal.packageIntact,
+            recordProjectionIntact: observation.seal.recordProjectionIntact,
+            problemCount: arrayLength(observation.seal.problems)
+          }
+        : {})
+    },
+    currentApplicability: cloneJson(observation.currentApplicability),
+    evidenceCurrency: {
+      currentCount: observation.evidenceCurrency.currentIds.length,
+      staleCount: observation.evidenceCurrency.staleIds.length,
+      invalidCount: observation.evidenceCurrency.invalidIds.length
+    }
+  };
+}
+
+function compileChangeObservation(change, snapshot) {
+  const observed = projectChangeOntoInspection(change, snapshot.inspection);
+  const expectedSubjectDigest = verificationSubjectDigest(observed);
+  const persistedSubjectDigest = verificationSubjectDigest(change);
+  const seal = inspectHistoricalSeal(change);
+  return {
+    schemaVersion: 1,
+    sourceSnapshotDigest: snapshot.digest,
+    bindings: {
+      current: {
+        projectModelDigest: snapshot.inspection.digest,
+        gitContentDigest: snapshot.inspection.git.contentDigest,
+        verificationSubjectDigest: expectedSubjectDigest
+      },
+      persisted: {
+        projectModelDigest: readString(change?.projectModelDigest) ?? null,
+        gitContentDigest: readString(change?.currentGit?.contentDigest) ?? null,
+        verificationSubjectDigest: persistedSubjectDigest
+      },
+      matches: {
+        projectModel: change?.projectModelDigest === snapshot.inspection.digest,
+        gitContent: change?.currentGit?.contentDigest === snapshot.inspection.git.contentDigest,
+        verificationSubject: persistedSubjectDigest === expectedSubjectDigest
+      }
+    },
+    seal,
+    currentApplicability: inspectCurrentApplicability(change, snapshot.inspection, seal),
+    evidenceCurrency: classifyEvidenceCurrency(change, snapshot.inspection, expectedSubjectDigest)
+  };
+}
+
+function projectChangeOntoInspection(change, inspection) {
+  return {
+    ...cloneJson(change),
+    projectModelDigest: inspection.digest,
+    currentGit: cloneJson(inspection.git)
+  };
+}
+
+function inspectHistoricalSeal(change) {
+  const acceptance = change?.acceptance;
+  if (!acceptance || typeof acceptance !== "object" || Array.isArray(acceptance)) {
+    return { present: false };
+  }
+  const inspection = inspectAcceptedPackageRecord(change);
+  const problems = [...inspection.problems];
+  let recordProjectionIntact = false;
+  try {
+    recordProjectionIntact = changeContentDigest(change) === acceptance.digest;
+  } catch {
+    recordProjectionIntact = false;
+  }
+  if (!recordProjectionIntact) problems.push("record-projection-digest-mismatch");
+  return {
+    present: true,
+    acceptanceDigest: readString(acceptance.digest) ?? null,
+    packageIntact: inspection.valid,
+    recordProjectionIntact,
+    intact: inspection.valid && recordProjectionIntact,
+    problems: [...new Set(problems)]
+  };
+}
+
+function inspectCurrentApplicability(change, inspection, seal) {
+  const reasons = [];
+  if (inspection.validation?.valid !== true) reasons.push("project-model-invalid");
+  if (inspection.git?.available !== true) reasons.push("git-unavailable");
+  if (seal.present && !seal.intact) reasons.push("historical-seal-invalid");
+  if (reasons.length > 0) return { status: "invalid", reasons };
+
+  const source = seal.present ? change.acceptance.package : change;
+  const sourceProjectModelDigest = readString(source?.projectModelDigest);
+  const sourceGitContentDigest = readString(source?.currentGit?.contentDigest);
+  if (!sourceProjectModelDigest) reasons.push("source-project-model-binding-missing");
+  if (!sourceGitContentDigest) reasons.push("source-git-binding-missing");
+  if (reasons.length > 0) return { status: "invalid", reasons };
+  const matches = {
+    projectModel: sourceProjectModelDigest === inspection.digest,
+    gitContent: sourceGitContentDigest === inspection.git.contentDigest
+  };
+  return {
+    status: Object.values(matches).every(Boolean) ? "current" : "stale",
+    bindingMatches: matches
+  };
+}
+
+function classifyEvidenceCurrency(change, inspection, expectedSubjectDigest) {
+  const evidence = Array.isArray(change?.evidence) ? change.evidence : [];
+  const gateRuns = Array.isArray(change?.gateRuns) ? change.gateRuns : [];
+  const currentIds = [];
+  const staleIds = [];
+  const invalidIds = [];
+
+  for (const [index, item] of evidence.entries()) {
+    const id = readString(item?.id) ?? `missing-id-${index + 1}`;
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      invalidIds.push(id);
+      continue;
+    }
+    const evidenceDigest = canonicalDigest(item);
+    const bindingRuns = gateRuns.filter((run) => (
+      Array.isArray(run?.evidenceBindings)
+      && run.evidenceBindings.some((binding) => (
+        binding?.id === item.id && binding?.digest === evidenceDigest
+      ))
+      && evidenceProvenanceMatchesRun(change, item, run)
+    ));
+    const provenance = item.provenance;
+    const provenanceComplete = readString(provenance?.projectModelDigest)
+      && readString(provenance?.git?.contentDigest)
+      && readString(provenance?.verificationSubjectDigest);
+    if (bindingRuns.length === 0 || !provenanceComplete) {
+      invalidIds.push(id);
+      continue;
+    }
+    const provenanceCurrent = provenance.projectModelDigest === inspection.digest
+      && provenance.git.contentDigest === inspection.git.contentDigest
+      && provenance.verificationSubjectDigest === expectedSubjectDigest;
+    const trustedCurrentRun = bindingRuns.some((run) => (
+      run.projectModelDigest === inspection.digest
+      && run.gitContentDigest === inspection.git.contentDigest
+      && run.verificationSubjectDigest === expectedSubjectDigest
+    ));
+    if (provenanceCurrent && trustedCurrentRun) currentIds.push(id);
+    else staleIds.push(id);
+  }
+
+  return { currentIds, staleIds, invalidIds };
+}
+
+function evidenceProvenanceMatchesRun(change, evidence, run) {
+  const provenance = evidence?.provenance;
+  if (provenance?.changeId !== change?.id
+    || provenance?.projectModelDigest !== run?.projectModelDigest
+    || provenance?.git?.contentDigest !== run?.gitContentDigest
+    || provenance?.verificationSubjectDigest !== run?.verificationSubjectDigest
+    || !Array.isArray(run?.evidenceIds)
+    || !run.evidenceIds.includes(evidence.id)) return false;
+  if (provenance.kind === "builtin-oracle") {
+    return run.kind === "builtin-oracle"
+      && run.gateId === "project-model"
+      && provenance.sourceId === "project-model";
+  }
+  if (provenance.kind !== "gate-command" || run.kind !== "configured-gate"
+    || provenance.gateId !== run.gateId) return false;
+  return Array.isArray(run.commandResults)
+    && run.commandResults.some((result) => (
+      result?.id === provenance.commandId && result?.evidenceId === evidence.id
+    ));
+}
+
+function boundedSummaryText(value) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimmed.slice(0, CHANGE_SUMMARY_TEXT_LIMIT);
+}
+
+function isSummaryTextTruncated(value) {
+  return typeof value === "string" && value.trim().length > CHANGE_SUMMARY_TEXT_LIMIT;
+}
+
+function arrayLength(value) {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 function applyCompilePatch(change, patch, observedAt, planRefsInput) {

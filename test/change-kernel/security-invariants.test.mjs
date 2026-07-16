@@ -103,9 +103,10 @@ test("tampering with an Accepted Change Package invalidates reads and cannot be 
   await mutateRuntimeChange(fixture.repoPath, readAttackId, forgeAcceptedPackage);
 
   const invalidatedOnRead = await kernel.getChange(readAttackId);
-  assert.equal(invalidatedOnRead.acceptance.valid, false);
-  assert.notEqual(invalidatedOnRead.state, "Accepted");
-  assert.notEqual(invalidatedOnRead.state, "Integrated");
+  assert.equal(invalidatedOnRead.acceptance.valid, true, "a read must not rewrite historical state");
+  assert.equal(invalidatedOnRead.state, "Accepted");
+  assert.equal(invalidatedOnRead.observation.seal.intact, false);
+  assert.equal(invalidatedOnRead.observation.currentApplicability.status, "invalid");
   await assert.rejects(
     kernel.createChange({ title: "Do not build on corrupted Accepted history" }),
     (error) => error.code === "ACCEPTED_PACKAGE_CATALOG_INVALID"
@@ -559,8 +560,10 @@ async function assertStaleGovernanceCandidateGuards(t) {
   await writeFile(moduleFile, originalModule, "utf8");
   await rm(fixture.gateMarkerPath, { force: true });
   const invalidatedGovernance = await kernel.getChange(governanceChangeId);
-  assert.equal(invalidatedGovernance.acceptance.valid, false);
-  assert.equal(invalidatedGovernance.state, "Submitted");
+  assert.equal(invalidatedGovernance.acceptance.valid, true, "historical governance remains sealed on read");
+  assert.equal(invalidatedGovernance.state, "Integrated");
+  assert.equal(invalidatedGovernance.observation.seal.intact, true);
+  assert.equal(invalidatedGovernance.observation.currentApplicability.status, "stale");
 
   const rejectsStaleCandidate = (error) => isStaleGovernanceError(
     error,
