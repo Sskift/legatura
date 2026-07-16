@@ -25,7 +25,8 @@
       "src/cli.mjs",
       "src/server.mjs",
       "public/**",
-      "test/server/**",
+      "test/local-workbench/**",
+      "test/integration/http-change-lifecycle.test.mjs",
       "README.md",
       "SECURITY.md",
       "package.json",
@@ -39,8 +40,8 @@
   },
   "focusedTests": [
     {
-      "path": "test/server/**",
-      "command": "node --test test/server"
+      "path": "test/local-workbench/**",
+      "command": "node --test test/local-workbench/cli.test.mjs test/local-workbench/server.test.mjs"
     }
   ],
   "publicContracts": ["local-workbench-interface"],

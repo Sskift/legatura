@@ -37,36 +37,14 @@
           "trust-invariant regressions",
           "tampered integration assurance",
           "frozen-baseline regressions",
-          "cross-interface regressions"
+          "cross-interface regressions",
+          "missing or non-executable packaged CLI entrypoints"
         ]
       },
       "residualUncertainty": [
         "Local tests do not establish authenticated provenance.",
-        "They do not provide OS sandboxing or production deployment assurance."
-      ]
-    },
-    {
-      "id": "package-dry-run",
-      "command": ["npm", "pack", "--dry-run", "--json"],
-      "timeoutMs": 60000,
-      "claimRefs": ["installed-cli-is-executable"],
-      "oracle": {
-        "kind": "npm-package-dry-run-exit",
-        "description": "npm must resolve the current repository into a package manifest without mutating the repository."
-      },
-      "applicability": {
-        "phase": "integration",
-        "surface": "npm package"
-      },
-      "discriminatoryPower": {
-        "rejects": [
-          "invalid package metadata",
-          "missing package entrypoint files",
-          "package construction failures"
-        ]
-      },
-      "residualUncertainty": [
-        "A dry run does not install the tarball into every supported platform or package manager."
+        "They do not provide OS sandboxing or production deployment assurance.",
+        "The local npm install does not exercise every supported platform or package manager."
       ]
     }
   ]

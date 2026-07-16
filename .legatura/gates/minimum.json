@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "minimum",
   "name": "Minimum Acceptance Gate",
-  "purpose": "Run the smallest current suite that exercises every acceptance-phase Contract Claim.",
+  "purpose": "Run only the durable verification command declared for the Change's primary Module.",
   "appliesTo": [
     "assurance-runtime",
     "project-model",
@@ -11,58 +11,134 @@
   ],
   "commands": [
     {
-      "id": "minimum-contract-suite",
+      "id": "assurance-runtime-minimum",
+      "appliesTo": ["assurance-runtime"],
       "command": [
         "node",
         "--test",
-        "test/core/git-binding.test.mjs",
-        "test/core/project-model.test.mjs",
-        "test/core/kernel.test.mjs",
-        "test/core/security-invariants.test.mjs",
-        "test/server/cli.test.mjs",
-        "test/server/server.test.mjs"
+        "test/assurance-runtime/command-runner.test.mjs",
+        "test/assurance-runtime/git-binding.test.mjs"
       ],
       "timeoutMs": 120000,
       "claimRefs": [
         "repository-binding-is-content-exact",
         "repository-binding-fails-closed",
-        "command-observation-is-explicit",
+        "command-observation-is-explicit"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The Assurance Runtime Interface tests must exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "failed or truncated Git observations treated as exact",
+          "lost command exit, stream, signal, or truncation state"
+        ]
+      },
+      "residualUncertainty": [
+        "Non-current-host process and Git behavior is not exercised."
+      ]
+    },
+    {
+      "id": "project-model-minimum",
+      "appliesTo": ["project-model"],
+      "command": [
+        "node",
+        "--test",
+        "test/project-model/project-model.test.mjs",
+        "test/change-kernel/kernel.test.mjs",
+        "test/change-kernel/security-invariants.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
         "project-model-references-are-consistent",
         "context-capsule-cannot-broaden-scope",
-        "unrelated-claims-require-explicit-mapping",
+        "unrelated-claims-require-explicit-mapping"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "Project Model validation and compiled-scope adversarial tests must exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "dangling governance references",
+          "read or write scope broadening",
+          "implicit cross-Claim Evidence mapping"
+        ]
+      },
+      "residualUncertainty": [
+        "The current suite groups several tightly coupled compiler invariants in two Change Kernel scenarios."
+      ]
+    },
+    {
+      "id": "change-kernel-minimum",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/kernel.test.mjs",
+        "test/change-kernel/security-invariants.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
         "change-lifecycle-requires-preconditions",
         "evidence-cannot-self-ratify",
-        "accepted-package-binds-exact-content",
+        "accepted-package-binds-exact-content"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "Acceptance lifecycle and adversarial integrity tests must exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "self-ratifying or forged Evidence",
+          "stale or content-altered acceptance",
+          "out-of-scope and unclosed knowledge changes"
+        ]
+      },
+      "residualUncertainty": [
+        "Integration assurance and cross-Module HTTP behavior remain full-Gate concerns."
+      ]
+    },
+    {
+      "id": "local-workbench-minimum",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--test",
+        "test/local-workbench/cli.test.mjs",
+        "test/local-workbench/server.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
         "workbench-is-loopback-and-bounded",
         "installed-cli-is-executable"
       ],
       "oracle": {
         "kind": "node-test-runner-exit",
-        "description": "The selected acceptance and adversarial tests must exit zero."
+        "description": "The CLI and loopback transport Interface tests must exit zero."
       },
       "applicability": {
-        "modules": [
-          "assurance-runtime",
-          "project-model",
-          "change-kernel",
-          "local-workbench"
-        ],
         "phase": "acceptance"
       },
       "discriminatoryPower": {
         "rejects": [
-          "invalid Project Model relationships",
-          "scope broadening",
-          "self-ratifying or forged Evidence",
-          "stale or content-altered acceptance",
-          "truncated Git binding output",
-          "bounded HTTP and installed CLI regressions"
+          "non-loopback or unbounded HTTP behavior",
+          "route-to-kernel mapping regressions",
+          "package-manager symlink entrypoint regressions"
         ]
       },
       "residualUncertainty": [
-        "No OS-level worker isolation is exercised.",
-        "Decision identity is not authenticated.",
-        "Browser DOM behavior and non-current-host subprocess behavior are not exercised."
+        "Browser DOM behavior and the real HTTP-to-Kernel lifecycle remain full-Gate concerns."
       ]
     }
   ]

@@ -20,6 +20,11 @@
       "id": "package-surface",
       "path": "package.json",
       "kind": "package-interface"
+    },
+    {
+      "id": "assurance-policy",
+      "path": "TESTING.md",
+      "kind": "testing-policy"
     }
   ],
   "authorities": {
@@ -70,7 +75,7 @@
     "provisional": [
       {
         "module": "assurance-runtime",
-        "reason": "Git fail-closed behavior is tested, but subprocess timeout, truncation, and platform behavior need direct characterization."
+        "reason": "Git exact-binding and fail-closed behavior plus process exits, streams, signals, and truncation are characterized locally; timeout, encoding boundaries, and cross-platform behavior remain open."
       },
       {
         "module": "local-workbench",

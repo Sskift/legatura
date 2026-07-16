@@ -20,10 +20,10 @@
       "src/core/kernel.mjs",
       "src/core/evidence.mjs",
       "src/core/change-store.mjs",
-      "test/core/kernel.test.mjs",
-      "test/core/security-invariants.test.mjs",
-      "test/core/trust-invariants.test.mjs",
-      "test/core/integration-assurance.test.mjs",
+      "test/change-kernel/kernel.test.mjs",
+      "test/change-kernel/security-invariants.test.mjs",
+      "test/change-kernel/trust-invariants.test.mjs",
+      "test/change-kernel/integration-assurance.test.mjs",
       ".legatura/modules/change-kernel.json",
       ".legatura/contracts/change-kernel-interface.json"
     ],
@@ -31,20 +31,20 @@
   },
   "focusedTests": [
     {
-      "path": "test/core/kernel.test.mjs",
-      "command": "node --test test/core/kernel.test.mjs"
+      "path": "test/change-kernel/kernel.test.mjs",
+      "command": "node --test test/change-kernel/kernel.test.mjs"
     },
     {
-      "path": "test/core/security-invariants.test.mjs",
-      "command": "node --test test/core/security-invariants.test.mjs"
+      "path": "test/change-kernel/security-invariants.test.mjs",
+      "command": "node --test test/change-kernel/security-invariants.test.mjs"
     },
     {
-      "path": "test/core/trust-invariants.test.mjs",
-      "command": "node --test test/core/trust-invariants.test.mjs"
+      "path": "test/change-kernel/trust-invariants.test.mjs",
+      "command": "node --test test/change-kernel/trust-invariants.test.mjs"
     },
     {
-      "path": "test/core/integration-assurance.test.mjs",
-      "command": "node --test test/core/integration-assurance.test.mjs"
+      "path": "test/change-kernel/integration-assurance.test.mjs",
+      "command": "node --test test/change-kernel/integration-assurance.test.mjs"
     }
   ],
   "publicContracts": ["change-kernel-interface"],

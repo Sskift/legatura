@@ -191,6 +191,38 @@ export function validateProjectModel(model) {
     validateUniqueIds(`gate command in ${readId(gate) ?? "gate"}`, commands, errors, location);
     for (const command of commands) {
       const commandLocation = `${location}#${readId(command) ?? "command"}`;
+      if (command.appliesTo !== undefined) {
+        if (!Array.isArray(command.appliesTo)
+          || command.appliesTo.length === 0
+          || !command.appliesTo.every(readString)) {
+          errors.push(issue(
+            "gate.command.applies-to.invalid",
+            commandLocation,
+            "Gate command appliesTo must be a non-empty list of Module ids."
+          ));
+        } else {
+          for (const moduleId of command.appliesTo) {
+            if (!moduleIndex.has(moduleId)) {
+              errors.push(issue(
+                "gate.command.applies-to.unknown",
+                commandLocation,
+                `Gate command appliesTo references unknown Module: ${moduleId}.`
+              ));
+            }
+          }
+        }
+      }
+      if (command.applicability
+        && typeof command.applicability === "object"
+        && !Array.isArray(command.applicability)
+        && (Object.hasOwn(command.applicability, "module")
+          || Object.hasOwn(command.applicability, "modules"))) {
+        errors.push(issue(
+          "gate.command.applicability.module-scope",
+          commandLocation,
+          "Gate command Module scope belongs only in appliesTo; applicability describes non-Module conditions."
+        ));
+      }
       if (!normalizeGateCommand(command.command)) {
         errors.push(issue("gate.command.missing", commandLocation, "Gate command must be executable."));
       }

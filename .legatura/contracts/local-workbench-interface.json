@@ -5,7 +5,7 @@
   "owner": "local-workbench",
   "consumers": [],
   "maturity": "provisional",
-  "normativeSources": ["product-intent", "package-surface"],
+  "normativeSources": ["product-intent", "package-surface", "assurance-policy"],
   "claims": [
     {
       "id": "workbench-is-loopback-and-bounded",

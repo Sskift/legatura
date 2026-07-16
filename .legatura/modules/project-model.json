@@ -23,8 +23,9 @@
     "include": [
       "src/core/project-model.mjs",
       "src/core/change-compiler.mjs",
-      "test/core/project-model.test.mjs",
+      "test/project-model/project-model.test.mjs",
       "CONTEXT.md",
+      "TESTING.md",
       ".legatura/project.json",
       ".legatura/knowledge-gaps.json",
       ".legatura/.gitignore",
@@ -37,12 +38,16 @@
   },
   "focusedTests": [
     {
-      "path": "test/core/project-model.test.mjs",
-      "command": "node --test test/core/project-model.test.mjs"
+      "path": "test/project-model/project-model.test.mjs",
+      "command": "node --test test/project-model/project-model.test.mjs"
     },
     {
-      "path": "test/core/security-invariants.test.mjs",
-      "command": "node --test test/core/security-invariants.test.mjs"
+      "path": "test/change-kernel/kernel.test.mjs",
+      "command": "node --test test/change-kernel/kernel.test.mjs"
+    },
+    {
+      "path": "test/change-kernel/security-invariants.test.mjs",
+      "command": "node --test test/change-kernel/security-invariants.test.mjs"
     }
   ],
   "publicContracts": ["project-model-interface"],

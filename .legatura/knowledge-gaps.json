@@ -10,19 +10,19 @@
       "expansionTrigger": "Before automatic worker write capabilities are enabled."
     },
     {
-      "id": "minimum-gate-is-not-module-selective",
+      "id": "minimum-selection-is-not-claim-sensitive",
       "status": "open",
       "affects": ["project-model", "change-kernel"],
       "owner": "governance-maintainer",
-      "statement": "The current policy has one default Gate and executes every command in that Gate; command applicability is descriptive, not a runtime selector.",
-      "expansionTrigger": "When the minimum suite becomes materially slower or another Module is added."
+      "statement": "Minimum Gate commands are selected by primary Module, but are not yet pruned further by exact Verification Obligations or Contract deltas.",
+      "expansionTrigger": "When a Module's focused command stops being the smallest high-confidence route for routine Changes."
     },
     {
       "id": "subprocess-boundary-not-characterized",
       "status": "open",
       "affects": ["assurance-runtime"],
       "owner": "module-maintainer",
-      "statement": "Timeout, signal, byte truncation, encoding, and cross-platform subprocess behavior lack direct boundary tests.",
+      "statement": "Exit streams, signals, and byte truncation are characterized locally; timeout abort, encoding boundaries, and cross-platform subprocess behavior are not.",
       "expansionTrigger": "Before Assurance Runtime becomes governed."
     },
     {

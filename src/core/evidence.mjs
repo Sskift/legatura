@@ -233,10 +233,21 @@ export function createGateEvidence({
       projectModelDigest: model.digest,
       git: gitProvenance(git)
     },
-    applicability: cloneJson(command.applicability),
+    applicability: gateEvidenceApplicability(command.applicability, change.primaryModule),
     discriminatoryPower: cloneJson(command.discriminatoryPower),
     residualUncertainty: cloneJson(command.residualUncertainty)
   });
+}
+
+function gateEvidenceApplicability(configured, primaryModule) {
+  const value = cloneJson(configured);
+  const conditions = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : { description: value };
+  return {
+    ...conditions,
+    module: primaryModule
+  };
 }
 
 export function isKnowledgeClosureComplete(value) {

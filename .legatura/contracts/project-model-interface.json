@@ -5,7 +5,7 @@
   "owner": "project-model",
   "consumers": ["change-kernel"],
   "maturity": "governed",
-  "normativeSources": ["product-intent", "domain-language"],
+  "normativeSources": ["product-intent", "domain-language", "assurance-policy"],
   "claims": [
     {
       "id": "project-model-references-are-consistent",

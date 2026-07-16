@@ -421,7 +421,19 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function executeGate({ change, gate, model, git, observedAt, verificationSubjectDigest: subjectDigest }) {
     const commandResults = [];
     const evidence = [];
-    for (const command of gate.commands) {
+    const selectedCommands = gate.commands.filter((command) => commandAppliesToChange(command, change));
+    const skippedCommandIds = gate.commands
+      .filter((command) => !selectedCommands.includes(command))
+      .map((command) => command.id);
+    if (selectedCommands.length === 0) {
+      throw kernelError(
+        "GATE_COMMAND_NOT_APPLICABLE",
+        `Gate ${gate.id} has no command applicable to Module ${change.primaryModule}.`,
+        409,
+        { gateId: gate.id, primaryModule: change.primaryModule }
+      );
+    }
+    for (const command of selectedCommands) {
       const specification = normalizeGateCommand(command.command);
       const result = await executeWithTimeout({
         ...specification,
@@ -467,6 +479,11 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       projectModelDigest: model.digest,
       gitContentDigest: git.contentDigest,
       verificationSubjectDigest: subjectDigest,
+      selection: {
+        primaryModule: change.primaryModule,
+        selectedCommandIds: selectedCommands.map((command) => command.id),
+        skippedCommandIds
+      },
       commandResults,
       evidenceIds: evidence.map((item) => item.id),
       evidenceBindings: evidence.map(createEvidenceBinding),
@@ -1156,6 +1173,11 @@ function gateAppliesToChange(gate, governanceBaseline, change) {
   const fullGateId = readString(governanceBaseline.projectDocument?.changePolicy?.fullGate);
   return gate.id === fullGateId
     && (appliesTo.includes("integration") || appliesTo.includes("release"));
+}
+
+function commandAppliesToChange(command, change) {
+  const appliesTo = normalizeStringList(command.appliesTo);
+  return appliesTo.length === 0 || appliesTo.includes(change.primaryModule);
 }
 
 function readObligationMappings(obligations, gateClaimRefs) {

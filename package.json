@@ -22,7 +22,8 @@
   "type": "module",
   "files": [
     "public/",
-    "src/"
+    "src/",
+    "TESTING.md"
   ],
   "bin": {
     "legatura": "src/cli.mjs"

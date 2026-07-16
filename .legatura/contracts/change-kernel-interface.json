@@ -5,7 +5,7 @@
   "owner": "change-kernel",
   "consumers": ["local-workbench"],
   "maturity": "governed",
-  "normativeSources": ["product-intent", "domain-language"],
+  "normativeSources": ["product-intent", "domain-language", "assurance-policy"],
   "claims": [
     {
       "id": "change-lifecycle-requires-preconditions",

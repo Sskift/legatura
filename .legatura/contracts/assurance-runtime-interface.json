@@ -5,7 +5,7 @@
   "owner": "assurance-runtime",
   "consumers": ["project-model", "change-kernel"],
   "maturity": "provisional",
-  "normativeSources": ["product-intent"],
+  "normativeSources": ["product-intent", "assurance-policy"],
   "claims": [
     {
       "id": "repository-binding-is-content-exact",
@@ -13,7 +13,7 @@
     },
     {
       "id": "repository-binding-fails-closed",
-      "statement": "A truncated Git observation is reported as unavailable and cannot become exact repository Evidence."
+      "statement": "A failed or truncated Git observation is reported as unavailable and cannot become exact repository Evidence."
     },
     {
       "id": "command-observation-is-explicit",

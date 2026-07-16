@@ -3,11 +3,16 @@ import test from "node:test";
 
 import { validateProjectModel } from "../../src/core/project-model.mjs";
 
-test("Project Model rejects unknown decision authorities, dependency Contracts, and policy Gates", () => {
+test("Project Model accepts owned dependencies and rejects dangling governance references", () => {
   const model = baseModel();
+  const valid = validateProjectModel(model);
+  assert.equal(valid.valid, true, JSON.stringify(valid.errors));
+
   model.modules[0].decisionAuthority = "invented-authority";
   model.modules[0].dependencies = [{ module: "dependency", via: "missing-contract" }];
   model.projectDocument.changePolicy.defaultGate = "missing-gate";
+  model.gates[0].commands[0].appliesTo = ["missing-module"];
+  model.gates[0].commands[0].applicability.modules = ["dependency"];
 
   const validation = validateProjectModel(model);
   const codes = validation.errors.map((error) => error.code);
@@ -15,12 +20,8 @@ test("Project Model rejects unknown decision authorities, dependency Contracts, 
   assert.ok(codes.includes("module.decision-authority.unknown"));
   assert.ok(codes.includes("module.dependency.contract.unknown"));
   assert.ok(codes.includes("change-policy.defaultGate.unknown"));
-});
-
-test("Project Model accepts a dependency only through its owner's Contract", () => {
-  const model = baseModel();
-  const validation = validateProjectModel(model);
-  assert.equal(validation.valid, true, JSON.stringify(validation.errors));
+  assert.ok(codes.includes("gate.command.applies-to.unknown"));
+  assert.ok(codes.includes("gate.command.applicability.module-scope"));
 });
 
 function baseModel() {
@@ -82,7 +83,7 @@ function baseModel() {
         command: [process.execPath, "-e", "process.exit(0)"],
         claimRefs: ["core-works"],
         oracle: { kind: "process-exit", description: "The command exits zero." },
-        applicability: { modules: ["core"] },
+        applicability: { phase: "acceptance" },
         discriminatoryPower: { rejects: ["a failing command"] },
         residualUncertainty: ["The fixture is bounded."]
       }]

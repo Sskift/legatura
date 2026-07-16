@@ -515,7 +515,7 @@ async function createFixture(t, {
           kind: "deterministic-process-exit",
           description: "The fixture command must exit successfully."
         },
-        applicability: { modules: ["core"] },
+        applicability: { phase: "acceptance" },
         discriminatoryPower: { rejects: ["a non-zero fixture exit"] },
         residualUncertainty: ["The fixture is intentionally bounded."]
       }]

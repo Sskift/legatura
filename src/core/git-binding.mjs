@@ -35,14 +35,24 @@ export async function readGitBinding(repoPath, commandRunner) {
     executeCommand(commandRunner, { ...base, command: "git", args: ["ls-files", "--others", "--exclude-standard"] })
   ]);
 
-  const truncatedCommands = [
+  const commandObservations = [
     ["branch", branchResult],
     ["status", statusResult],
     ["diff", diffResult],
     ["untracked", untrackedResult]
-  ].filter(([, result]) => result.truncated).map(([name]) => name);
-  if (truncatedCommands.length > 0) {
-    const error = `Git binding output was truncated for: ${truncatedCommands.join(", ")}.`;
+  ];
+  const failedCommands = commandObservations
+    .filter(([, result]) => result.exitCode !== 0)
+    .map(([name, result]) => `${name} (exit ${result.exitCode})`);
+  const truncatedCommands = commandObservations
+    .filter(([, result]) => result.truncated)
+    .map(([name]) => name);
+  if (failedCommands.length > 0 || truncatedCommands.length > 0) {
+    const failures = [
+      ...(failedCommands.length > 0 ? [`failed commands: ${failedCommands.join(", ")}`] : []),
+      ...(truncatedCommands.length > 0 ? [`truncated output: ${truncatedCommands.join(", ")}`] : [])
+    ];
+    const error = `Git binding observations were incomplete (${failures.join("; ")}).`;
     return {
       available: false,
       head: headResult.stdout.trim(),

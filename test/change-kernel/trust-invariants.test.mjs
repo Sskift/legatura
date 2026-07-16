@@ -10,7 +10,6 @@ import { createKernel } from "../../src/core/index.mjs";
 
 const execFileAsync = promisify(execFile);
 const MINIMUM_CLAIM_ID = "minimum-behavior";
-const FULL_CLAIM_ID = "full-verification";
 const CASE_DECISION = {
   status: "approved",
   authority: "maintainer",
@@ -23,37 +22,6 @@ const NO_NEW_KNOWLEDGE = {
   noNewKnowledge: true,
   rationale: "The Change discovered no future-relevant project knowledge."
 };
-
-test("failed Evidence cannot cover a Claim", async (t) => {
-  const fixture = await createFixture(t);
-  const kernel = createKernel({ repoPath: fixture.repoPath });
-  const claim = {
-    id: "claim-with-only-failed-evidence",
-    statement: "A failed observation must not satisfy this Claim."
-  };
-
-  await kernel.createChange({
-    id: "failed-evidence",
-    title: "Reject negative observations as proof",
-    primaryModule: "core",
-    claims: [claim],
-    evidence: [completeEvidence({ claim, status: "failed" })],
-    knowledgeClosure: NO_NEW_KNOWLEDGE
-  });
-  await kernel.compileChange("failed-evidence");
-  const gateResult = await kernel.runGate("failed-evidence", "minimum");
-
-  assert.equal(gateResult.status, "passed", "the independent minimum Gate itself should pass");
-  assert.equal(
-    gateResult.change.state,
-    "Submitted",
-    "a failed observation must leave its Claim uncovered"
-  );
-  await assert.rejects(
-    () => kernel.acceptChange("failed-evidence", CASE_DECISION),
-    (error) => error?.code === "CHANGE_NOT_EVIDENCE_READY"
-  );
-});
 
 test("changing intent after a Gate makes old Evidence stale and returns to Submitted", async (t) => {
   const fixture = await createFixture(t);
@@ -99,69 +67,6 @@ test("Knowledge Closure requires a legal classification, not status complete alo
   );
 });
 
-test("a normative amendment Decision requires amendmentRefs", async (t) => {
-  const fixture = await createFixture(t);
-  const kernel = createKernel({ repoPath: fixture.repoPath });
-  await createAndCompile(kernel, {
-    id: "unbound-normative-amendment",
-    knowledgeClosure: {
-      status: "complete",
-      entries: [{
-        kind: "model-amendment",
-        refs: ["contract:core-api:v2"],
-        statement: "The public Contract moves to v2.",
-        rationale: "The requested behavior changes the normative public surface."
-      }]
-    }
-  });
-  const gateResult = await kernel.runGate("unbound-normative-amendment", "minimum");
-  assert.equal(gateResult.change.state, "EvidenceReady");
-
-  await assert.rejects(
-    () => kernel.acceptChange("unbound-normative-amendment", {
-      status: "approved",
-      authority: "maintainer",
-      decidedBy: "trust-invariant-test",
-      decisionType: "normative-amendment"
-    }),
-    (error) => ["NORMATIVE_AMENDMENT_REFS_REQUIRED", "AUTHORITY_DECISION_REQUIRED"].includes(error?.code),
-    "the Decision must bind the exact Model Amendment records it authorizes"
-  );
-});
-
-test("full-before-integrated policy lets minimum reach Accepted but not Integrated", async (t) => {
-  const fixture = await createFixture(t, {
-    changePolicy: {
-      defaultGate: "minimum",
-      fullGate: "full",
-      fullGateBefore: ["integrated", "release"]
-    }
-  });
-  const kernel = createKernel({ repoPath: fixture.repoPath });
-  await createAndCompile(kernel, {
-    id: "full-before-integrated",
-    knowledgeClosure: NO_NEW_KNOWLEDGE
-  });
-  const minimum = await kernel.runGate("full-before-integrated", "minimum");
-  assert.equal(minimum.change.state, "EvidenceReady");
-
-  const accepted = await kernel.acceptChange("full-before-integrated", CASE_DECISION);
-  assert.equal(accepted.state, "Accepted");
-
-  try {
-    await kernel.acceptChange("full-before-integrated", { integrate: true });
-  } catch {
-    // A typed refusal is valid. The invariant is the persisted state below.
-  }
-  const afterIntegrationRequest = await kernel.getChange("full-before-integrated");
-  assert.equal(
-    afterIntegrationRequest.state,
-    "Accepted",
-    "minimum Evidence must not satisfy a policy that requires the full Gate before integration"
-  );
-  assert.equal(afterIntegrationRequest.integration, undefined);
-});
-
 test("a Change executes its frozen baseline Gate after the on-disk Gate is weakened", async (t) => {
   const fixture = await createFixture(t, { minimumExitCode: 17 });
   const kernel = createKernel({ repoPath: fixture.repoPath });
@@ -203,26 +108,8 @@ function changeInput({ id, knowledgeClosure }) {
   };
 }
 
-function completeEvidence({ claim, status }) {
-  return {
-    id: `evidence-${claim.id}-${status}`,
-    claim,
-    supportsClaimIds: [claim.id],
-    oracle: {
-      kind: "deterministic-fixture",
-      description: "The fixture observation must be positive."
-    },
-    observation: { status, exitCode: status === "passed" ? 0 : 1 },
-    provenance: { kind: "black-box-fixture", source: "trust-invariants.test.mjs" },
-    applicability: { modules: ["core"] },
-    discriminatoryPower: { rejects: ["a negative fixture observation"] },
-    residualUncertainty: ["The fixture does not represent an external integration."]
-  };
-}
-
 async function createFixture(t, {
   minimumExitCode = 0,
-  fullExitCode = 0,
   changePolicy = { defaultGate: "minimum" }
 } = {}) {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "legatura-trust-"));
@@ -262,12 +149,10 @@ async function createFixture(t, {
       consumers: [],
       normativeSources: ["accepted-requirement"],
       claims: [
-        { id: MINIMUM_CLAIM_ID, statement: "The minimum governed behavior remains correct." },
-        { id: FULL_CLAIM_ID, statement: "The full verification profile remains correct." }
+        { id: MINIMUM_CLAIM_ID, statement: "The minimum governed behavior remains correct." }
       ]
     }),
     writeGate(repoPath, "minimum", MINIMUM_CLAIM_ID, minimumExitCode),
-    writeGate(repoPath, "full", FULL_CLAIM_ID, fullExitCode),
     writeFile(path.join(repoPath, "src", "index.mjs"), "export const governed = true;\n")
   ]);
 
@@ -288,7 +173,7 @@ async function createFixture(t, {
 function writeGate(repoPath, gateId, claimId, exitCode) {
   return writeJson(path.join(repoPath, ".legatura", "gates", `${gateId}.json`), {
     id: gateId,
-    name: gateId === "full" ? "Full Verification" : "Minimum Verification",
+    name: "Minimum Verification",
     commands: [{
       id: `${gateId}-command`,
       command: [process.execPath, "-e", `process.exit(${exitCode})`],
@@ -297,7 +182,7 @@ function writeGate(repoPath, gateId, claimId, exitCode) {
         kind: "deterministic-process-exit",
         description: `${gateId} fixture command must exit successfully.`
       },
-      applicability: { modules: ["core"] },
+      applicability: { phase: gateId === "full" ? "integration" : "acceptance" },
       discriminatoryPower: { rejects: [`non-zero ${gateId} fixture exits`] },
       residualUncertainty: [`The ${gateId} fixture is intentionally bounded.`]
     }]

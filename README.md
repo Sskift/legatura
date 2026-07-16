@@ -87,7 +87,9 @@ A passing command is not automatically evidence for every claim. Evidence is usa
 - discriminatory power: what plausible failure it would reject;
 - residual uncertainty that remains after it passes.
 
-Minimum gates answer “what is the smallest high-confidence check for this exact Change?” Full gates answer “is the integrated or release candidate healthy as a whole?” Policy may require the former before acceptance and the latter before integration.
+Minimum gates answer “what is the smallest high-confidence check for this exact Change?” Commands are selected by primary Module, while unscoped commands apply everywhere. Full gates answer “is the integrated or release candidate healthy as a whole?” Policy may require the former before acceptance and the latter before integration.
+
+Permanent tests are admitted by plausible failure and Contract Claim—not by feature count or coverage targets. The placement, replacement, and deletion rules are normative in [TESTING.md](TESTING.md).
 
 ## What the MVP already enforces
 

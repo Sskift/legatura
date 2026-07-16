@@ -16,7 +16,7 @@
     ],
     "invariants": [
       "Observations never decide whether a Change is acceptable.",
-      "Truncated Git observations fail closed."
+      "Failed or truncated Git observations fail closed."
     ]
   },
   "paths": {
@@ -24,7 +24,8 @@
       "src/core/canonical.mjs",
       "src/core/command-runner.mjs",
       "src/core/git-binding.mjs",
-      "test/core/git-binding.test.mjs",
+      "test/assurance-runtime/command-runner.test.mjs",
+      "test/assurance-runtime/git-binding.test.mjs",
       ".legatura/modules/assurance-runtime.json",
       ".legatura/contracts/assurance-runtime-interface.json"
     ],
@@ -32,8 +33,8 @@
   },
   "focusedTests": [
     {
-      "path": "test/core/git-binding.test.mjs",
-      "command": "node --test test/core/git-binding.test.mjs"
+      "path": "test/assurance-runtime/**",
+      "command": "node --test test/assurance-runtime/command-runner.test.mjs test/assurance-runtime/git-binding.test.mjs"
     }
   ],
   "publicContracts": ["assurance-runtime-interface"],

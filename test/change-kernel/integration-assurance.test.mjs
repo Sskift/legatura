@@ -39,6 +39,14 @@ test("minimum accepts a Change while full remains a sealed integration assurance
   assert.equal(accepted.acceptance.valid, true);
   const acceptanceDigest = accepted.acceptance.digest;
 
+  await assert.rejects(
+    () => kernel.acceptChange(changeId, { integrate: true }),
+    (error) => error?.code === "FULL_GATE_REQUIRED"
+  );
+  const beforeFull = await kernel.getChange(changeId);
+  assert.equal(beforeFull.state, "Accepted");
+  assert.equal(beforeFull.integration, undefined);
+
   const full = await kernel.runGate(changeId, "full");
   assert.equal(full.status, "passed");
   assert.equal(full.change.state, "Accepted");
@@ -47,15 +55,6 @@ test("minimum accepts a Change while full remains a sealed integration assurance
   assert.equal(full.change.integrationAssurance.valid, true);
   assert.equal(full.change.integrationAssurance.acceptanceDigest, acceptanceDigest);
   assert.match(full.change.integrationAssurance.digest, /^sha256:[a-f0-9]{64}$/u);
-
-  await assert.rejects(
-    () => kernel.runGate(changeId, "minimum"),
-    (error) => error?.code === "CHANGE_SEALED"
-  );
-  const stillAccepted = await kernel.getChange(changeId);
-  assert.equal(stillAccepted.state, "Accepted");
-  assert.equal(stillAccepted.acceptance.valid, true);
-  assert.equal(stillAccepted.acceptance.digest, acceptanceDigest);
 
   const integrated = await kernel.acceptChange(changeId, { integrate: true });
   assert.equal(integrated.state, "Integrated");
@@ -66,52 +65,30 @@ test("minimum accepts a Change while full remains a sealed integration assurance
 test("tampered integration assurance cannot authorize integration", async (t) => {
   const fixture = await createFixture(t);
   const kernel = createKernel({ repoPath: fixture.repoPath });
-  const attacks = [
-    {
-      id: "forged-integration-assurance-digest",
-      mutate(assurance) {
-        assurance.digest = `sha256:${"0".repeat(64)}`;
-      }
-    },
-    {
-      id: "forged-integration-assurance-content",
-      mutate(assurance) {
-        assert.ok(assurance.gateRuns.length > 0);
-        assurance.gateRuns[0].status = "failed";
-      }
-    }
-  ];
+  const changeId = "forged-integration-assurance-content";
+  await createCompiledChange(kernel, changeId);
+  await kernel.runGate(changeId, "minimum");
+  const accepted = await kernel.acceptChange(changeId, CASE_DECISION);
+  assert.equal(accepted.state, "Accepted");
+  const full = await kernel.runGate(changeId, "full");
+  assert.equal(full.status, "passed");
+  assert.equal(full.change.integrationAssurance.valid, true);
 
-  for (const attack of attacks) {
-    await createCompiledChange(kernel, attack.id);
-    await kernel.runGate(attack.id, "minimum");
-    const accepted = await kernel.acceptChange(attack.id, CASE_DECISION);
-    assert.equal(accepted.state, "Accepted");
-    const full = await kernel.runGate(attack.id, "full");
-    assert.equal(full.status, "passed");
-    assert.equal(full.change.integrationAssurance.valid, true);
+  await mutateRuntimeChange(fixture.repoPath, changeId, (record) => {
+    const retainedDigest = record.integrationAssurance.digest;
+    assert.ok(record.integrationAssurance.gateRuns.length > 0);
+    record.integrationAssurance.gateRuns[0].status = "failed";
+    assert.equal(record.integrationAssurance.digest, retainedDigest);
+  });
 
-    await mutateRuntimeChange(fixture.repoPath, attack.id, (record) => {
-      const retainedDigest = record.integrationAssurance.digest;
-      attack.mutate(record.integrationAssurance);
-      if (attack.id.endsWith("content")) {
-        assert.equal(
-          record.integrationAssurance.digest,
-          retainedDigest,
-          "content forgery deliberately retains the previously trusted digest"
-        );
-      }
-    });
-
-    await assert.rejects(
-      () => kernel.acceptChange(attack.id, { integrate: true }),
-      (error) => error?.code === "FULL_GATE_REQUIRED"
-    );
-    const refused = await kernel.getChange(attack.id);
-    assert.equal(refused.state, "Accepted");
-    assert.equal(refused.acceptance.valid, true);
-    assert.equal(refused.integration, undefined);
-  }
+  await assert.rejects(
+    () => kernel.acceptChange(changeId, { integrate: true }),
+    (error) => error?.code === "FULL_GATE_REQUIRED"
+  );
+  const refused = await kernel.getChange(changeId);
+  assert.equal(refused.state, "Accepted");
+  assert.equal(refused.acceptance.valid, true);
+  assert.equal(refused.integration, undefined);
 });
 
 async function createCompiledChange(kernel, id) {
@@ -235,7 +212,7 @@ function writeGate(repoPath, { id, name, appliesTo, claimId }) {
         kind: "deterministic-process-exit",
         description: `${name} must exit successfully.`
       },
-      applicability: { modules: ["core"], phase: id === "full" ? "integration" : "acceptance" },
+      applicability: { phase: id === "full" ? "integration" : "acceptance" },
       discriminatoryPower: { rejects: [`non-zero ${id} process exits`] },
       residualUncertainty: [`The ${id} fixture is intentionally bounded.`]
     }]

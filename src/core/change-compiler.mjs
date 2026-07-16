@@ -275,7 +275,8 @@ function compileVerificationObligations({ claims, primaryModule, governanceBasel
     const user = suppliedByClaim.get(claim.id) ?? {};
     const exactGateIds = unique(applicableGates
       .filter((gate) => asArray(gate.commands)
-        .some((command) => normalizeStringList(command.claimRefs).includes(claim.id)))
+        .some((command) => commandAppliesToModule(command, primaryModule.id)
+          && normalizeStringList(command.claimRefs).includes(claim.id)))
       .map((gate) => gate.id));
     const userGateRefs = normalizeStringList(user.gateClaimRefs ?? user.evidenceSourceRefs ?? user.supportedBy);
     const crossClaimRefs = userGateRefs.filter((ref) => ref !== claim.id);
@@ -537,6 +538,11 @@ function hasCrossMappingSemantics(obligation) {
   return Boolean(readString(obligation.mappingRationale)
     && isSubstantive(obligation.applicability)
     && isSubstantive(obligation.discriminatoryPower));
+}
+
+function commandAppliesToModule(command, moduleId) {
+  const appliesTo = normalizeStringList(command?.appliesTo);
+  return appliesTo.length === 0 || appliesTo.includes(moduleId);
 }
 
 function decisionAuthorityIds(governanceBaseline) {

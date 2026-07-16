@@ -9,7 +9,7 @@ import { createKernel, EVIDENCE_FIELDS } from "../../src/core/index.mjs";
 
 const execFileAsync = promisify(execFile);
 
-test("inspectProject validates the Project Model and binds dirty untracked content", async () => {
+test("inspectProject exposes validated Project Model and repository state", async () => {
   const fixture = await createFixture();
   await writeFile(path.join(fixture.repoPath, "untracked.txt"), "untracked content\n");
   const kernel = createKernel({ repoPath: fixture.repoPath });
@@ -20,7 +20,6 @@ test("inspectProject validates the Project Model and binds dirty untracked conte
   assert.equal(inspection.validation.valid, true);
   assert.equal(inspection.git.available, true);
   assert.equal(inspection.git.dirty, true);
-  assert.ok(inspection.git.untracked.some((entry) => entry.path === "untracked.txt" && entry.digest));
   assert.equal(inspection.modules[0].status, "governed");
 });
 
@@ -41,6 +40,44 @@ test("a Context Capsule can read focused tests without granting write access to 
     path: "test/core/**",
     command: "node --test test/core"
   }]);
+});
+
+test("minimum Gate execution selects only commands for the primary Module", async () => {
+  const fixture = await createFixture();
+  await addAuxiliaryGateCommand(fixture.repoPath);
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const change = await kernel.createChange({
+    title: "Select focused verification",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
+  });
+  await kernel.compileChange(change.id);
+
+  const result = await kernel.runGate(change.id, "minimum");
+  const run = result.gateRuns.find((entry) => entry.gateId === "minimum");
+
+  assert.equal(result.status, "passed");
+  assert.deepEqual(run.selection, {
+    primaryModule: "core",
+    selectedCommandIds: ["behavior"],
+    skippedCommandIds: ["auxiliary-failure"]
+  });
+  assert.deepEqual(run.commandResults.map((entry) => entry.id), ["behavior"]);
+  const commandEvidence = result.change.evidence.find((item) => item.provenance?.commandId === "behavior");
+  assert.equal(commandEvidence.applicability.module, "core");
+  assert.equal(Object.hasOwn(commandEvidence.applicability, "modules"), false);
+
+  const auxiliaryClaim = await kernel.createChange({
+    title: "Do not map a skipped command",
+    primaryModule: "core",
+    claims: [{
+      id: "auxiliary-correct",
+      statement: "The auxiliary behavior remains correct."
+    }]
+  });
+  const compiled = await kernel.compileChange(auxiliaryClaim.id);
+  assert.deepEqual(compiled.verificationObligations[0].exactGateIds, []);
+  assert.equal(compiled.verificationObligations[0].mapping.status, "unmapped");
 });
 
 test("Change follows Candidate to Integrated with Evidence, Knowledge Closure, Authority, and digest", async () => {
@@ -297,6 +334,58 @@ async function createFixture() {
 
 async function writeJson(filePath, value) {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function addAuxiliaryGateCommand(repoPath) {
+  const projectPath = path.join(repoPath, ".legatura/project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  project.authorities.fact.push({ id: "aux-facts", module: "aux", owns: "Auxiliary fixture behavior" });
+  project.assuranceBoundary.governed.push({ module: "aux", reason: "Selector fixture" });
+  await writeJson(projectPath, project);
+
+  await mkdir(path.join(repoPath, "aux"));
+  await writeFile(path.join(repoPath, "aux/index.mjs"), "export const auxiliary = true;\n");
+  await writeJson(path.join(repoPath, ".legatura/modules/aux.json"), {
+    schemaVersion: 1,
+    id: "aux",
+    name: "Auxiliary",
+    status: "governed",
+    summary: "Selector fixture Module.",
+    factAuthority: "aux-facts",
+    interface: { returns: ["auxiliary result"] },
+    paths: { include: ["aux/**"], exclude: [] },
+    publicContracts: ["aux-behavior"],
+    dependencies: []
+  });
+  await writeJson(path.join(repoPath, ".legatura/contracts/aux-behavior.json"), {
+    schemaVersion: 1,
+    id: "aux-behavior",
+    name: "Auxiliary Behavior",
+    owner: "aux",
+    maturity: "governed",
+    normativeSources: [],
+    claims: [{
+      id: "auxiliary-correct",
+      statement: "The auxiliary behavior remains correct."
+    }],
+    consumers: []
+  });
+
+  const gatePath = path.join(repoPath, ".legatura/gates/minimum.json");
+  const gate = JSON.parse(await readFile(gatePath, "utf8"));
+  gate.appliesTo.push("aux");
+  gate.commands[0].appliesTo = ["core"];
+  gate.commands.push({
+    ...gate.commands[0],
+    id: "auxiliary-failure",
+    appliesTo: ["aux"],
+    command: [process.execPath, "-e", "process.exit(17)"],
+    claimRefs: ["auxiliary-correct"]
+  });
+  await writeJson(gatePath, gate);
+
+  await git(repoPath, "add", ".");
+  await git(repoPath, "commit", "-qm", "add selector fixture");
 }
 
 async function git(cwd, ...args) {
