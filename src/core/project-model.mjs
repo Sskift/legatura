@@ -10,7 +10,9 @@ import {
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
+  compileAllowedOutcomeTransitionRoutes,
   compileClaimGateRoutes,
+  inspectBlockedOutcomeRouteReachability,
   validateOutcomeTransitionLedger
 } from "./outcome-transitions.mjs";
 
@@ -22,7 +24,6 @@ export {
 };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
-
 export async function loadProjectModel(repoPath) {
   const root = path.join(repoPath, ".legatura");
   const projectDocument = await readOptionalJson(path.join(root, "project.json"));
@@ -505,6 +506,8 @@ function validateKnowledgeGaps({
     }
   }
 
+  validateKnowledgeGapBlockers({ knowledgeGaps, gapIndex, plan }, errors);
+
   for (const outcome of asArray(plan?.outcomes)) {
     for (const criterion of asArray(outcome?.acceptance?.criteria)) {
       const directClaimRefs = new Set(asArray(criterion?.claimRefs).map(readString).filter(Boolean));
@@ -523,6 +526,190 @@ function validateKnowledgeGaps({
       }
     }
   }
+}
+
+function validateKnowledgeGapBlockers({ knowledgeGaps, gapIndex, plan }, errors) {
+  const outcomeIndex = new Map(asArray(plan?.outcomes)
+    .map((outcome) => [readId(outcome), outcome])
+    .filter(([outcomeId]) => Boolean(outcomeId)));
+  const allowedRoutes = compileAllowedOutcomeTransitionRoutes(plan);
+  const graph = new Map([...gapIndex.keys()].map((gapRef) => [gapRef, []]));
+
+  for (const [index, gap] of asArray(knowledgeGaps).entries()) {
+    const gapId = readId(gap);
+    if (!gapId || !gapIndex.has(gapId)) continue;
+    const location = `.legatura/knowledge-gaps.json#${gapId ?? index}`;
+    const hasGapBlockers = Object.hasOwn(gap, "blocksGapClosureRefs");
+    const hasRouteBlockers = Object.hasOwn(gap, "blocksOutcomeTransitionRoutes");
+    if (!hasGapBlockers && !hasRouteBlockers) continue;
+
+    if (!Array.isArray(gap.proofClaimRefs) || gap.proofClaimRefs.length === 0) {
+      errors.push(issue(
+        "knowledge-gap.blocker-source.proof-contract-missing",
+        location,
+        `Knowledge Gap ${gapId} must own a governed Closure Contract before declaring blocker relations.`
+      ));
+    }
+
+    if (hasGapBlockers) {
+      const references = gap.blocksGapClosureRefs;
+      if (!Array.isArray(references) || references.length === 0) {
+        errors.push(issue(
+          "knowledge-gap.blocked-gap.invalid",
+          location,
+          "blocksGapClosureRefs must be a non-empty canonical list of exact Knowledge Gap ids."
+        ));
+      } else {
+        const seen = new Set();
+        for (const rawReference of references) {
+          const reference = readString(rawReference);
+          if (typeof rawReference !== "string" || reference !== rawReference) {
+            errors.push(issue(
+              "knowledge-gap.blocked-gap.invalid",
+              location,
+              "blocksGapClosureRefs entries must be exact non-empty Knowledge Gap ids."
+            ));
+            continue;
+          }
+          if (seen.has(reference)) {
+            errors.push(issue(
+              "knowledge-gap.blocked-gap.duplicate",
+              location,
+              `blocksGapClosureRefs repeats ${reference}.`
+            ));
+            continue;
+          }
+          seen.add(reference);
+          if (reference === gapId) {
+            errors.push(issue(
+              "knowledge-gap.blocked-gap.self",
+              location,
+              `Knowledge Gap ${gapId} cannot block its own closure.`
+            ));
+          } else if (!gapIndex.has(reference)) {
+            errors.push(issue(
+              "knowledge-gap.blocked-gap.unknown",
+              location,
+              `blocksGapClosureRefs references unknown Knowledge Gap: ${reference}.`
+            ));
+          } else {
+            if (gap?.status === "open" && gapIndex.get(reference)?.status === "closed") {
+              errors.push(issue(
+                "knowledge-gap.blocked-gap.already-closed",
+                location,
+                `Open Knowledge Gap ${gapId} cannot block already-closed Knowledge Gap ${reference}.`
+              ));
+            }
+            graph.get(gapId).push(reference);
+          }
+        }
+      }
+    }
+
+    if (hasRouteBlockers) {
+      const descriptors = gap.blocksOutcomeTransitionRoutes;
+      if (!Array.isArray(descriptors) || descriptors.length === 0) {
+        errors.push(issue(
+          "knowledge-gap.blocked-route.invalid",
+          location,
+          "blocksOutcomeTransitionRoutes must be a non-empty list of exact Outcome route descriptors."
+        ));
+      } else {
+        const seen = new Set();
+        for (const descriptor of descriptors) {
+          const keys = descriptor && typeof descriptor === "object" && !Array.isArray(descriptor)
+            ? Object.keys(descriptor).sort()
+            : [];
+          const outcomeRef = readString(descriptor?.outcomeRef);
+          const from = readString(descriptor?.from);
+          const to = readString(descriptor?.to);
+          const exact = keys.length === 3
+            && keys[0] === "from"
+            && keys[1] === "outcomeRef"
+            && keys[2] === "to"
+            && descriptor.outcomeRef === outcomeRef
+            && descriptor.from === from
+            && descriptor.to === to;
+          if (!exact || !outcomeRef || !from || !to) {
+            errors.push(issue(
+              "knowledge-gap.blocked-route.invalid",
+              location,
+              "Each blocked Outcome route must contain only exact non-empty outcomeRef, from, and to strings."
+            ));
+            continue;
+          }
+          const key = `${outcomeRef}\u0000${from}\u0000${to}`;
+          if (seen.has(key)) {
+            errors.push(issue(
+              "knowledge-gap.blocked-route.duplicate",
+              location,
+              `blocksOutcomeTransitionRoutes repeats ${outcomeRef} ${from}->${to}.`
+            ));
+            continue;
+          }
+          seen.add(key);
+          if (!outcomeIndex.has(outcomeRef)) {
+            errors.push(issue(
+              "knowledge-gap.blocked-route.outcome-unknown",
+              location,
+              `Blocked Outcome route references unknown Outcome: ${outcomeRef}.`
+            ));
+          }
+          if (!allowedRoutes.has(`${from}->${to}`)) {
+            errors.push(issue(
+              "knowledge-gap.blocked-route.forbidden",
+              location,
+              `Frozen transition policy does not allow blocked route ${from}->${to}.`
+            ));
+          }
+          if (gap?.status === "open" && outcomeIndex.has(outcomeRef)
+            && allowedRoutes.has(`${from}->${to}`)) {
+            const reachability = inspectBlockedOutcomeRouteReachability(plan, { outcomeRef, from, to });
+            if (!reachability.valid) {
+              errors.push(issue(
+                reachability.reason === "blocked-route-transition-already-recorded"
+                  ? "knowledge-gap.blocked-route.already-transitioned"
+                  : "knowledge-gap.blocked-route.state-bypassed",
+                location,
+                reachability.reason === "blocked-route-transition-already-recorded"
+                  ? `Open Knowledge Gap ${gapId} cannot block an Outcome route already present in the Transition ledger.`
+                  : `Outcome ${outcomeRef} status ${reachability.currentStatus ?? "unknown"} is neither before ${from} nor reachable from it without consuming blocked edge ${from}->${to}.`
+              ));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const visiting = new Set();
+  const visited = new Set();
+  const stack = [];
+  const reported = new Set();
+  const visit = (gapRef) => {
+    if (visited.has(gapRef)) return;
+    if (visiting.has(gapRef)) {
+      const start = stack.indexOf(gapRef);
+      const cycle = [...stack.slice(start), gapRef];
+      const signature = [...new Set(cycle)].sort().join("\u0000");
+      if (!reported.has(signature)) {
+        reported.add(signature);
+        errors.push(issue(
+          "knowledge-gap.blocker-cycle",
+          `.legatura/knowledge-gaps.json#${gapRef}`,
+          `Knowledge Gap blocker relations must be acyclic: ${cycle.join(" -> ")}.`
+        ));
+      }
+      return;
+    }
+    visiting.add(gapRef);
+    stack.push(gapRef);
+    for (const targetRef of graph.get(gapRef) ?? []) visit(targetRef);
+    stack.pop();
+    visiting.delete(gapRef);
+    visited.add(gapRef);
+  };
+  for (const gapRef of [...graph.keys()].sort()) visit(gapRef);
 }
 
 function compileKnowledgeGapProofClaimRouteIndex({
@@ -785,7 +972,7 @@ function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors)
     });
   }
 
-  const transitionValidation = validateOutcomeTransitionLedger(plan);
+  const transitionValidation = validateOutcomeTransitionLedger(plan, model.knowledgeGaps);
   errors.push(...transitionValidation.errors);
 
   if (activeOutcomes === 0) {

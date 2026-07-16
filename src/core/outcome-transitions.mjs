@@ -18,6 +18,86 @@ const DEFAULT_ALLOWED_ROUTES = new Set([
   "active->retired"
 ]);
 
+export function compileAllowedOutcomeTransitionRoutes(plan) {
+  const configured = normalizeStringList(plan?.outcomeGovernance?.transition?.allowed);
+  return new Set(configured.length > 0 ? configured : DEFAULT_ALLOWED_ROUTES);
+}
+
+export function inspectBlockedOutcomeRouteReachability(plan, route) {
+  const outcomeRef = readString(route?.outcomeRef);
+  const from = readString(route?.from);
+  const to = readString(route?.to);
+  const outcome = asArray(plan?.outcomes).find((candidate) => (
+    readString(candidate?.id) === outcomeRef
+  ));
+  const currentStatus = readString(outcome?.status) ?? null;
+  if (!outcome) {
+    return {
+      valid: false,
+      reason: "blocked-route-outcome-unknown",
+      currentStatus,
+      reachableStatuses: []
+    };
+  }
+  const exactTransitionRecorded = asArray(plan?.outcomeTransitions).some((transition) => (
+    readString(transition?.outcomeRef) === outcomeRef
+      && readString(transition?.from) === from
+      && readString(transition?.to) === to
+  ));
+  const allowedRoutes = compileAllowedOutcomeTransitionRoutes(plan);
+  const blockedRoute = `${from}->${to}`;
+  const collectReachable = (start) => {
+    const reachable = new Set(start ? [start] : []);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const allowedRoute of allowedRoutes) {
+        if (allowedRoute === blockedRoute) continue;
+        const separator = allowedRoute.indexOf("->");
+        if (separator <= 0) continue;
+        const allowedFrom = allowedRoute.slice(0, separator);
+        const allowedTo = allowedRoute.slice(separator + 2);
+        if (reachable.has(allowedFrom) && allowedTo && !reachable.has(allowedTo)) {
+          reachable.add(allowedTo);
+          changed = true;
+        }
+      }
+    }
+    return reachable;
+  };
+  const reachableFromRouteStart = collectReachable(from);
+  const reachableFromCurrent = collectReachable(currentStatus);
+  const reachableStatuses = [...reachableFromRouteStart].sort();
+  const reachableFromCurrentStatuses = [...reachableFromCurrent].sort();
+  if (exactTransitionRecorded) {
+    return {
+      valid: false,
+      reason: "blocked-route-transition-already-recorded",
+      currentStatus,
+      reachableStatuses,
+      reachableFromCurrentStatuses
+    };
+  }
+  const beforeRoute = Boolean(from) && reachableFromCurrent.has(from);
+  const escapedRoute = Boolean(currentStatus) && reachableFromRouteStart.has(currentStatus);
+  if (!beforeRoute && !escapedRoute) {
+    return {
+      valid: false,
+      reason: "blocked-route-current-status-unreachable",
+      currentStatus,
+      reachableStatuses,
+      reachableFromCurrentStatuses
+    };
+  }
+  return {
+    valid: true,
+    reason: null,
+    currentStatus,
+    reachableStatuses,
+    reachableFromCurrentStatuses
+  };
+}
+
 export function assertKnowledgeGapProofContractsPreserved({
   governanceBaseline,
   currentModel
@@ -36,6 +116,12 @@ function assertKnowledgeGapProofContractsPreservedInternal({
 }) {
   const baselineGaps = indexKnowledgeGaps(governanceBaseline?.knowledgeGaps, "frozen");
   const currentGaps = indexKnowledgeGaps(currentModel?.knowledgeGaps, "current");
+  assertKnowledgeGapBlockerRelationsPreserved({
+    governanceBaseline,
+    currentModel,
+    baselineGaps,
+    currentGaps
+  });
   const baselineClaims = indexProofClaimDescriptors(governanceBaseline);
   const currentClaims = indexProofClaimDescriptors(currentModel);
 
@@ -177,6 +263,7 @@ export function compileOutcomeTransitions({
     to: delta.to,
     reason: "status-delta-has-no-appended-transition"
   }));
+  assertBlockedOutcomeDeltasBound({ baselineGaps: governanceBaseline.knowledgeGaps, matched });
   if (unresolved.length > 0 && mode === "enforced") {
     throw transitionError(
       "OUTCOME_TRANSITION_STATUS_UNBOUND",
@@ -208,12 +295,7 @@ export function compileOutcomeTransitions({
   const currentProofClaimIndex = indexProofClaimDescriptors(currentModel);
   const baselineGaps = indexKnowledgeGaps(governanceBaseline?.knowledgeGaps, "frozen");
   const currentGaps = indexKnowledgeGaps(currentModel?.knowledgeGaps, "current");
-  const allowedRoutes = new Set(normalizeStringList(
-    baselinePlan?.outcomeGovernance?.transition?.allowed
-  ));
-  if (allowedRoutes.size === 0) {
-    for (const route of DEFAULT_ALLOWED_ROUTES) allowedRoutes.add(route);
-  }
+  const allowedRoutes = compileAllowedOutcomeTransitionRoutes(baselinePlan);
 
   const appendedTransitions = matched.bound.map(({ delta, transition }) => compileTransition({
     change,
@@ -252,6 +334,34 @@ export function compileOutcomeTransitions({
   });
 }
 
+function assertBlockedOutcomeDeltasBound({ baselineGaps, matched }) {
+  const blocked = matched.missing.flatMap((delta) => {
+    const blockerGapRefs = asArray(baselineGaps).flatMap((gap) => (
+      gap?.status === "open"
+        && asArray(gap?.blocksOutcomeTransitionRoutes).some((route) => (
+          route?.outcomeRef === delta.outcomeRef
+            && route?.from === delta.from
+            && route?.to === delta.to
+        ))
+        ? [readString(gap?.id)]
+        : []
+    )).filter(Boolean).sort();
+    return blockerGapRefs.length > 0 ? [{
+      outcomeRef: delta.outcomeRef,
+      from: delta.from,
+      to: delta.to,
+      blockerGapRefs
+    }] : [];
+  });
+  if (blocked.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      "A baseline-open exact Outcome-route blocker requires a bound Transition and its compiler-derived Gap disposition.",
+      { blocked, problems: ["blocked-outcome-transition-unbound"] }
+    );
+  }
+}
+
 export function collectOutcomeTransitionPackageRefs({ baselinePlan, currentPlan } = {}) {
   const baselineLedger = normalizeLedger(baselinePlan?.outcomeTransitions, "frozen");
   const currentLedger = normalizeLedger(currentPlan?.outcomeTransitions, "current");
@@ -260,7 +370,7 @@ export function collectOutcomeTransitionPackageRefs({ baselinePlan, currentPlan 
     .flatMap((entry) => entry.packageRefs));
 }
 
-export function validateOutcomeTransitionLedger(plan) {
+export function validateOutcomeTransitionLedger(plan, knowledgeGaps = []) {
   const errors = [];
   let ledger;
   try {
@@ -299,7 +409,17 @@ export function validateOutcomeTransitionLedger(plan) {
       ));
     }
     const criteria = new Set(asArray(outcome?.acceptance?.criteria).map((criterion) => readString(criterion?.id)));
-    const gaps = new Set(normalizeStringList(outcome?.acceptance?.gapRefs));
+    const gaps = new Set([
+      ...normalizeStringList(outcome?.acceptance?.gapRefs),
+      ...deriveDeclaredBlockerGapRefs({
+        knowledgeGaps,
+        outcomeRef: entry.outcomeRef,
+        from: entry.from,
+        to: entry.to,
+        seedGapRefs: normalizeStringList(outcome?.acceptance?.gapRefs),
+        baselineOpenOnly: false
+      })
+    ]);
     for (const assessment of entry.criterionAssessments) {
       if (!criteria.has(assessment.criterionRef)) {
         errors.push(ledgerIssue(
@@ -314,9 +434,17 @@ export function validateOutcomeTransitionLedger(plan) {
         errors.push(ledgerIssue(
           "plan.outcome-transition.gap.unknown",
           location,
-          `Transition references undeclared Outcome Gap ${disposition.gapRef}.`
+          `Transition references a Gap that is neither declared by the Outcome nor derived from its blocker relations: ${disposition.gapRef}.`
         ));
       }
+    }
+    const duplicateGapRefs = duplicates(entry.gapDispositions.map((entry) => entry.gapRef));
+    if (duplicateGapRefs.length > 0) {
+      errors.push(ledgerIssue(
+        "plan.outcome-transition.gap.duplicate",
+        location,
+        `Transition repeats Gap dispositions: ${duplicateGapRefs.join(", ")}.`
+      ));
     }
   }
   return { valid: errors.length === 0, errors };
@@ -419,7 +547,17 @@ function compileTransition({
   }));
   const usedPackageKeys = new Set();
 
-  const requiredGapRefs = [...new Set(criteria.flatMap((criterion) => normalizeStringList(criterion.gapRefs)))].sort();
+  const criterionGapRefs = [...new Set(
+    criteria.flatMap((criterion) => normalizeStringList(criterion.gapRefs))
+  )].sort();
+  const requiredGapRefs = deriveDeclaredBlockerGapRefs({
+    knowledgeGaps: [...baselineGaps.values()],
+    outcomeRef: delta.outcomeRef,
+    from: delta.from,
+    to: delta.to,
+    seedGapRefs: criterionGapRefs,
+    baselineOpenOnly: true
+  });
   const observedGapRefs = transition.gapDispositions.map((entry) => entry.gapRef).sort();
   const missingGapRefs = requiredGapRefs.filter((ref) => !observedGapRefs.includes(ref));
   const unexpectedGapRefs = observedGapRefs.filter((ref) => !requiredGapRefs.includes(ref));
@@ -427,7 +565,7 @@ function compileTransition({
   if (missingGapRefs.length > 0 || unexpectedGapRefs.length > 0 || duplicateGapRefs.length > 0) {
     throw transitionError(
       "OUTCOME_TRANSITION_GAP_UNRESOLVED",
-      "Transition Gap dispositions must exactly cover the Gaps declared by its required Criteria.",
+      "Transition Gap dispositions must exactly cover frozen Criterion Gaps and every direct or transitive baseline-open blocker.",
       { outcomeRef: delta.outcomeRef, missingGapRefs, unexpectedGapRefs, duplicateGapRefs }
     );
   }
@@ -1612,6 +1750,323 @@ function indexKnowledgeGaps(value, label) {
   return new Map(entries.map((gap) => [readString(gap?.id), gap]).filter(([id]) => Boolean(id)));
 }
 
+function assertKnowledgeGapBlockerRelationsPreserved({
+  governanceBaseline,
+  currentModel,
+  baselineGaps,
+  currentGaps
+}) {
+  const baselineRelations = compileBlockerRelationIndex({
+    model: governanceBaseline,
+    gaps: baselineGaps,
+    label: "frozen"
+  });
+  const currentRelations = compileBlockerRelationIndex({
+    model: currentModel,
+    gaps: currentGaps,
+    label: "current"
+  });
+
+  for (const [gapRef, current] of currentRelations) {
+    const frozenGap = baselineGaps.get(gapRef);
+    const currentGap = currentGaps.get(gapRef);
+    const frozen = baselineRelations.get(gapRef) ?? emptyBlockerRelations();
+    const removedGapRefs = frozen.gapRefs.filter((targetRef) => !current.gapRefSet.has(targetRef));
+    const removedRoutes = frozen.routes
+      .filter((route) => !current.routeKeys.has(blockedRouteKey(route)));
+    if (removedGapRefs.length > 0 || removedRoutes.length > 0) {
+      throw blockerRewriteError(
+        `Knowledge Gap ${gapRef} blocker relations are append-only and cannot be removed or mutated.`,
+        {
+          gapRef,
+          removedGapRefs,
+          removedRoutes,
+          problems: ["blocker-relation-removed-or-mutated"]
+        }
+      );
+    }
+
+    const addedGapRefs = current.gapRefs.filter((targetRef) => !frozen.gapRefSet.has(targetRef));
+    const addedRoutes = current.routes
+      .filter((route) => !frozen.routeKeys.has(blockedRouteKey(route)));
+    if (addedGapRefs.length === 0 && addedRoutes.length === 0) continue;
+    const sourceWasOpen = frozenGap ? frozenGap.status === "open" : true;
+    if (!sourceWasOpen || currentGap?.status !== "open") {
+      throw blockerRewriteError(
+        `Knowledge Gap ${gapRef} can add blocker relations only while its source remains open.`,
+        {
+          gapRef,
+          addedGapRefs,
+          addedRoutes,
+          problems: [frozenGap ? "blocker-source-not-open-across-amendment" : "new-blocker-source-not-open"]
+        }
+      );
+    }
+
+    for (const targetRef of addedGapRefs) {
+      const frozenTarget = baselineGaps.get(targetRef);
+      const currentTarget = currentGaps.get(targetRef);
+      if (!currentTarget
+        || currentTarget.status !== "open"
+        || (frozenTarget && frozenTarget.status !== "open")) {
+        throw blockerRewriteError(
+          `Knowledge Gap ${gapRef} cannot newly block ${targetRef} after or during its closure.`,
+          {
+            gapRef,
+            targetRef,
+            problems: [frozenTarget ? "blocked-gap-not-open-across-amendment" : "new-blocked-gap-not-open"]
+          }
+        );
+      }
+    }
+
+  }
+
+  for (const [gapRef, frozen] of baselineRelations) {
+    if (!currentRelations.has(gapRef)
+      && (frozen.gapRefs.length > 0 || frozen.routes.length > 0)) {
+      throw blockerRewriteError(
+        `Knowledge Gap ${gapRef} blocker relations cannot disappear with their source.`,
+        { gapRef, problems: ["blocker-source-missing"] }
+      );
+    }
+  }
+}
+
+function compileBlockerRelationIndex({ model, gaps, label }) {
+  const outcomes = indexOutcomes(model?.plan?.outcomes);
+  const allowedRoutes = compileAllowedOutcomeTransitionRoutes(model?.plan);
+  const result = new Map();
+  const graph = new Map([...gaps.keys()].map((gapRef) => [gapRef, []]));
+  for (const [gapRef, gap] of gaps) {
+    const gapRefs = readExactBlockedGapRefs(gap, label);
+    const routes = readExactBlockedRoutes(gap, label);
+    if ((gapRefs.length > 0 || routes.length > 0)
+      && normalizeStringList(gap?.proofClaimRefs).length === 0) {
+      throw blockerInvalidError(
+        `Knowledge Gap ${gapRef} must own a governed Closure Contract before declaring blocker relations.`,
+        { gapRef, label, problems: ["blocker-source-proof-contract-missing"] }
+      );
+    }
+    for (const targetRef of gapRefs) {
+      if (targetRef === gapRef) {
+        throw blockerInvalidError(
+          `Knowledge Gap ${gapRef} cannot block its own closure.`,
+          { gapRef, targetRef, label, problems: ["blocker-self-edge"] }
+        );
+      }
+      if (!gaps.has(targetRef)) {
+        throw blockerInvalidError(
+          `Knowledge Gap ${gapRef} references unknown blocked Gap ${targetRef}.`,
+          { gapRef, targetRef, label, problems: ["blocked-gap-unknown"] }
+        );
+      }
+      if (gap?.status === "open" && gaps.get(targetRef)?.status === "closed") {
+        throw blockerInvalidError(
+          `Open Knowledge Gap ${gapRef} cannot retain a blocker relation to already-closed Gap ${targetRef}.`,
+          { gapRef, targetRef, label, problems: ["open-blocker-target-gap-already-closed"] }
+        );
+      }
+      graph.get(gapRef).push(targetRef);
+    }
+    for (const route of routes) {
+      if (!outcomes.has(route.outcomeRef)) {
+        throw blockerInvalidError(
+          `Knowledge Gap ${gapRef} references unknown blocked Outcome ${route.outcomeRef}.`,
+          { gapRef, route, label, problems: ["blocked-route-outcome-unknown"] }
+        );
+      }
+      if (!allowedRoutes.has(`${route.from}->${route.to}`)) {
+        throw blockerInvalidError(
+          `Knowledge Gap ${gapRef} declares a route forbidden by the ${label} transition policy.`,
+          { gapRef, route, label, problems: ["blocked-route-forbidden"] }
+        );
+      }
+      if (gap?.status === "open") {
+        const reachability = inspectBlockedOutcomeRouteReachability(model?.plan, route);
+        if (!reachability.valid) {
+          throw blockerInvalidError(
+            `Open Knowledge Gap ${gapRef} cannot block an Outcome route that was already consumed or bypassed.`,
+            {
+              gapRef,
+              route,
+              label,
+              currentStatus: reachability.currentStatus,
+              reachableStatuses: reachability.reachableStatuses,
+              reachableFromCurrentStatuses: reachability.reachableFromCurrentStatuses,
+              problems: [reachability.reason]
+            }
+          );
+        }
+      }
+    }
+    result.set(gapRef, {
+      gapRefs,
+      gapRefSet: new Set(gapRefs),
+      routes,
+      routeKeys: new Set(routes.map(blockedRouteKey))
+    });
+  }
+  assertBlockerGraphAcyclic(graph, label);
+  return result;
+}
+
+function readExactBlockedGapRefs(gap, label) {
+  if (!Object.hasOwn(gap ?? {}, "blocksGapClosureRefs")) return [];
+  const value = gap.blocksGapClosureRefs;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw blockerInvalidError(
+      `${label} blocksGapClosureRefs must be a non-empty list.`,
+      { gapRef: readString(gap?.id) ?? null, label, problems: ["blocked-gap-list-invalid"] }
+    );
+  }
+  const references = value.map((rawReference) => {
+    const reference = readString(rawReference);
+    if (typeof rawReference !== "string" || reference !== rawReference) {
+      throw blockerInvalidError(
+        `${label} blocksGapClosureRefs entries must be exact non-empty Knowledge Gap ids.`,
+        { gapRef: readString(gap?.id) ?? null, label, problems: ["blocked-gap-ref-invalid"] }
+      );
+    }
+    return reference;
+  });
+  const duplicateRefs = duplicates(references);
+  if (duplicateRefs.length > 0) {
+    throw blockerInvalidError(
+      `${label} blocksGapClosureRefs must not repeat targets.`,
+      { gapRef: readString(gap?.id) ?? null, duplicateRefs, label, problems: ["blocked-gap-ref-duplicate"] }
+    );
+  }
+  return [...references].sort();
+}
+
+function readExactBlockedRoutes(gap, label) {
+  if (!Object.hasOwn(gap ?? {}, "blocksOutcomeTransitionRoutes")) return [];
+  const value = gap.blocksOutcomeTransitionRoutes;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw blockerInvalidError(
+      `${label} blocksOutcomeTransitionRoutes must be a non-empty list.`,
+      { gapRef: readString(gap?.id) ?? null, label, problems: ["blocked-route-list-invalid"] }
+    );
+  }
+  const routes = value.map((descriptor) => {
+    const keys = descriptor && typeof descriptor === "object" && !Array.isArray(descriptor)
+      ? Object.keys(descriptor).sort()
+      : [];
+    const route = {
+      outcomeRef: readString(descriptor?.outcomeRef),
+      from: readString(descriptor?.from),
+      to: readString(descriptor?.to)
+    };
+    if (keys.length !== 3
+      || keys[0] !== "from"
+      || keys[1] !== "outcomeRef"
+      || keys[2] !== "to"
+      || descriptor.outcomeRef !== route.outcomeRef
+      || descriptor.from !== route.from
+      || descriptor.to !== route.to
+      || !route.outcomeRef
+      || !route.from
+      || !route.to) {
+      throw blockerInvalidError(
+        `${label} blocked Outcome routes require only exact outcomeRef, from, and to strings.`,
+        { gapRef: readString(gap?.id) ?? null, label, problems: ["blocked-route-descriptor-invalid"] }
+      );
+    }
+    return route;
+  });
+  const duplicateRoutes = duplicates(routes.map(blockedRouteKey));
+  if (duplicateRoutes.length > 0) {
+    throw blockerInvalidError(
+      `${label} blocksOutcomeTransitionRoutes must not repeat routes.`,
+      { gapRef: readString(gap?.id) ?? null, duplicateRoutes, label, problems: ["blocked-route-duplicate"] }
+    );
+  }
+  return [...routes].sort((left, right) => blockedRouteKey(left).localeCompare(blockedRouteKey(right)));
+}
+
+function assertBlockerGraphAcyclic(graph, label) {
+  const visiting = new Set();
+  const visited = new Set();
+  const stack = [];
+  const visit = (gapRef) => {
+    if (visiting.has(gapRef)) {
+      const start = stack.indexOf(gapRef);
+      const cycle = [...stack.slice(start), gapRef];
+      throw blockerInvalidError(
+        `${label} Knowledge Gap blocker relations must be acyclic.`,
+        { gapRef, cycle, label, problems: ["blocker-cycle"] }
+      );
+    }
+    if (visited.has(gapRef)) return;
+    visiting.add(gapRef);
+    stack.push(gapRef);
+    for (const targetRef of graph.get(gapRef) ?? []) visit(targetRef);
+    stack.pop();
+    visiting.delete(gapRef);
+    visited.add(gapRef);
+  };
+  for (const gapRef of [...graph.keys()].sort()) visit(gapRef);
+}
+
+function deriveDeclaredBlockerGapRefs({
+  knowledgeGaps,
+  outcomeRef,
+  from,
+  to,
+  seedGapRefs,
+  baselineOpenOnly
+}) {
+  const candidates = asArray(knowledgeGaps).filter((gap) => (
+    !baselineOpenOnly || gap?.status === "open"
+  ));
+  const required = new Set(normalizeStringList(seedGapRefs));
+  for (const gap of candidates) {
+    if (asArray(gap?.blocksOutcomeTransitionRoutes).some((route) => (
+      route?.outcomeRef === outcomeRef && route?.from === from && route?.to === to
+    ))) {
+      const gapRef = readString(gap?.id);
+      if (gapRef) required.add(gapRef);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const gap of candidates) {
+      const gapRef = readString(gap?.id);
+      if (!gapRef || required.has(gapRef)) continue;
+      if (normalizeStringList(gap?.blocksGapClosureRefs)
+        .some((targetRef) => required.has(targetRef))) {
+        required.add(gapRef);
+        changed = true;
+      }
+    }
+  }
+  return [...required].sort();
+}
+
+function indexOutcomes(value) {
+  return new Map(asArray(value)
+    .map((outcome) => [readString(outcome?.id), outcome])
+    .filter(([outcomeRef]) => Boolean(outcomeRef)));
+}
+
+function blockedRouteKey(route) {
+  return `${route.outcomeRef}\u0000${route.from}\u0000${route.to}`;
+}
+
+function emptyBlockerRelations() {
+  return { gapRefs: [], gapRefSet: new Set(), routes: [], routeKeys: new Set() };
+}
+
+function blockerInvalidError(message, details) {
+  return transitionError("KNOWLEDGE_GAP_BLOCKER_RELATION_INVALID", message, details);
+}
+
+function blockerRewriteError(message, details) {
+  return transitionError("KNOWLEDGE_GAP_BLOCKER_REWRITE_FORBIDDEN", message, details);
+}
+
 function gapSemanticValue(gap) {
   return {
     id: readString(gap?.id) ?? null,
@@ -1652,6 +2107,28 @@ function assertGapClosureDeltasCovered({ baselineGaps, currentGaps, appendedTran
       "OUTCOME_TRANSITION_GAP_UNRESOLVED",
       "Every Knowledge Gap closure delta must be consumed by an exact compiled Outcome Transition.",
       { unboundGapRefs, problems: ["gap-closure-transition-unbound"] }
+    );
+  }
+  const unboundBlockedGapRefs = [...baselineGaps].flatMap(([sourceRef, frozenSource]) => {
+    if (frozenSource?.status !== "open") return [];
+    return normalizeStringList(frozenSource?.blocksGapClosureRefs).flatMap((targetRef) => {
+      const frozenTarget = baselineGaps.get(targetRef);
+      const currentTarget = currentGaps.get(targetRef);
+      return frozenTarget?.status === "open"
+        && currentTarget?.status === "closed"
+        && !coveredGapRefs.has(targetRef)
+        ? [{ sourceRef, targetRef }]
+        : [];
+    });
+  });
+  if (unboundBlockedGapRefs.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      "A baseline-open blocked Gap can close only as an exact compiler-derived disposition of an appended Outcome Transition.",
+      {
+        unboundBlockedGapRefs,
+        problems: ["blocked-gap-closure-transition-unbound"]
+      }
     );
   }
 }
