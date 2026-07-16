@@ -65,6 +65,84 @@ test("plan alignment injects only an active Outcome into bounded Context", async
   }]);
 });
 
+test("Outcome alignment inputs are subject-bound and preserved in the Accepted Package", async () => {
+  const fixture = await createFixture();
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const firstHints = [{ outcomeRef: "LGT-900", criterionRefs: ["LGT-900-C1"] }];
+  const secondHints = [{ outcomeRef: "LGT-900", criterionRefs: ["LGT-900-C2"] }];
+  const firstExceptions = [{
+    outcomeRef: "LGT-901",
+    reason: "The fixture has no honest Criterion mapping yet.",
+    residualUncertainty: "This entry grants no Outcome progress."
+  }];
+  const secondExceptions = [{
+    outcomeRef: "LGT-901",
+    reason: "The caller revised the non-progress exception.",
+    residualUncertainty: "Plan authority must still decide it."
+  }];
+  const change = await kernel.createChange({
+    title: "Bind Outcome alignment input",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }],
+    outcomeContributionHints: firstHints,
+    outcomeExceptions: firstExceptions,
+    knowledgeClosure: {
+      status: "complete",
+      noNewKnowledge: true,
+      rationale: "The fixture Change introduces no future-relevant project knowledge."
+    }
+  });
+  assert.deepEqual(change.compilerInput.outcomeContributionHints, firstHints);
+  assert.deepEqual(change.compilerInput.outcomeExceptions, firstExceptions);
+
+  const compiled = await kernel.compileChange(change.id);
+  assert.equal(compiled.outcomeAlignment, null);
+  const firstGate = await kernel.runGate(change.id);
+  const firstSubjectDigest = firstGate.gateRuns
+    .find((entry) => entry.gateId === "minimum")
+    .verificationSubjectDigest;
+
+  const recompiled = await kernel.compileChange(change.id, {
+    outcomeContributionHints: secondHints
+  });
+  assert.equal(recompiled.state, "Submitted");
+  assert.deepEqual(recompiled.compilerInput.outcomeContributionHints, secondHints);
+  assert.deepEqual(recompiled.compilerInput.outcomeExceptions, firstExceptions);
+  const stale = await kernel.getChange(change.id);
+  assert.deepEqual(stale.readiness.missingOrStaleGateIds, ["project-model", "minimum"]);
+
+  const secondGate = await kernel.runGate(change.id);
+  const secondSubjectDigest = secondGate.gateRuns
+    .find((entry) => entry.gateId === "minimum")
+    .verificationSubjectDigest;
+  assert.notEqual(secondSubjectDigest, firstSubjectDigest);
+
+  const exceptionRecompiled = await kernel.compileChange(change.id, {
+    outcomeExceptions: secondExceptions
+  });
+  assert.equal(exceptionRecompiled.state, "Submitted");
+  assert.deepEqual(exceptionRecompiled.compilerInput.outcomeExceptions, secondExceptions);
+  const exceptionStale = await kernel.getChange(change.id);
+  assert.deepEqual(exceptionStale.readiness.missingOrStaleGateIds, ["project-model", "minimum"]);
+  const thirdGate = await kernel.runGate(change.id);
+  const thirdSubjectDigest = thirdGate.gateRuns
+    .find((entry) => entry.gateId === "minimum")
+    .verificationSubjectDigest;
+  assert.notEqual(thirdSubjectDigest, secondSubjectDigest);
+
+  const accepted = await kernel.acceptChange(change.id, {
+    authority: "project-maintainer",
+    decidedBy: "maintainer@example.test",
+    decisionType: "case-decision",
+    status: "approved",
+    rationale: "The exact Outcome alignment input and governed behavior are acceptance-bound."
+  });
+  assert.equal(accepted.acceptance.package.outcomeAlignmentSchemaVersion, 1);
+  assert.deepEqual(accepted.acceptance.package.outcomeContributionHints, secondHints);
+  assert.deepEqual(accepted.acceptance.package.outcomeExceptions, secondExceptions);
+  assert.equal(accepted.acceptance.package.outcomeAlignment, null);
+});
+
 test("integrity maintenance requires content-exact failed Evidence and Plan authority", async () => {
   const fixture = await createFixture();
   await enablePlanPolicy(fixture.repoPath);

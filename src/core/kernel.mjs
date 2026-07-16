@@ -27,6 +27,7 @@ import {
 } from "./project-model.mjs";
 
 const CHANGE_SCHEMA_VERSION = 1;
+const OUTCOME_ALIGNMENT_SCHEMA_VERSION = 1;
 const STATES = ["Candidate", "Submitted", "EvidenceReady", "Accepted", "Integrated"];
 
 export function createKernel({ repoPath, clock, commandRunner } = {}) {
@@ -123,6 +124,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       changeKind: readString(input.changeKind) ?? "implementation",
       planRefs: normalizeStringList(input.planRefs ?? input.planRef),
       integrityTarget: cloneJson(input.integrityTarget ?? null),
+      outcomeAlignmentSchemaVersion: OUTCOME_ALIGNMENT_SCHEMA_VERSION,
+      outcomeAlignment: null,
       claims,
       verificationObligations: normalizeVerificationObligations(input.verificationObligations, claims),
       verificationPlan: null,
@@ -139,7 +142,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       compilerInput: {
         verificationObligations: cloneJson(input.verificationObligations ?? []),
         impact: cloneJson(input.impact ?? null),
-        contextCapsule: cloneJson(input.contextCapsule ?? null)
+        contextCapsule: cloneJson(input.contextCapsule ?? null),
+        outcomeContributionHints: cloneJson(input.outcomeContributionHints ?? []),
+        outcomeExceptions: cloneJson(input.outcomeExceptions ?? [])
       },
       projectModelDigest: inspection.digest,
       governanceBaseline,
@@ -618,8 +623,12 @@ function applyCompilePatch(change, patch, observedAt) {
   next.compilerInput ??= {
     verificationObligations: cloneJson(next.verificationObligations ?? []),
     impact: null,
-    contextCapsule: null
+    contextCapsule: null,
+    outcomeContributionHints: [],
+    outcomeExceptions: []
   };
+  next.compilerInput.outcomeContributionHints ??= [];
+  next.compilerInput.outcomeExceptions ??= [];
   if (patch.intent && typeof patch.intent === "object") {
     next.intent = { ...next.intent, ...cloneJson(patch.intent) };
   }
@@ -650,6 +659,16 @@ function applyCompilePatch(change, patch, observedAt) {
   }
   if (patch.impact !== undefined) next.compilerInput.impact = cloneJson(patch.impact);
   if (patch.contextCapsule !== undefined) next.compilerInput.contextCapsule = cloneJson(patch.contextCapsule);
+  if (patch.outcomeContributionHints !== undefined) {
+    next.compilerInput.outcomeContributionHints = cloneJson(patch.outcomeContributionHints);
+  }
+  if (patch.outcomeExceptions !== undefined) {
+    next.compilerInput.outcomeExceptions = cloneJson(patch.outcomeExceptions);
+  }
+  if (patch.outcomeContributionHints !== undefined || patch.outcomeExceptions !== undefined) {
+    next.outcomeAlignmentSchemaVersion = OUTCOME_ALIGNMENT_SCHEMA_VERSION;
+    next.outcomeAlignment ??= null;
+  }
   if (patch.authorityDecision !== undefined) {
     next.authorityDecision = normalizeAuthorityDecision(patch.authorityDecision, observedAt);
   }
@@ -1146,6 +1165,7 @@ function createAcceptedPackageContent(change) {
     changeKind: change.changeKind ?? "implementation",
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
+    ...readOutcomeAlignmentFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1175,6 +1195,7 @@ function createVerificationSubject(change) {
     changeKind: change.changeKind ?? "implementation",
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
+    ...readOutcomeAlignmentFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1189,6 +1210,16 @@ function createVerificationSubject(change) {
       git: change.currentGit
     }
   };
+}
+
+function readOutcomeAlignmentFields(change) {
+  if (change.outcomeAlignmentSchemaVersion !== OUTCOME_ALIGNMENT_SCHEMA_VERSION) return {};
+  return cloneJson({
+    outcomeAlignmentSchemaVersion: OUTCOME_ALIGNMENT_SCHEMA_VERSION,
+    outcomeContributionHints: change.compilerInput?.outcomeContributionHints ?? [],
+    outcomeExceptions: change.compilerInput?.outcomeExceptions ?? [],
+    outcomeAlignment: change.outcomeAlignment ?? null
+  });
 }
 
 function verificationSubjectDigest(change) {

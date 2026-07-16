@@ -11,6 +11,7 @@
     "invariants": [
       "Workers and submitted Evidence cannot ratify their own output.",
       "Acceptance binds exact governance, repository content, Evidence, Closure, and authority.",
+      "Outcome alignment inputs and compiler-produced alignment are bound into the Verification Subject and Accepted Change Package.",
       "Integration requires current full assurance when policy demands it."
     ]
   },
