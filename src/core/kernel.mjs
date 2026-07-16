@@ -25,9 +25,15 @@ import {
   publicProjectModel,
   validateProjectModel
 } from "./project-model.mjs";
+import {
+  OUTCOME_TRANSITION_SCHEMA_VERSION,
+  compileOutcomeTransitions,
+  inspectAcceptedPackageRecord
+} from "./outcome-transitions.mjs";
 
 const CHANGE_SCHEMA_VERSION = 1;
 const OUTCOME_ALIGNMENT_SCHEMA_VERSION = 1;
+const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const STATES = ["Candidate", "Submitted", "EvidenceReady", "Accepted", "Integrated"];
 
 export function createKernel({ repoPath, clock, commandRunner } = {}) {
@@ -85,6 +91,46 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     assertPlanHistoryPreserved(change, currentPlan);
   }
 
+  async function deriveCurrentOutcomeTransitions(change, currentModel) {
+    const catalog = assertPriorAcceptedPackageCatalog(change.priorAcceptedPackages, {
+      required: change.changeKind === "plan-amendment"
+    });
+    const resolvedPackages = catalog
+      ? (await Promise.all(catalog.entries.map((entry) => store.get(entry.changeId)))).filter(Boolean)
+      : [];
+    return compileOutcomeTransitions({
+      change,
+      governanceBaseline: readGovernanceBaseline(change),
+      currentModel,
+      resolvedPackages,
+      priorAcceptedPackages: catalog
+    });
+  }
+
+  async function assertCurrentOutcomeTransitions(change, currentModel) {
+    if (change.outcomeTransitionSchemaVersion !== OUTCOME_TRANSITION_SCHEMA_VERSION
+      || !change.outcomeTransitionCompilation) {
+      throw kernelError(
+        "OUTCOME_TRANSITION_COMPILATION_STALE",
+        "Compile the Outcome Transition projection before running Gates or accepting the Change.",
+        409
+      );
+    }
+    const expected = await deriveCurrentOutcomeTransitions(change, currentModel);
+    if (canonicalDigest(expected) !== canonicalDigest(change.outcomeTransitionCompilation)) {
+      throw kernelError(
+        "OUTCOME_TRANSITION_COMPILATION_STALE",
+        "Outcome Transition proof no longer matches the frozen catalog, current Plan, or resolved Accepted Packages.",
+        409,
+        {
+          expectedDigest: canonicalDigest(expected),
+          observedDigest: canonicalDigest(change.outcomeTransitionCompilation)
+        }
+      );
+    }
+    return expected;
+  }
+
   async function createChange(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw kernelError("CHANGE_INPUT_INVALID", "createChange input must be an object.", 400);
@@ -109,6 +155,12 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     const claims = normalizeClaims(input.claims ?? input.claim);
     const evidence = normalizeEvidenceList(input.evidence);
     const governanceBaseline = freezeGovernanceBaseline(inspection);
+    const priorAcceptedPackages = freezePriorAcceptedPackageCatalog({
+      records: await store.list(),
+      createdAt,
+      repoPath: resolvedRepoPath,
+      governanceBaseline
+    });
     const change = {
       schemaVersion: CHANGE_SCHEMA_VERSION,
       id,
@@ -126,6 +178,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       integrityTarget: cloneJson(input.integrityTarget ?? null),
       outcomeAlignmentSchemaVersion: OUTCOME_ALIGNMENT_SCHEMA_VERSION,
       outcomeAlignment: null,
+      outcomeTransitionSchemaVersion: OUTCOME_TRANSITION_SCHEMA_VERSION,
+      priorAcceptedPackages,
+      outcomeTransitionCompilation: null,
       claims,
       verificationObligations: normalizeVerificationObligations(input.verificationObligations, claims),
       verificationPlan: null,
@@ -174,10 +229,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     const { changeId, patch } = readChangePatch(idOrInput, optionalPatch);
     let change = await requireChange(changeId);
     change = await refreshChange(change);
-    if (change.state === "Accepted" || change.state === "Integrated") {
+    if (change.acceptance || change.state === "Accepted" || change.state === "Integrated") {
       throw kernelError(
         "CHANGE_SEALED",
-        `Change ${change.id} is ${change.state}; an Accepted Change Package cannot be recompiled.`,
+        `Change ${change.id} has historical acceptance; an Accepted Package is immutable and follow-up work requires a new Change.`,
         409
       );
     }
@@ -191,6 +246,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     change = compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
     await observeCurrentChangeScope(change, inspection.git, inspection.plan);
+    change.outcomeTransitionSchemaVersion = OUTCOME_TRANSITION_SCHEMA_VERSION;
+    change.outcomeTransitionCompilation = await deriveCurrentOutcomeTransitions(change, inspection);
     if (patch.authorityDecision !== undefined) bindAuthorityDecision(change);
     transition(change, "Submitted", now(), "Change compiled with explicit Claims.");
     deriveEvidenceReady(change, inspection, now());
@@ -208,6 +265,13 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (!change.compilation) {
       throw kernelError("CHANGE_NOT_COMPILED", "Compile the Change before running Gates.", 409);
     }
+    if (change.acceptance && change.state !== "Accepted") {
+      throw kernelError(
+        "CHANGE_SEALED",
+        "A historically Accepted Package cannot be replaced; create a follow-up Change.",
+        409
+      );
+    }
     const inspection = await inspectProject();
     const observedAt = now();
     const model = await loadProjectModel(resolvedRepoPath);
@@ -219,6 +283,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     await observeCurrentChangeScope(change, inspection.git, model.plan);
     assertIntegrityFailureEvidenceCurrent(change);
+    if (change.state !== "Accepted" && validation.valid) {
+      await assertCurrentOutcomeTransitions(change, model);
+    }
     if (change.state === "Accepted") {
       if (!validation.valid) {
         throw kernelError("PROJECT_MODEL_INVALID", "The current Project Model is invalid.", 422, validation);
@@ -330,6 +397,13 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         { invalidationReason: change.acceptance.invalidationReason ?? null }
       );
     }
+    if (change.acceptance && !(change.state === "Accepted" && request.integrate === true)) {
+      throw kernelError(
+        "CHANGE_SEALED",
+        "A historically Accepted Package cannot be replaced; create a follow-up Change.",
+        409
+      );
+    }
 
     if (request.authorityDecision !== undefined) {
       change.authorityDecision = normalizeAuthorityDecision(request.authorityDecision, now());
@@ -369,6 +443,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     assertOutcomeExceptionBinding(change);
     assertCompiledChangeCurrent(change);
+    await assertCurrentOutcomeTransitions(change, inspection);
     const expectedAuthorities = readExpectedAuthorities(readGovernanceBaseline(change), change);
     const authorityValidation = validateAuthorityDecision(
       change.authorityDecision,
@@ -393,15 +468,16 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
 
     const packageContent = createAcceptedPackageContent(change);
     const digest = canonicalDigest(packageContent);
+    const acceptedAt = now();
     change.acceptance = {
       valid: true,
       digest,
-      acceptedAt: now(),
+      acceptedAt,
       projectModelDigest: inspection.digest,
       gitContentDigest: inspection.git.contentDigest,
       package: packageContent
     };
-    transition(change, "Accepted", now(), "Evidence, Knowledge Closure, and Authority Decision accepted.", digest);
+    transition(change, "Accepted", acceptedAt, "Evidence, Knowledge Closure, and Authority Decision accepted.", digest);
     if (request.integrate === true) {
       assertIntegrationAllowed(change, inspection);
       transition(change, "Integrated", now(), "Accepted Change Package marked integrated.");
@@ -1352,6 +1428,7 @@ function createAcceptedPackageContent(change) {
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
     ...readOutcomeAlignmentFields(change),
+    ...readOutcomeTransitionFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1382,6 +1459,7 @@ function createVerificationSubject(change) {
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
     ...readOutcomeAlignmentFields(change),
+    ...readOutcomeTransitionFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1408,6 +1486,15 @@ function readOutcomeAlignmentFields(change) {
   });
 }
 
+function readOutcomeTransitionFields(change) {
+  if (change.outcomeTransitionSchemaVersion !== OUTCOME_TRANSITION_SCHEMA_VERSION) return {};
+  return cloneJson({
+    outcomeTransitionSchemaVersion: OUTCOME_TRANSITION_SCHEMA_VERSION,
+    priorAcceptedPackages: change.priorAcceptedPackages ?? null,
+    outcomeTransitionCompilation: change.outcomeTransitionCompilation ?? null
+  });
+}
+
 function verificationSubjectDigest(change) {
   return canonicalDigest(createVerificationSubject(change));
 }
@@ -1426,6 +1513,114 @@ function freezeGovernanceBaseline(inspection) {
     files: inspection.files
   };
   return cloneJson({ ...snapshot, digest: canonicalDigest(snapshot) });
+}
+
+function freezePriorAcceptedPackageCatalog({ records, createdAt, repoPath, governanceBaseline }) {
+  const entries = [];
+  const seenChangeIds = new Set();
+  for (const record of Array.isArray(records) ? records : []) {
+    const claimsHistoricalAcceptance = Boolean(record?.acceptance)
+      || ["Accepted", "Integrated"].includes(record?.state)
+      || (Array.isArray(record?.history) && record.history.some((event) => event?.to === "Accepted"));
+    if (!claimsHistoricalAcceptance) continue;
+    const inspection = inspectAcceptedPackageRecord(record);
+    if (!inspection.valid) {
+      throw kernelError(
+        "ACCEPTED_PACKAGE_CATALOG_INVALID",
+        `Cannot freeze Candidate history because Change ${record?.id ?? "unknown"} claims an invalid Accepted Package.`,
+        409,
+        { changeId: record?.id ?? null, problems: inspection.problems }
+      );
+    }
+    if (Date.parse(inspection.acceptedAt) > Date.parse(createdAt)) {
+      throw kernelError(
+        "ACCEPTED_PACKAGE_CATALOG_INVALID",
+        `Accepted Package ${record.id} is dated after the Candidate creation instant.`,
+        409,
+        { changeId: record.id, acceptedAt: inspection.acceptedAt, createdAt }
+      );
+    }
+    const packageContent = inspection.package;
+    const sameRepository = readString(packageContent?.repoPath)
+      && path.resolve(packageContent.repoPath) === path.resolve(repoPath);
+    const sameProject = readProjectId(packageContent?.governanceBaseline)
+      === readProjectId(governanceBaseline);
+    const samePlan = readString(packageContent?.governanceBaseline?.plan?.id)
+      === readString(governanceBaseline?.plan?.id);
+    if (!sameRepository || !sameProject || !samePlan) continue;
+    if (seenChangeIds.has(inspection.reference.changeId)) {
+      throw kernelError(
+        "ACCEPTED_PACKAGE_CATALOG_INVALID",
+        `Accepted Package history contains duplicate reference ${inspection.reference.changeId}.`,
+        409,
+        { reference: inspection.reference }
+      );
+    }
+    seenChangeIds.add(inspection.reference.changeId);
+    entries.push(inspection.reference);
+  }
+  entries.sort(comparePackageReferences);
+  const snapshot = { schemaVersion: 1, entries };
+  return cloneJson({ ...snapshot, digest: canonicalDigest(snapshot) });
+}
+
+function assertPriorAcceptedPackageCatalog(value, { required = false } = {}) {
+  if (value === undefined || value === null) {
+    if (!required) return null;
+    throw kernelError(
+      "OUTCOME_TRANSITION_PACKAGE_NOT_PRIOR",
+      "A plan-amendment requires the Accepted Package catalog frozen when its Candidate was created.",
+      409
+    );
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || value.schemaVersion !== 1 || !Array.isArray(value.entries)
+    || Object.keys(value).some((key) => !["schemaVersion", "entries", "digest"].includes(key))) {
+    throw kernelError(
+      "ACCEPTED_PACKAGE_CATALOG_INVALID",
+      "The Candidate's frozen Accepted Package catalog has an invalid schema.",
+      409
+    );
+  }
+  const entries = [];
+  const seenChangeIds = new Set();
+  for (const reference of value.entries) {
+    const changeId = readString(reference?.changeId);
+    const acceptanceDigest = readString(reference?.acceptanceDigest);
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)
+      || Object.keys(reference).some((field) => !["changeId", "acceptanceDigest"].includes(field))
+      || !changeId || !DIGEST_PATTERN.test(acceptanceDigest ?? "") || seenChangeIds.has(changeId)) {
+      throw kernelError(
+        "ACCEPTED_PACKAGE_CATALOG_INVALID",
+        "The Candidate's frozen Accepted Package catalog contains an invalid or duplicate reference.",
+        409,
+        { reference }
+      );
+    }
+    seenChangeIds.add(changeId);
+    entries.push({ changeId, acceptanceDigest });
+  }
+  entries.sort(comparePackageReferences);
+  const snapshot = { schemaVersion: 1, entries };
+  if (canonicalDigest(snapshot) !== value.digest
+    || canonicalDigest(entries) !== canonicalDigest(value.entries)) {
+    throw kernelError(
+      "ACCEPTED_PACKAGE_CATALOG_INVALID",
+      "The Candidate's frozen Accepted Package catalog is not canonical or does not match its digest.",
+      409
+    );
+  }
+  return cloneJson(value);
+}
+
+function comparePackageReferences(left, right) {
+  return left.changeId.localeCompare(right.changeId)
+    || left.acceptanceDigest.localeCompare(right.acceptanceDigest);
+}
+
+function readProjectId(value) {
+  return readString(value?.projectDocument?.project?.id)
+    ?? readString(value?.project?.id);
 }
 
 function readGovernanceBaseline(change) {

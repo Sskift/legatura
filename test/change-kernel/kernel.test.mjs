@@ -303,16 +303,25 @@ test("integrity maintenance requires content-exact failed Evidence and Plan auth
 test("plan amendments preserve history, isolate implementation, and use Plan authority", async () => {
   const fixture = await createFixture();
   await enablePlanPolicy(fixture.repoPath);
-  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const kernel = createKernel({ repoPath: fixture.repoPath, clock: monotonicClock() });
 
   const planPath = path.join(fixture.repoPath, ".legatura/plan.json");
   const plan = JSON.parse(await readFile(planPath, "utf8"));
+  const proofA = await acceptTransitionProof(kernel, "transition-proof-a");
   const historyChange = await kernel.createChange({
     title: "Preserve permanent Outcome identity across amendments",
     changeKind: "plan-amendment",
     primaryModule: "core",
     claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
   });
+  const frozenCatalog = structuredClone(historyChange.priorAcceptedPackages);
+  assert.deepEqual(frozenCatalog.entries, [proofA.reference]);
+  assert.equal(
+    frozenCatalog.digest,
+    canonicalDigest({ schemaVersion: 1, entries: [proofA.reference] })
+  );
+  const proofB = await acceptTransitionProof(kernel, "transition-proof-b");
+  assert.deepEqual((await kernel.getChange(historyChange.id)).priorAcceptedPackages, frozenCatalog);
   assert.deepEqual(readExpectedAuthorities(historyChange.governanceBaseline, historyChange), ["project-maintainer"]);
   const renamedPlan = JSON.parse(JSON.stringify(plan));
   renamedPlan.outcomes.find((outcome) => outcome.id === "LGT-901").id = "LGT-902";
@@ -376,17 +385,58 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   );
   await writeJson(planPath, plan);
 
-  const amendedPlan = JSON.parse(JSON.stringify(plan));
-  amendedPlan.northStar = `${amendedPlan.northStar} Plan amendment under review.`;
+  const transitionPlan = (packageRef) => {
+    const next = structuredClone(plan);
+    next.outcomes.find((outcome) => outcome.id === "LGT-903").status = "achieved";
+    next.outcomeTransitions = [{
+      id: "LGT-903-T1",
+      outcomeRef: "LGT-903",
+      from: "active",
+      to: "achieved",
+      rationale: "The stable fixture Criterion has exact prior Accepted Package Evidence.",
+      packageRefs: [structuredClone(packageRef)],
+      criterionAssessments: [{
+        criterionRef: "LGT-903-C1",
+        authorityAssessment: {
+          conclusion: "satisfied",
+          rationale: "The prior Minimum Gate directly rejects incorrect governed fixture behavior.",
+          residualUncertainty: "The synthetic fixture covers only its declared behavior boundary."
+        }
+      }],
+      gapDispositions: []
+    }];
+    return next;
+  };
+
+  const unresolvedPlan = structuredClone(plan);
+  unresolvedPlan.outcomes.find((outcome) => outcome.id === "LGT-903").status = "achieved";
+  await writeJson(planPath, unresolvedPlan);
+  const unresolved = await kernel.compileChange(historyChange.id);
+  assert.equal(unresolved.outcomeTransitionCompilation.mode, "declared");
+  assert.equal(unresolved.outcomeTransitionCompilation.status, "unresolved");
+  assert.deepEqual(unresolved.outcomeTransitionCompilation.unresolved, [{
+    outcomeRef: "LGT-903",
+    from: "active",
+    to: "achieved",
+    reason: "status-delta-has-no-appended-transition"
+  }]);
+
+  await writeJson(planPath, transitionPlan(proofB.reference));
+  await assert.rejects(
+    kernel.compileChange(historyChange.id),
+    (error) => error.code === "OUTCOME_TRANSITION_PACKAGE_NOT_PRIOR"
+  );
+
+  const amendedPlan = transitionPlan(proofA.reference);
   await writeJson(planPath, amendedPlan);
-  const planCompiled = await kernel.compileChange(historyChange.id, {
+  const compilePatch = {
     knowledgeClosure: {
       status: "complete",
       entries: [{
         kind: "model-amendment",
         refs: [".legatura/plan.json"],
-        statement: "The fixture Development Plan records an independently reviewed clarification.",
-        rationale: "Future Changes must inherit the clarified North Star from durable project truth."
+        statement: "The fixture Development Plan records an Evidence-bound achieved Outcome Transition.",
+        rationale: "Future Changes inherit both the terminal status and its append-only proof history."
       }]
     },
     authorityDecision: {
@@ -394,11 +444,35 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
       authority: "project-maintainer",
       decidedBy: "maintainer@example.test",
       decisionType: "normative-amendment",
-      rationale: "Approve the isolated Development Plan clarification.",
+      rationale: "Approve the isolated Development Plan Transition from exact prior Evidence.",
       amendmentRefs: [".legatura/plan.json"]
     }
-  });
+  };
+  let planCompiled = await kernel.compileChange(historyChange.id, compilePatch);
   assert.equal(planCompiled.state, "Submitted");
+  assert.equal(planCompiled.outcomeTransitionCompilation.status, "complete");
+  assert.equal(planCompiled.outcomeTransitionCompilation.priorAcceptedPackagesDigest, frozenCatalog.digest);
+  const compiledProof = planCompiled.outcomeTransitionCompilation.appendedTransitions[0]
+    .criterionProofs[0].packages[0];
+  assert.deepEqual(
+    { changeId: compiledProof.changeId, acceptanceDigest: compiledProof.acceptanceDigest },
+    proofA.reference
+  );
+  assert.ok(compiledProof.evidenceBindings.length > 0);
+
+  const candidateRecordPath = path.join(
+    fixture.repoPath,
+    ".legatura/runtime/changes",
+    `${historyChange.id}.json`
+  );
+  const forgedProjection = JSON.parse(await readFile(candidateRecordPath, "utf8"));
+  forgedProjection.outcomeTransitionCompilation.status = "forged";
+  await writeJson(candidateRecordPath, forgedProjection);
+  await assert.rejects(
+    kernel.runGate(historyChange.id, "minimum"),
+    (error) => error.code === "OUTCOME_TRANSITION_COMPILATION_STALE"
+  );
+  planCompiled = await kernel.compileChange(historyChange.id, compilePatch);
   const planGate = await kernel.runGate(historyChange.id, "minimum");
   assert.equal(planGate.change.state, "EvidenceReady");
 
@@ -409,8 +483,34 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
       && error.details.implementationPaths.includes("src/index.mjs")
   );
   await writeFile(path.join(fixture.repoPath, "src/index.mjs"), "export const value = true;\n");
+
+  const proofRecordPath = path.join(
+    fixture.repoPath,
+    ".legatura/runtime/changes",
+    `${proofA.change.id}.json`
+  );
+  const sealedProofText = await readFile(proofRecordPath, "utf8");
+  const tamperedProof = JSON.parse(sealedProofText);
+  tamperedProof.acceptance.package.evidence
+    .find((item) => item.directSupportBindings?.some((binding) => binding.claimId === "behavior-correct"))
+    .observation.status = "failed";
+  await writeJson(proofRecordPath, tamperedProof);
+  await assert.rejects(
+    kernel.acceptChange(historyChange.id),
+    (error) => error.code === "OUTCOME_TRANSITION_PACKAGE_SEAL_INVALID"
+  );
+  await writeFile(proofRecordPath, sealedProofText);
+
   const acceptedPlan = await kernel.acceptChange(historyChange.id);
   assert.equal(acceptedPlan.state, "Accepted");
+  assert.deepEqual(acceptedPlan.acceptance.package.priorAcceptedPackages, frozenCatalog);
+  assert.deepEqual(
+    acceptedPlan.acceptance.package.outcomeTransitionCompilation,
+    planCompiled.outcomeTransitionCompilation
+  );
+  assert.equal(acceptedPlan.acceptance.acceptedAt, acceptedPlan.history.find((entry) => (
+    entry.to === "Accepted" && entry.digest === acceptedPlan.acceptance.digest
+  )).at);
 });
 
 test("minimum Gate execution selects only commands for the primary Module", async () => {
@@ -630,6 +730,10 @@ test("repository content changes invalidate the exact Accepted Change Package", 
   assert.equal(invalidated.acceptance.valid, false);
   assert.equal(invalidated.state, "Submitted");
   assert.match(invalidated.acceptance.invalidationReason, /content changed/iu);
+  await assert.rejects(
+    kernel.compileChange(change.id),
+    (error) => error.code === "CHANGE_SEALED"
+  );
 });
 
 test("incomplete Evidence is rejected instead of becoming assurance material", async () => {
@@ -734,6 +838,7 @@ async function enablePlanPolicy(repoPath) {
   project.authorities.decision.push({ id: "module-maintainer", may: ["case-decision", "normative-amendment"] });
   project.changePolicy.requirePlanRefs = true;
   project.changePolicy.outcomeAlignmentMode = "declared";
+  project.changePolicy.outcomeTransitionMode = "declared";
   project.changePolicy.outcomeCriterionSelection = "unique-claim-match-or-explicit-hint";
   await writeJson(projectPath, project);
   const modulePath = path.join(repoPath, ".legatura/modules/core.json");
@@ -749,7 +854,7 @@ async function enablePlanPolicy(repoPath) {
       id: "S1",
       name: "Fixture Stage",
       status: "active",
-      outcomeRefs: ["LGT-897", "LGT-898", "LGT-900", "LGT-901", "LGT-999"]
+      outcomeRefs: ["LGT-897", "LGT-898", "LGT-900", "LGT-901", "LGT-903", "LGT-999"]
     }],
     outcomes: [
       {
@@ -835,6 +940,24 @@ async function enablePlanPolicy(repoPath) {
         }
       },
       {
+        id: "LGT-903",
+        stage: "S1",
+        status: "active",
+        outcome: "A single stable fixture Criterion can be achieved only from prior exact Evidence.",
+        dependsOn: [],
+        acceptance: {
+          claimRefs: ["behavior-correct"],
+          gapRefs: [],
+          exitCriteria: ["The exact governed fixture behavior is proven by a prior Accepted Package."],
+          criteria: [{
+            id: "LGT-903-C1",
+            statement: "The exact governed fixture behavior is proven by a prior Accepted Package.",
+            claimRefs: ["behavior-correct"],
+            gapRefs: []
+          }]
+        }
+      },
+      {
         id: "LGT-999",
         stage: "S1",
         status: "active",
@@ -852,6 +975,34 @@ async function enablePlanPolicy(repoPath) {
   });
   await git(repoPath, "add", ".legatura/project.json", ".legatura/plan.json", ".legatura/modules/core.json");
   await git(repoPath, "commit", "-qm", "enable plan policy");
+}
+
+async function acceptTransitionProof(kernel, id) {
+  const change = await kernel.createChange({
+    id,
+    title: `Prove the stable Transition fixture with ${id}`,
+    primaryModule: "core",
+    planRefs: ["LGT-903"],
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }],
+    knowledgeClosure: {
+      status: "complete",
+      noNewKnowledge: true,
+      rationale: "The fixture Package adds bounded behavioral Evidence without changing durable project knowledge."
+    }
+  });
+  await kernel.compileChange(change.id);
+  await kernel.runGate(change.id, "minimum");
+  const accepted = await kernel.acceptChange(change.id, {
+    authority: "module-maintainer",
+    decidedBy: "maintainer@example.test",
+    decisionType: "case-decision",
+    status: "approved",
+    rationale: "The exact fixture behavior is supported by the bound Minimum Gate Evidence."
+  });
+  return {
+    change: accepted,
+    reference: { changeId: accepted.id, acceptanceDigest: accepted.acceptance.digest }
+  };
 }
 
 function createIntegrityFailureEvidence({ id = "integrity-failure-observation", status = "failed" } = {}) {

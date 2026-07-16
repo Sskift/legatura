@@ -101,21 +101,27 @@ test("tampering with an Accepted Change Package invalidates reads and cannot be 
   assert.equal(invalidatedOnRead.acceptance.valid, false);
   assert.notEqual(invalidatedOnRead.state, "Accepted");
   assert.notEqual(invalidatedOnRead.state, "Integrated");
+  await assert.rejects(
+    kernel.createChange({ title: "Do not build on corrupted Accepted history" }),
+    (error) => error.code === "ACCEPTED_PACKAGE_CATALOG_INVALID"
+  );
 
+  const integrationFixture = await createFixture(t);
+  const integrationKernel = createKernel({ repoPath: integrationFixture.repoPath });
   const integrationAttackId = "accepted-package-integration-attack";
-  await createAcceptedChange(kernel, integrationAttackId);
-  await mutateRuntimeChange(fixture.repoPath, integrationAttackId, forgeAcceptedPackage);
+  await createAcceptedChange(integrationKernel, integrationAttackId);
+  await mutateRuntimeChange(integrationFixture.repoPath, integrationAttackId, forgeAcceptedPackage);
 
   let integrationError;
   try {
-    await kernel.acceptChange(integrationAttackId, { integrate: true });
+    await integrationKernel.acceptChange(integrationAttackId, { integrate: true });
   } catch (error) {
     integrationError = error;
   }
   if (integrationError) {
     assert.equal(integrationError.code, "ACCEPTANCE_INVALID");
   }
-  const afterIntegrationAttack = await kernel.getChange(integrationAttackId);
+  const afterIntegrationAttack = await integrationKernel.getChange(integrationAttackId);
   assert.equal(
     afterIntegrationAttack.acceptance.valid,
     false,
