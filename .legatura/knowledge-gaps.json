@@ -58,11 +58,22 @@
     },
     {
       "id": "outcome-transition-evidence-not-machine-bound",
-      "status": "open",
+      "status": "closed",
       "affects": ["project-model", "change-kernel"],
       "owner": "governance-maintainer",
-      "statement": "Development Outcome activation, achievement, and conditional activation are normative plan edits but are not yet machine-bound to exact Evidence for their transition criteria.",
-      "expansionTrigger": "Before any post-bootstrap Outcome can become achieved or a conditional Outcome can become active."
+      "statement": "Development Outcome activation, achievement, and conditional activation now compile from a Candidate-frozen catalog of prior sealed Accepted Packages, exact Contribution and Gate Evidence bindings, closed Gap dispositions, and explicit Plan-authority Criterion assessments.",
+      "resolution": "The Project Model owns deterministic route and proof sufficiency semantics; the Kernel freezes and content-addresses the prior Package catalog, resolves Store records, binds the compiler projection into the Verification Subject and Accepted Package, and re-runs resolution before Gates and acceptance. Declared mode remains observable for adopters, while this repository enforces missing or incomplete Transitions.",
+      "closedBy": [
+        {
+          "changeId": "lgt010-enforce-outcome-transitions",
+          "acceptanceDigest": "sha256:2b3cf24e765f2d260e4fa9853cd7ca9354946bfe2026b49fb0f34fa5262507af"
+        },
+        {
+          "changeId": "lgt010-kernel-outcome-transitions",
+          "acceptanceDigest": "sha256:12da8454daf4bf7bf31589c53b9e4f31a7cd9eecfea7a0489f291462d83970f6"
+        }
+      ],
+      "reopenTrigger": "The Candidate catalog can be regenerated after creation; historical Package seals, exact Contribution or Gate Evidence bindings, Gap dispositions, authority assessments, Gate-time re-resolution, or acceptance-time re-resolution are weakened."
     },
     {
       "id": "worker-and-identity-trust-opaque",

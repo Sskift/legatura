@@ -78,7 +78,8 @@
       },
       "residualUncertainty": [
         "The current suite groups several tightly coupled compiler invariants in two Change Kernel scenarios.",
-        "A bound Outcome Contribution does not by itself prove exit-Criterion satisfaction; evidence-bound Outcome transitions remain an explicit LGT-010 Knowledge Gap."
+        "A bound Outcome Contribution proves relevance only; Criterion satisfaction requires the separately compiled Outcome Transition proof and Plan-authority assessment.",
+        "Outcome Transition proof trusts the local single-writer Change Store; authenticated multi-writer history remains outside the current assurance boundary."
       ]
     },
     {

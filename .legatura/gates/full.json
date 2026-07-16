@@ -47,7 +47,8 @@
         "Local tests do not establish authenticated provenance.",
         "They do not provide OS sandboxing or production deployment assurance.",
         "The local npm install does not exercise every supported platform or package manager.",
-        "A bound Outcome Contribution does not by itself prove exit-Criterion satisfaction; evidence-bound Outcome transitions remain an explicit LGT-010 Knowledge Gap."
+        "A bound Outcome Contribution proves relevance only; Criterion satisfaction requires the separately compiled Outcome Transition proof and Plan-authority assessment.",
+        "Content-addressed Transition proof still trusts the local single-writer Change Store; it does not provide signed or authenticated multi-writer history."
       ]
     }
   ]
