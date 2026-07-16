@@ -22,6 +22,7 @@
     "The master consumes structured state and content-addressed artifacts; full worker conversations are not coordination state.",
     "Workers execute bounded work and report observations; they do not define sufficiency, waive obligations, or accept their own output.",
     "Minimum Gates protect routine Change economics; Full Gates protect composition, integration, and release.",
+    "Architecture and Workbench projections compile from stable, pre-bounded source snapshots; adapters render typed orthogonal facts and never collapse assurance into scores, percentages, health, readiness, confidence, or green lights.",
     "New architecture should deepen the Worker Execution and Coordinator Modules instead of multiplying shallow framework Modules."
   ],
   "referenceAcceptanceScenario": {
