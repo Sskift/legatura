@@ -61,7 +61,7 @@
       ],
       "oracle": {
         "kind": "node-test-runner-exit",
-        "description": "Project Model validation and compiled-scope adversarial tests must exit zero."
+        "description": "Project Model validation plus compiled-scope and Outcome-alignment adversarial tests must exit zero."
       },
       "applicability": {
         "phase": "acceptance"
@@ -71,12 +71,14 @@
           "dangling governance references",
           "read or write scope broadening",
           "implicit cross-Claim Evidence mapping",
-          "missing, unknown, or non-active Development Outcome references"
+          "missing, unknown, or non-active Development Outcome references",
+          "unresolved or ambiguous exact Contract-visible Claim-to-Criterion Outcome Contributions",
+          "Outcome exception acceptance without frozen Development Plan authority"
         ]
       },
       "residualUncertainty": [
         "The current suite groups several tightly coupled compiler invariants in two Change Kernel scenarios.",
-        "Active Outcome references do not yet prove substantive exit-criterion contribution or evidence-bound Outcome transitions; both remain explicit LGT-010 Knowledge Gaps."
+        "A bound Outcome Contribution does not by itself prove exit-Criterion satisfaction; evidence-bound Outcome transitions remain an explicit LGT-010 Knowledge Gap."
       ]
     },
     {

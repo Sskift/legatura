@@ -39,14 +39,15 @@
           "tampered integration assurance",
           "frozen-baseline regressions",
           "cross-interface regressions",
-          "missing or non-executable packaged CLI entrypoints"
+          "missing or non-executable packaged CLI entrypoints",
+          "unresolved or tampered Outcome Contributions and Outcome exceptions accepted without frozen Development Plan authority"
         ]
       },
       "residualUncertainty": [
         "Local tests do not establish authenticated provenance.",
         "They do not provide OS sandboxing or production deployment assurance.",
         "The local npm install does not exercise every supported platform or package manager.",
-        "Active Outcome references do not yet prove substantive exit-criterion contribution or evidence-bound Outcome transitions."
+        "A bound Outcome Contribution does not by itself prove exit-Criterion satisfaction; evidence-bound Outcome transitions remain an explicit LGT-010 Knowledge Gap."
       ]
     }
   ]

@@ -43,11 +43,18 @@
     },
     {
       "id": "outcome-contribution-not-machine-validated",
-      "status": "open",
+      "status": "closed",
       "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
-      "statement": "A Change must reference an active Outcome, but it does not yet bind its Module and Claims to a specific Outcome exit contribution or require Plan authority for an explicit exception.",
-      "expansionTrigger": "Before LGT-010 can become achieved or plan alignment is described as substantive contribution proof."
+      "statement": "Ordinary Changes now bind exact Claims visible through the primary Module's owned or dependency Contracts to stable active Outcome Criteria; unresolved or ambiguous matches fail closed, and explicit non-progress exceptions require frozen Development Plan authority.",
+      "resolution": "Enforced compilation derives content-addressed Outcome Contributions, and the Kernel re-derives their acceptance-bound projection from the frozen Governance Baseline; exceptions grant no progress and cannot prove transitions. Contributions prove relevance, not Criterion satisfaction.",
+      "closedBy": [
+        {
+          "changeId": "lgt010-enforce-outcome-alignment",
+          "acceptanceDigest": "sha256:3abc23eac771c03ca3e38a60a5ed55d58356cc0b632dd6d2024d35f4b7c1277d"
+        }
+      ],
+      "reopenTrigger": "Exact Contribution derivation, enforced rejection, Plan-authority routing, or acceptance-time rederivation is weakened."
     },
     {
       "id": "outcome-transition-evidence-not-machine-bound",
