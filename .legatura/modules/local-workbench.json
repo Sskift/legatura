@@ -24,6 +24,7 @@
     "include": [
       "src/cli.mjs",
       "src/server.mjs",
+      "src/workbench-view-model.mjs",
       "public/**",
       "test/local-workbench/**",
       "test/integration/http-change-lifecycle.test.mjs",

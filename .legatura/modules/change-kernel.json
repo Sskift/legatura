@@ -35,6 +35,7 @@
       "test/change-kernel/trust-invariants.test.mjs",
       "test/change-kernel/integration-assurance.test.mjs",
       "test/change-kernel/plan-refs-adapter.test.mjs",
+      "test/change-kernel/architecture-profile.test.mjs",
       ".legatura/modules/change-kernel.json",
       ".legatura/contracts/change-kernel-interface.json"
     ],
