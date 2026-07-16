@@ -49,35 +49,46 @@ async function defaultCommandRunner({ command, args = [], cwd, env, signal }) {
       signal,
       stdio: ["ignore", "pipe", "pipe"]
     });
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks = [];
+    const stderrChunks = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let overflow = false;
 
     child.stdout.on("data", (chunk) => {
-      if (stdout.length < MAX_CAPTURE_BYTES) {
-        stdout += chunk.toString("utf8").slice(0, MAX_CAPTURE_BYTES - stdout.length);
-      } else {
-        overflow = true;
-      }
+      const capture = captureChunk(stdoutChunks, stdoutBytes, chunk);
+      stdoutBytes = capture.capturedBytes;
+      overflow ||= capture.truncated;
     });
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < MAX_CAPTURE_BYTES) {
-        stderr += chunk.toString("utf8").slice(0, MAX_CAPTURE_BYTES - stderr.length);
-      } else {
-        overflow = true;
-      }
+      const capture = captureChunk(stderrChunks, stderrBytes, chunk);
+      stderrBytes = capture.capturedBytes;
+      overflow ||= capture.truncated;
     });
     child.on("error", reject);
     child.on("close", (exitCode, signalName) => {
       resolve({
         exitCode: exitCode ?? 1,
-        stdout,
-        stderr,
+        stdout: Buffer.concat(stdoutChunks, stdoutBytes).toString("utf8"),
+        stderr: Buffer.concat(stderrChunks, stderrBytes).toString("utf8"),
         ...(signalName ? { signal: signalName } : {}),
         truncated: overflow
       });
     });
   });
+}
+
+function captureChunk(chunks, capturedBytes, chunk) {
+  const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+  const remainingBytes = Math.max(0, MAX_CAPTURE_BYTES - capturedBytes);
+  const captured = buffer.subarray(0, remainingBytes);
+  if (captured.byteLength > 0) {
+    chunks.push(captured);
+  }
+  return {
+    capturedBytes: capturedBytes + captured.byteLength,
+    truncated: buffer.byteLength > remainingBytes
+  };
 }
 
 function normalizeCommandResult(value) {
