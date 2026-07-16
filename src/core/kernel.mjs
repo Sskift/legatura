@@ -30,6 +30,7 @@ import {
   compileClaimGateRouteIndex,
   loadProjectModel,
   projectCompiledClaimGateRouteIndex,
+  projectCompiledModuleClaimGateIndex,
   publicProjectModel,
   validateProjectModel
 } from "./project-model.mjs";
@@ -1027,11 +1028,21 @@ function compileWorkbenchProjectionFromSnapshot(snapshot) {
   assertValidProject(snapshot.inspection);
   const budget = { observed: 0 };
   const routeQuery = createArchitectureProfileRouteQueryBudget();
-  const current = prepareCurrentModelRouteProduct(snapshot, routeQuery);
-  const currentAcceptanceGateScopeIndex = compileWorkbenchAcceptanceGateScopeIndex(
-    current.model,
-    budget
+  const current = prepareCurrentModelRouteProduct(
+    snapshot,
+    routeQuery,
+    { includeClaimDescriptors: false }
   );
+  const currentModuleProjection = compileWorkbenchModuleClaimGateProjection({
+    provider: current.currentRouteProvider,
+    model: current.model,
+    moduleRefs: (Array.isArray(current.model.modules) ? current.model.modules : [])
+      .map((module) => readString(module?.id))
+      .filter(Boolean),
+    routeSelections: [],
+    routeQuery,
+    location: "currentModel.moduleClaimGateProjection"
+  });
   const historicalRequirements = new Map();
   collectWorkbenchHistoricalRouteRequirements(snapshot.records, historicalRequirements, budget);
   const historicalProviders = compileArchitectureProfileHistoricalProviders(
@@ -1039,17 +1050,16 @@ function compileWorkbenchProjectionFromSnapshot(snapshot) {
     routeQuery,
     { includeClaimDescriptors: false }
   );
-  const historicalAcceptanceGateScopeIndices = new Map(
-    [...historicalRequirements.values()].map((requirement) => [
-      requirement.baselineDigest,
-      compileWorkbenchAcceptanceGateScopeIndex(requirement.baseline, budget)
-    ])
+  const historicalModuleProjections = compileWorkbenchHistoricalModuleProjections(
+    historicalRequirements,
+    historicalProviders,
+    routeQuery
   );
   const bundle = {
     ...current,
-    currentAcceptanceGateScopeIndex,
+    currentModuleProjection,
     historicalProviders,
-    historicalAcceptanceGateScopeIndices
+    historicalModuleProjections
   };
   const content = {
     schemaVersion: 1,
@@ -1079,7 +1089,11 @@ function compileWorkbenchProjectionFromSnapshot(snapshot) {
   return cloneJson(result);
 }
 
-function prepareCurrentModelRouteProduct(snapshot, routeQuery) {
+function prepareCurrentModelRouteProduct(
+  snapshot,
+  routeQuery,
+  { includeClaimDescriptors = true } = {}
+) {
   const model = publicProjectModel(snapshot.inspection);
   const { modelClaimRefs } = compileArchitectureProfileModelMembership(model);
   requireArchitectureProfileDigest(model.digest, "model.digest");
@@ -1089,100 +1103,71 @@ function prepareCurrentModelRouteProduct(snapshot, routeQuery) {
     budget: routeQuery,
     location: "model.claimGateRoutes"
   });
-  const currentClaimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
-    model,
-    routeQuery,
-    "model.claimDescriptors"
-  );
+  const currentClaimDescriptors = includeClaimDescriptors
+    ? compileArchitectureProfileClaimDescriptorIndex(
+        model,
+        routeQuery,
+        "model.claimDescriptors"
+      )
+    : null;
   return { model, modelClaimRefs, currentRouteProvider, currentClaimDescriptors };
 }
 
 function compileWorkbenchAuthoringModules(bundle, budget) {
   const {
     model,
-    currentClaimDescriptors,
     currentRouteProvider,
-    currentAcceptanceGateScopeIndex
+    currentModuleProjection
   } = bundle;
-  const contractIndex = new Map(
-    (Array.isArray(model.contracts) ? model.contracts : [])
-      .map((contract) => [readModelReference(contract), contract])
-      .filter(([contractRef]) => Boolean(contractRef))
-  );
   const modules = [];
   for (const module of [...(Array.isArray(model.modules) ? model.modules : [])]
     .sort((left, right) => (readString(left?.id) ?? "").localeCompare(readString(right?.id) ?? ""))) {
     consumeWorkbenchProjectionFact(budget);
     const moduleRef = requireWorkbenchReference(module?.id, "authoring.module.id");
-    const visibleContracts = new Map();
-    for (const contractRef of normalizeReferenceList(module?.publicContracts)) {
-      addWorkbenchContractVisibility(visibleContracts, contractRef, "owned");
-    }
-    for (const dependency of Array.isArray(module?.dependencies) ? module.dependencies : []) {
-      const contractRef = readModelReference(
-        dependency?.via ?? dependency?.contract ?? dependency?.contractId
+    const projectedClaims = currentModuleProjection.claimsByModule.get(moduleRef);
+    if (!Array.isArray(projectedClaims)) {
+      throw kernelError(
+        "WORKBENCH_PROJECTION_FACT_INVALID",
+        "Workbench authoring Module is missing its Project Model Claim projection.",
+        500,
+        { moduleRef }
       );
-      if (contractRef) addWorkbenchContractVisibility(visibleContracts, contractRef, "dependency");
     }
-
-    const claimOptions = new Map();
-    for (const [contractRef, visibilityKinds] of [...visibleContracts.entries()]
-      .sort(([left], [right]) => left.localeCompare(right))) {
-      const contract = contractIndex.get(contractRef);
-      if (!contract) {
-        throw kernelError(
-          "WORKBENCH_PROJECTION_FACT_INVALID",
-          `Workbench authoring Contract ${contractRef} is not present in the stabilized Project Model.`,
-          422,
-          { moduleRef, contractRef }
-        );
-      }
-      for (const claim of Array.isArray(contract?.claims) ? contract.claims : []) {
-        consumeWorkbenchProjectionFact(budget);
-        const claimRef = requireWorkbenchReference(claim?.id, `authoring.module.${moduleRef}.claim.id`);
-        const descriptor = currentClaimDescriptors.get(claimRef);
-        if (!descriptor || descriptor.contractRef !== contractRef) {
-          throw kernelError(
-            "WORKBENCH_PROJECTION_FACT_INVALID",
-            `Workbench Claim ${claimRef} does not resolve to its authoritative Contract.`,
-            422,
-            { moduleRef, contractRef, claimRef }
-          );
-        }
-        const existing = claimOptions.get(claimRef);
-        if (existing && existing.contractRef !== contractRef) {
-          throw kernelError(
-            "WORKBENCH_PROJECTION_FACT_INVALID",
-            `Workbench Claim ${claimRef} resolves through multiple Contracts.`,
-            422,
-            { moduleRef, claimRef }
-          );
-        }
-        const routeOptions = compileWorkbenchAcceptanceRouteOptions({
-          claimRef,
-          moduleRef,
-          gateScopeIndex: currentAcceptanceGateScopeIndex,
-          routeProvider: currentRouteProvider,
-          budget
-        });
-        const disabledReasonCodes = compileWorkbenchDisabledReasons([
-          ...(module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]),
-          ...(routeOptions.length > 0 ? [] : ["CLAIM_ACCEPTANCE_ROUTE_MISSING"])
-        ]);
-        claimOptions.set(claimRef, {
-          id: claimRef,
-          statement: descriptor.statement,
-          contractRef,
-          visibilityKinds: [...new Set([
-            ...(existing?.visibilityKinds ?? []),
-            ...visibilityKinds
-          ])].sort(),
-          selectable: disabledReasonCodes.length === 0,
-          disabledReasonCodes,
-          acceptanceRoutes: routeOptions
-        });
-      }
-    }
+    const claimOptions = projectedClaims.map((descriptor) => {
+      consumeWorkbenchProjectionFact(budget);
+      const claimRef = requireWorkbenchReference(
+        descriptor?.claimRef,
+        `authoring.module.${moduleRef}.claim.id`
+      );
+      const contractRef = requireWorkbenchReference(
+        descriptor?.contractRef,
+        `authoring.module.${moduleRef}.claim.${claimRef}.contractRef`
+      );
+      const visibilityKinds = normalizeStringList(descriptor?.visibilityKinds);
+      const routeOptions = compileWorkbenchAcceptanceRouteOptions({
+        claimRef,
+        moduleRef,
+        moduleProjection: currentModuleProjection,
+        routeProvider: currentRouteProvider,
+        budget
+      });
+      const disabledReasonCodes = compileWorkbenchDisabledReasons([
+        ...(module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]),
+        ...(routeOptions.length > 0 ? [] : ["CLAIM_ACCEPTANCE_ROUTE_MISSING"])
+      ]);
+      return {
+        id: claimRef,
+        statement: requireWorkbenchReference(
+          descriptor?.statement,
+          `authoring.module.${moduleRef}.claim.${claimRef}.statement`
+        ),
+        contractRef,
+        visibilityKinds,
+        selectable: disabledReasonCodes.length === 0,
+        disabledReasonCodes,
+        acceptanceRoutes: routeOptions
+      };
+    });
     const disabledReasonCodes = compileWorkbenchDisabledReasons(
       module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]
     );
@@ -1192,57 +1177,23 @@ function compileWorkbenchAuthoringModules(bundle, budget) {
       governanceStatus: readString(module?.status) ?? "unknown",
       selectable: disabledReasonCodes.length === 0,
       disabledReasonCodes,
-      claims: [...claimOptions.values()].sort((left, right) => left.id.localeCompare(right.id))
+      claims: claimOptions
     });
   }
   return modules;
 }
 
-function addWorkbenchContractVisibility(index, contractRef, visibilityKind) {
-  if (!readString(contractRef)) return;
-  if (!index.has(contractRef)) index.set(contractRef, new Set());
-  index.get(contractRef).add(visibilityKind);
-}
-
-function compileWorkbenchAcceptanceGateScopeIndex(model, budget) {
-  const globalGateIds = new Set();
-  const gateIdsByModule = new Map();
-  for (const gate of Array.isArray(model?.gates) ? model.gates : []) {
-    consumeWorkbenchProjectionFact(budget);
-    const gateId = requireWorkbenchReference(gate?.id, "workbench.acceptanceGate.id");
-    const appliesTo = normalizeStringList(gate?.appliesTo);
-    consumeWorkbenchProjectionFact(budget, appliesTo.length);
-    if (appliesTo.length === 0) {
-      globalGateIds.add(gateId);
-      continue;
-    }
-    for (const rawModuleRef of appliesTo) {
-      const moduleRef = readString(rawModuleRef);
-      if (!moduleRef) continue;
-      if (!gateIdsByModule.has(moduleRef)) gateIdsByModule.set(moduleRef, new Set());
-      gateIdsByModule.get(moduleRef).add(gateId);
-    }
-  }
-  return { globalGateIds, gateIdsByModule };
-}
-
-function workbenchAcceptanceGateSelectsModule(index, gateId, moduleRef) {
-  return index?.globalGateIds.has(gateId)
-    || index?.gateIdsByModule.get(moduleRef)?.has(gateId)
-    || false;
-}
-
 function compileWorkbenchAcceptanceRouteOptions({
   claimRef,
   moduleRef,
-  gateScopeIndex,
+  moduleProjection,
   routeProvider,
   budget
 }) {
-  return selectWorkbenchAcceptanceRoutes({
+  return readWorkbenchProjectedAcceptanceRoutes({
     claimRef,
     moduleRef,
-    gateScopeIndex,
+    moduleProjection,
     routeProvider,
     budget
   }).map(({ gateId, commandId, routeDigest }) => ({
@@ -1257,39 +1208,53 @@ function compileWorkbenchAcceptanceRouteOptions({
   }));
 }
 
-function selectWorkbenchAcceptanceRoutes({
+function readWorkbenchProjectedAcceptanceRoutes({
   claimRef,
   moduleRef,
-  gateScopeIndex,
+  moduleProjection,
   routeProvider,
   budget
 }) {
+  const routesByClaim = moduleProjection?.routesByModule?.get(moduleRef);
+  if (!(routesByClaim instanceof Map) || !routesByClaim.has(claimRef)) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench Claim route pair is missing from its Project Model Module projection.",
+      500,
+      { claimRef, moduleRef }
+    );
+  }
+  const routes = routesByClaim.get(claimRef);
+  if (!Array.isArray(routes)) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench Project Model Module projection returned invalid routes.",
+      500,
+      { claimRef, moduleRef }
+    );
+  }
   const selected = [];
-  for (const route of routeProvider.routesByClaim.get(claimRef) ?? []) {
+  for (const route of routes) {
     consumeWorkbenchProjectionFact(budget);
     const gateId = readString(route?.gateId);
     const commandId = readString(route?.commandId);
-    const effectiveModuleRefs = Array.isArray(route?.effectiveModuleRefs)
-      ? route.effectiveModuleRefs
-      : [];
-    consumeWorkbenchProjectionFact(budget, effectiveModuleRefs.length);
-    if (!gateId || !commandId
-      || !workbenchAcceptanceGateSelectsModule(gateScopeIndex, gateId, moduleRef)
-      || !effectiveModuleRefs.includes(moduleRef)) continue;
-    const routeDigest = routeProvider.routeDigests.get(
+    const providerRouteDigest = routeProvider?.routeDigests?.get(
       architectureProfileRouteKey(claimRef, gateId, commandId)
     );
-    if (!isCanonicalDigest(routeDigest)) {
+    const routeDigest = canonicalDigest(route);
+    if (!gateId || !commandId
+      || !isCanonicalDigest(providerRouteDigest)
+      || providerRouteDigest !== routeDigest) {
       throw kernelError(
         "WORKBENCH_PROJECTION_FACT_INVALID",
-        "Workbench authoring route is missing its compiler-owned semantic digest.",
+        "Workbench Project Model route is not bound to its compiler-owned product.",
         422,
         { claimRef, moduleRef, gateId, commandId }
       );
     }
     selected.push({ gateId, commandId, routeDigest });
   }
-  return uniqueWorkbenchRoutes(selected);
+  return selected;
 }
 
 function compileWorkbenchChangeActions(record, snapshot, bundle, budget) {
@@ -1301,13 +1266,13 @@ function compileWorkbenchChangeActions(record, snapshot, bundle, budget) {
     `workbench.change.${id}.governanceBaseline.digest`
   );
   const historicalProvider = bundle.historicalProviders.get(baselineDigest);
-  const acceptanceGateScopeIndex = bundle.historicalAcceptanceGateScopeIndices.get(baselineDigest);
+  const historicalModuleProjection = bundle.historicalModuleProjections.get(baselineDigest);
   const seal = inspectHistoricalSeal(record);
   assertWorkbenchVerificationPlanValid({
     record,
     governanceBaseline,
     provider: historicalProvider,
-    acceptanceGateScopeIndex,
+    moduleProjection: historicalModuleProjection,
     seal,
     budget
   });
@@ -1440,7 +1405,7 @@ function assertWorkbenchVerificationPlanValid({
   record,
   governanceBaseline,
   provider,
-  acceptanceGateScopeIndex,
+  moduleProjection,
   seal,
   budget
 }) {
@@ -1568,7 +1533,7 @@ function assertWorkbenchVerificationPlanValid({
       verificationObligation: verificationObligationsById.get(obligation.id),
       primaryModule,
       provider,
-      acceptanceGateScopeIndex,
+      moduleProjection,
       record,
       seal,
       budget
@@ -1582,7 +1547,7 @@ function assertWorkbenchVerificationMappingValid({
   verificationObligation,
   primaryModule,
   provider,
-  acceptanceGateScopeIndex,
+  moduleProjection,
   record,
   seal,
   budget
@@ -1637,16 +1602,16 @@ function assertWorkbenchVerificationMappingValid({
       `Exact Claim mapping ${obligation.id} is missing its canonical routes.`
     );
   }
-  if (!provider || !acceptanceGateScopeIndex) {
+  if (!provider || !moduleProjection) {
     throwWorkbenchVerificationPlanInvalid(
       changeId,
       `Verification mapping ${obligation.id} has no complete frozen route context.`
     );
   }
-  const targetAcceptanceRoutes = selectWorkbenchAcceptanceRoutes({
+  const targetAcceptanceRoutes = readWorkbenchProjectedAcceptanceRoutes({
     claimRef,
     moduleRef: primaryModule,
-    gateScopeIndex: acceptanceGateScopeIndex,
+    moduleProjection,
     routeProvider: provider,
     budget
   });
@@ -1725,10 +1690,10 @@ function assertWorkbenchVerificationMappingValid({
       );
     }
     const expectedSourceRoutes = sourceClaimIds.flatMap((sourceClaimId) => (
-      selectWorkbenchAcceptanceRoutes({
+      readWorkbenchProjectedAcceptanceRoutes({
         claimRef: sourceClaimId,
         moduleRef: primaryModule,
-        gateScopeIndex: acceptanceGateScopeIndex,
+        moduleProjection,
         routeProvider: provider,
         budget
       }).map(({ gateId, commandId }) => ({ sourceClaimId, gateId, commandId }))
@@ -2008,17 +1973,6 @@ function compileWorkbenchDisabledReasons(values) {
   ));
 }
 
-function uniqueWorkbenchRoutes(routes) {
-  const indexed = new Map();
-  for (const route of routes) {
-    indexed.set(`${route.gateId}\u0000${route.commandId}`, route);
-  }
-  return [...indexed.values()].sort((left, right) => (
-    left.gateId.localeCompare(right.gateId)
-      || left.commandId.localeCompare(right.commandId)
-  ));
-}
-
 function consumeWorkbenchProjectionFact(budget, units = 1) {
   budget.observed += units;
   if (budget.observed > WORKBENCH_ACTION_FACT_LIMIT) {
@@ -2294,11 +2248,21 @@ function collectWorkbenchHistoricalRouteRequirements(records, requirements, budg
       requirements.set(baselineDigest, {
         baseline,
         baselineDigest,
-        routeClaimRefs: new Set()
+        routeClaimRefs: new Set(),
+        routeSelectionsByModule: new Map()
       });
     }
     const requirement = requirements.get(baselineDigest);
     for (const claimRef of claimRefs) requirement.routeClaimRefs.add(claimRef);
+    const primaryModule = readString(record?.primaryModule);
+    if (primaryModule) {
+      if (!requirement.routeSelectionsByModule.has(primaryModule)) {
+        requirement.routeSelectionsByModule.set(primaryModule, new Set());
+      }
+      for (const claimRef of claimRefs) {
+        requirement.routeSelectionsByModule.get(primaryModule).add(claimRef);
+      }
+    }
     assertArchitectureProfileCountBound(
       requirement.routeClaimRefs.size,
       ARCHITECTURE_PROFILE_LIMITS.claims,
@@ -2346,6 +2310,197 @@ function collectWorkbenchVerificationPlanClaimRefs(verificationPlan, budget) {
   return claimRefs;
 }
 
+function compileWorkbenchHistoricalModuleProjections(requirements, providers, routeQuery) {
+  const projections = new Map();
+  const ordered = [...requirements.values()].sort((left, right) => (
+    left.baselineDigest.localeCompare(right.baselineDigest)
+  ));
+  for (const requirement of ordered) {
+    const provider = providers.get(requirement.baselineDigest);
+    const routeSelections = [];
+    for (const [moduleRef, claimRefs] of [...requirement.routeSelectionsByModule.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))) {
+      const orderedClaimRefs = [...claimRefs].sort();
+      for (let offset = 0; offset < orderedClaimRefs.length;
+        offset += ARCHITECTURE_PROFILE_LIMITS.refsPerFact) {
+        routeSelections.push({
+          moduleRef,
+          claimRefs: orderedClaimRefs.slice(
+            offset,
+            offset + ARCHITECTURE_PROFILE_LIMITS.refsPerFact
+          )
+        });
+      }
+    }
+    projections.set(
+      requirement.baselineDigest,
+      compileWorkbenchModuleClaimGateProjection({
+        provider,
+        model: requirement.baseline,
+        moduleRefs: [],
+        routeSelections,
+        routeQuery,
+        location: `historicalBaseline.${requirement.baselineDigest}.moduleClaimGateProjection`,
+        baselineDigest: requirement.baselineDigest
+      })
+    );
+  }
+  return projections;
+}
+
+function compileWorkbenchModuleClaimGateProjection({
+  provider,
+  model,
+  moduleRefs,
+  routeSelections,
+  routeQuery,
+  location,
+  baselineDigest
+}) {
+  if (!provider?.token || !provider?.observation) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench Project Model projection requires a process-local route product.",
+      500,
+      { location, ...(baselineDigest ? { baselineDigest } : {}) }
+    );
+  }
+  let projection;
+  const projectionLimits = compileWorkbenchModuleProjectionLimits(
+    routeQuery,
+    provider.observation,
+    location,
+    baselineDigest
+  );
+  try {
+    projection = projectCompiledModuleClaimGateIndex(provider.token, {
+      model,
+      moduleRefs,
+      routeSelections,
+      limits: projectionLimits
+    });
+  } catch (error) {
+    throwWorkbenchModuleProjectionError(
+      error,
+      routeQuery,
+      provider.observation,
+      projectionLimits,
+      location,
+      baselineDigest
+    );
+  }
+  consumeWorkbenchModuleProjectionDelta(
+    routeQuery,
+    provider.observation,
+    projection.observation,
+    location,
+    baselineDigest
+  );
+  return projection;
+}
+
+function compileWorkbenchModuleProjectionLimits(
+  routeQuery,
+  productObservation,
+  location,
+  baselineDigest
+) {
+  const limits = {};
+  for (const dimension of ["workUnits", "routes", "totalRouteBytes"]) {
+    const aggregateLimit = routeQuery?.limits?.[dimension];
+    const aggregateObserved = routeQuery?.observed?.[dimension];
+    const productUnits = productObservation?.[dimension];
+    if (!Number.isSafeInteger(aggregateLimit)
+      || aggregateLimit < 0
+      || !Number.isSafeInteger(aggregateObserved)
+      || aggregateObserved < 0
+      || aggregateObserved > aggregateLimit
+      || !Number.isSafeInteger(productUnits)
+      || productUnits < 0) {
+      throw kernelError(
+        "WORKBENCH_PROJECTION_FACT_INVALID",
+        "Workbench Project Model projection cannot derive a current aggregate resource ceiling.",
+        500,
+        { dimension, location, ...(baselineDigest ? { baselineDigest } : {}) }
+      );
+    }
+    limits[dimension] = productUnits + (aggregateLimit - aggregateObserved);
+  }
+  return limits;
+}
+
+function throwWorkbenchModuleProjectionError(
+  error,
+  routeQuery,
+  productObservation,
+  projectionLimits,
+  location,
+  baselineDigest
+) {
+  const dimension = readString(error?.details?.dimension);
+  if (error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED"
+    && dimension
+    && Object.hasOwn(routeQuery.limits, dimension)) {
+    const productUnits = productObservation?.[dimension];
+    const localObserved = Number.isSafeInteger(error?.details?.observed)
+      ? error.details.observed
+      : projectionLimits[dimension] + 1;
+    if (!Number.isSafeInteger(productUnits) || productUnits < 0 || localObserved < productUnits) {
+      throw kernelError(
+        "WORKBENCH_PROJECTION_FACT_INVALID",
+        "Workbench Project Model projection returned an invalid local resource observation.",
+        500,
+        { dimension, location, ...(baselineDigest ? { baselineDigest } : {}) }
+      );
+    }
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_ROUTE_QUERY_LIMIT_EXCEEDED",
+      "Architecture Profile route query exceeded its aggregate resource budget.",
+      413,
+      {
+        dimension,
+        limit: routeQuery.limits[dimension],
+        observed: routeQuery.observed[dimension] + (localObserved - productUnits),
+        location,
+        ...(baselineDigest ? { baselineDigest } : {})
+      }
+    );
+  }
+  throwArchitectureProfileRouteProviderError(error, routeQuery, location, baselineDigest);
+}
+
+function consumeWorkbenchModuleProjectionDelta(
+  routeQuery,
+  productObservation,
+  projectionObservation,
+  location,
+  baselineDigest
+) {
+  const delta = {};
+  for (const dimension of ["workUnits", "routes", "totalRouteBytes"]) {
+    const productUnits = productObservation?.[dimension];
+    const projectionUnits = projectionObservation?.[dimension];
+    if (!Number.isSafeInteger(productUnits)
+      || productUnits < 0
+      || !Number.isSafeInteger(projectionUnits)
+      || projectionUnits < productUnits) {
+      throw kernelError(
+        "WORKBENCH_PROJECTION_FACT_INVALID",
+        "Workbench Project Model projection returned an invalid cumulative resource observation.",
+        500,
+        { dimension, location, ...(baselineDigest ? { baselineDigest } : {}) }
+      );
+    }
+    delta[dimension] = projectionUnits - productUnits;
+  }
+  consumeArchitectureProfileRouteProviderObservation(
+    routeQuery,
+    delta,
+    location,
+    baselineDigest
+  );
+}
+
 function compileArchitectureProfileHistoricalProviders(requirements, budget, options = {}) {
   const providers = new Map();
   const ordered = [...requirements.values()].sort((left, right) => (
@@ -2371,6 +2526,8 @@ function compileArchitectureProfileHistoricalProviders(requirements, budget, opt
       : { routeDigests: new Map(), token: null };
     providers.set(requirement.baselineDigest, {
       ...(claimDescriptors ? { claimDescriptors } : {}),
+      token: routeProvider.token,
+      observation: routeProvider.observation,
       routesByClaim: routeProvider.routesByClaim ?? new Map(),
       routeDigests: routeProvider.routeDigests
     });
@@ -2426,6 +2583,7 @@ function compileArchitectureProfileRouteProvider({
   );
   const provider = {
     token,
+    observation: projection.observation,
     routesByClaim: projection.routesByClaim,
     routeDigests: compileArchitectureProfileRouteDigestIndex(
       projection.routesByClaim,
@@ -2441,10 +2599,17 @@ function architectureProfileRouteProviderLimits(budget) {
   return {
     claimRefs: ARCHITECTURE_PROFILE_LIMITS.claims,
     modules: ARCHITECTURE_PROFILE_LIMITS.modules,
+    contracts: ARCHITECTURE_PROFILE_LIMITS.contracts,
+    modelClaims: ARCHITECTURE_PROFILE_LIMITS.claims,
+    refsPerModule: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+    visibilityRefs: ARCHITECTURE_PROFILE_LIMITS.relations,
     gates: ARCHITECTURE_PROFILE_LIMITS.gates,
     commands: ARCHITECTURE_PROFILE_LIMITS.routes,
     refsPerCommand: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
     totalCommandClaimRefs: ARCHITECTURE_PROFILE_LIMITS.relations,
+    routeSelectionRows: ARCHITECTURE_PROFILE_LIMITS.modules,
+    refsPerRouteSelection: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+    routeSelectionClaimRefs: ARCHITECTURE_PROFILE_LIMITS.relations,
     routes: budget.limits.routes - budget.observed.routes,
     totalRouteBytes: budget.limits.totalRouteBytes - budget.observed.totalRouteBytes,
     depth: ARCHITECTURE_PROFILE_LIMITS.depth,
