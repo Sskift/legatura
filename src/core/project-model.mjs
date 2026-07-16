@@ -45,8 +45,12 @@ export async function loadProjectModel(repoPath) {
 
   return {
     ...model,
-    digest: canonicalDigest(stripSourceMetadata(model))
+    digest: projectModelContentDigest(model)
   };
+}
+
+export function projectModelContentDigest(model) {
+  return canonicalDigest(stripSourceMetadata(model));
 }
 
 export function validateProjectModel(model) {

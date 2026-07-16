@@ -9,12 +9,14 @@
   "interface": {
     "entrypoints": [
       "loadProjectModel(repoPath)",
+      "projectModelContentDigest(model)",
       "validateProjectModel(model)",
       "publicProjectModel(model)",
       "compileChangeAgainstGovernance(change, baseline)",
       "parseChangePlanRefs(value)",
       "compileOutcomeTransitions(input)",
       "compileClaimGateRoutes(model, claimRef)",
+      "compileArchitectureProfile(input)",
       "assertKnowledgeGapProofContractsPreserved(input)"
     ],
     "invariants": [
@@ -30,6 +32,7 @@
       "Outcome status deltas compile only from an append-only ledger whose prior Accepted Package proofs, exact Claim Evidence, closed Gaps, and authority assessments cover the frozen route semantics.",
       "A Knowledge Gap Closure Contract requires at least one executable Gate route per proof Claim and freezes exact proof Claim ownership, Gate and command identity, command, timeout, effective Module applicability, oracle, applicability, discriminatory power, and residual uncertainty while permitting unrelated Claims and raw scope edits that do not change that effective route; closure requires prior sealed implementation Contributions whose direct positive Gate Evidence covers every proof Claim.",
       "A newly declared Closure proof Claim uses a dedicated fixed test entrypoint that fails closed before its implementation can produce direct Evidence.",
+      "Architecture Acceptance Profiles recompute the authoritative Project Model content digest and are deterministic bounded typed graphs compiled only from that bound Model, exact Claim Gate routes, and Kernel-normalized snapshot facts; current and sealed-historical Evidence remain separate, Evidence-to-Claim edges are neutral obligation-bound associations rather than support or approval conclusions, Outcome Contributions are relevance-only, and no score, percentage, confidence, green-light, coverage, or Criterion-satisfaction conclusion is emitted.",
       "Change Kernel create and patch adapters must reject malformed or conflicting planRefs inputs before JSON persistence and store only the canonical compiler value."
     ]
   },
