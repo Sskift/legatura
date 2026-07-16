@@ -51,8 +51,8 @@
       "status": "open",
       "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
-      "statement": "The Kernel emits a snapshot-stabilized typed Architecture Profile, but its remaining projection boundaries are not closed: the Change Store lacks record-count, per-file byte, total-byte, JSON-depth, and node limits before reading or parsing; the pure Profile compiler still relies on Kernel preflight instead of an intrinsically bounded single-pass Claim-to-Gate route index; no Kernel-owned Workbench view model supplies selectable Claims, exact routes, and disabled reasons; and browser compatibility code can still express aggregate score, confidence, percentage, health, readiness, or green-light semantics.",
-      "expansionTrigger": "Harden Store snapshot and pure compiler boundaries before the Workbench slice; compile the Workbench view model and remove aggregate assurance compatibility before browser projection or LGT-010 closure."
+      "statement": "The Change Store now enforces record-count, per-file byte, total-byte, JSON-depth, node, path-identity, and local single-writer bounds before Profile queries consume records, but the remaining projection boundaries are not closed: the pure Profile compiler still relies on Kernel preflight instead of an intrinsically bounded single-pass Claim-to-Gate route index; no Kernel-owned Workbench view model supplies selectable Claims, exact routes, and disabled reasons; and browser compatibility code can still express aggregate score, confidence, percentage, health, readiness, or green-light semantics.",
+      "expansionTrigger": "Compile the pure single-pass Claim-to-Gate route index before the Workbench slice; then compile the Workbench view model and remove aggregate assurance compatibility before browser projection or LGT-010 closure."
     },
     {
       "id": "accepted-history-not-portable",

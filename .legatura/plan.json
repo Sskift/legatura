@@ -20,6 +20,7 @@
     "A plan amendment is accepted before an implementation Change may use the amended plan; a Change cannot authorize itself against newer governance.",
     "Stage exit is decided from exact Evidence against exit criteria, never from coverage percentages, task counts, or dates.",
     "The master consumes structured state and content-addressed artifacts; full worker conversations are not coordination state.",
+    "Batch projections compile one bounded semantic index per stable source snapshot; scalar Interfaces and adapters consume that index instead of recompiling policy once per entity.",
     "Workers execute bounded work and report observations; they do not define sufficiency, waive obligations, or accept their own output.",
     "Minimum Gates protect routine Change economics; Full Gates protect composition, integration, and release.",
     "Architecture and Workbench projections compile from stable, pre-bounded source snapshots; adapters render typed orthogonal facts and never collapse assurance into scores, percentages, health, readiness, confidence, or green lights.",
