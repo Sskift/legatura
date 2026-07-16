@@ -22,6 +22,7 @@
       "Plan amendments cannot remove or reinterpret stable Outcome Criteria or add Criteria during an Outcome status transition.",
       "Project Model owns strict planRefs value semantics; Change Kernel owns presence-based planRef alias conflicts and must adapt create and patch inputs before persistence so the Store contains only canonical planRefs.",
       "Project and Change read queries fail closed unless at most three observations contain two consecutive identical source digests; a stabilized Change query observes Model, Git, and Store once per round, projects every record without writes, preserves historical state and acceptance, and returns bounded list summaries while full Evidence and package bodies remain detail-only.",
+      "An Architecture Profile query compiles one Project Model-owned Claim Gate route product covering every Contract Claim in the stabilized current Model, passes that exact process-local product into Profile compilation, and compiles at most one product per unique verified frozen Governance Baseline over the union of actually referenced non-builtin source Claims; one query-level ceiling charges each unique product's compiler-owned workUnits, routes, and totalRouteBytes plus bounded Kernel route projection work once, cache hits are not recharged, and operational observations never become assurance or Evidence.",
       "Integration requires current full assurance when policy demands it."
     ]
   },
