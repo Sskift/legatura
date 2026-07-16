@@ -3,7 +3,12 @@ import path from "node:path";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import { INTEGRITY_CHANGE_KINDS } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
-import { validateOutcomeTransitionLedger } from "./outcome-transitions.mjs";
+import {
+  assertKnowledgeGapProofContractsPreserved,
+  validateOutcomeTransitionLedger
+} from "./outcome-transitions.mjs";
+
+export { assertKnowledgeGapProofContractsPreserved };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
@@ -242,9 +247,27 @@ export function validateProjectModel(model) {
       if (!normalizeGateCommand(command.command)) {
         errors.push(issue("gate.command.missing", commandLocation, "Gate command must be executable."));
       }
+      if (command.timeoutMs !== undefined
+        && (!Number.isFinite(command.timeoutMs) || command.timeoutMs <= 0)) {
+        errors.push(issue(
+          "gate.command.timeout.invalid",
+          commandLocation,
+          "Gate command timeoutMs must be a positive finite number when declared."
+        ));
+      }
       if (!Array.isArray(command.claimRefs) || command.claimRefs.length === 0 || !command.claimRefs.every(readString)) {
         errors.push(issue("gate.claim.missing", commandLocation, "Gate command requires at least one Claim reference."));
       } else {
+        const duplicateClaimRefs = command.claimRefs.filter((claimRef, index, values) => (
+          values.indexOf(claimRef) !== index
+        ));
+        if (duplicateClaimRefs.length > 0) {
+          errors.push(issue(
+            "gate.claim.duplicate",
+            commandLocation,
+            `Gate command Claim references must be unique: ${[...new Set(duplicateClaimRefs)].sort().join(", ")}.`
+          ));
+        }
         for (const claimRef of command.claimRefs) {
           if (!claimIndex.has(claimRef)) {
             errors.push(issue("gate.claim.unknown", commandLocation, `Gate command references unknown Contract Claim: ${claimRef}.`));
@@ -285,7 +308,14 @@ export function validateProjectModel(model) {
   }
   validateOutcomePolicy(changePolicy, errors);
 
-  validateKnowledgeGaps(model.knowledgeGaps, errors);
+  validateKnowledgeGaps({
+    knowledgeGaps: model.knowledgeGaps,
+    claimIndex,
+    modules: model.modules,
+    gates: model.gates,
+    changePolicy,
+    plan: model.plan
+  }, errors);
 
   validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
 
@@ -305,8 +335,10 @@ export function validateProjectModel(model) {
   };
 }
 
-function validateKnowledgeGaps(knowledgeGaps, errors) {
+function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, changePolicy, plan }, errors) {
   const seen = new Set();
+  const gapIndex = new Map();
+  const proofClaimOwners = new Map();
   for (const [index, gap] of asArray(knowledgeGaps).entries()) {
     const gapId = readId(gap);
     const location = `.legatura/knowledge-gaps.json#${gapId ?? index}`;
@@ -319,8 +351,63 @@ function validateKnowledgeGaps(knowledgeGaps, errors) {
       continue;
     }
     seen.add(gapId);
+    gapIndex.set(gapId, gap);
     if (!readString(gap?.statement)) {
       errors.push(issue("knowledge-gap.statement.missing", location, "Every Knowledge Gap requires a substantive statement."));
+    }
+    if (Object.hasOwn(gap, "proofClaimRefs")) {
+      if (!Array.isArray(gap.proofClaimRefs) || gap.proofClaimRefs.length === 0) {
+        errors.push(issue(
+          "knowledge-gap.proof-claim.invalid",
+          location,
+          "Knowledge Gap proofClaimRefs must be a non-empty list of exact Contract Claim ids."
+        ));
+      } else {
+        const localRefs = new Set();
+        for (const rawReference of gap.proofClaimRefs) {
+          const reference = readString(rawReference);
+          if (typeof rawReference !== "string" || reference !== rawReference) {
+            errors.push(issue(
+              "knowledge-gap.proof-claim.invalid",
+              location,
+              "Knowledge Gap proofClaimRefs entries must be exact non-empty Contract Claim ids."
+            ));
+            continue;
+          }
+          if (localRefs.has(reference)) {
+            errors.push(issue(
+              "knowledge-gap.proof-claim.duplicate",
+              location,
+              `Knowledge Gap proofClaimRefs repeats ${reference}.`
+            ));
+            continue;
+          }
+          localRefs.add(reference);
+          if (!claimIndex.has(reference)) {
+            errors.push(issue(
+              "knowledge-gap.proof-claim.unknown",
+              location,
+              `Knowledge Gap proofClaimRefs references unknown Contract Claim: ${reference}.`
+            ));
+          } else if (!hasExecutableGateRoute({ gates, modules, changePolicy }, reference)) {
+            errors.push(issue(
+              "knowledge-gap.proof-claim.gate-route-missing",
+              location,
+              `Knowledge Gap proof Claim ${reference} requires at least one executable Gate command route at declaration time.`
+            ));
+          }
+          const owner = proofClaimOwners.get(reference);
+          if (owner && owner !== gapId) {
+            errors.push(issue(
+              "knowledge-gap.proof-claim.shared",
+              location,
+              `Closure proof Claim ${reference} is already owned by Knowledge Gap ${owner}.`
+            ));
+          } else {
+            proofClaimOwners.set(reference, gapId);
+          }
+        }
+      }
     }
     if (!["open", "closed"].includes(gap?.status)) {
       errors.push(issue("knowledge-gap.status.invalid", location, "Knowledge Gap status must be open or closed."));
@@ -365,6 +452,56 @@ function validateKnowledgeGaps(knowledgeGaps, errors) {
       refs.add(key);
     }
   }
+
+  for (const outcome of asArray(plan?.outcomes)) {
+    for (const criterion of asArray(outcome?.acceptance?.criteria)) {
+      const directClaimRefs = new Set(asArray(criterion?.claimRefs).map(readString).filter(Boolean));
+      for (const gapRef of asArray(criterion?.gapRefs).map(readString).filter(Boolean)) {
+        const gap = gapIndex.get(gapRef);
+        const overlap = asArray(gap?.proofClaimRefs)
+          .map(readString)
+          .filter((reference) => reference && directClaimRefs.has(reference));
+        if (overlap.length > 0) {
+          errors.push(issue(
+            "knowledge-gap.proof-claim.criterion-overlap",
+            `.legatura/plan.json#${readId(criterion) ?? readId(outcome) ?? "criterion"}`,
+            `Criterion direct claimRefs and Knowledge Gap ${gapRef} proofClaimRefs must be disjoint: ${[...new Set(overlap)].sort().join(", ")}.`
+          ));
+        }
+      }
+    }
+  }
+}
+
+function hasExecutableGateRoute({ gates, modules, changePolicy }, claimRef) {
+  const moduleRefs = asArray(modules).map(readId).filter(Boolean);
+  const fullGateId = readString(changePolicy?.fullGate);
+  return asArray(gates).some((gate) => {
+    const commands = Array.isArray(gate?.commands)
+      ? gate.commands
+      : gate?.command ? [gate] : [];
+    return commands.some((command) => (
+      asArray(command?.claimRefs).includes(claimRef)
+        && Boolean(normalizeGateCommand(command?.command))
+        && moduleRefs.some((moduleRef) => (
+          gateAllowsModule(gate, moduleRef, fullGateId)
+            && referenceListAllowsModule(command?.appliesTo, moduleRef)
+        ))
+    ));
+  });
+}
+
+function gateAllowsModule(gate, moduleRef, fullGateId) {
+  const appliesTo = asArray(gate?.appliesTo).map(readString).filter(Boolean);
+  return appliesTo.length === 0
+    || appliesTo.includes(moduleRef)
+    || (readId(gate) === fullGateId
+      && (appliesTo.includes("integration") || appliesTo.includes("release")));
+}
+
+function referenceListAllowsModule(value, moduleRef) {
+  const appliesTo = asArray(value).map(readString).filter(Boolean);
+  return appliesTo.length === 0 || appliesTo.includes(moduleRef);
 }
 
 export function publicProjectModel(model) {

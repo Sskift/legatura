@@ -8,6 +8,7 @@ import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.mjs";
 import { compileOutcomeTransitions } from "../../src/core/outcome-transitions.mjs";
 import {
+  assertKnowledgeGapProofContractsPreserved,
   loadProjectModel,
   publicProjectModel,
   validateProjectModel
@@ -21,6 +22,155 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   const criteriaModel = baseModel();
   enableOutcomeCriteria(criteriaModel);
   assert.equal(validateProjectModel(criteriaModel).valid, true);
+
+  const proofContractModel = structuredClone(criteriaModel);
+  proofContractModel.knowledgeGaps[0].proofClaimRefs = ["dependency-works"];
+  assert.equal(validateProjectModel(proofContractModel).valid, true);
+  const unroutableProofContract = structuredClone(proofContractModel);
+  unroutableProofContract.gates[0].commands = [unroutableProofContract.gates[0].commands[0]];
+  assert.ok(validateProjectModel(unroutableProofContract).errors.some(
+    (error) => error.code === "knowledge-gap.proof-claim.gate-route-missing"
+  ));
+  const disjointProofRoute = structuredClone(proofContractModel);
+  disjointProofRoute.gates[0].appliesTo = ["dependency"];
+  disjointProofRoute.gates[0].commands[1].appliesTo = ["core"];
+  assert.ok(validateProjectModel(disjointProofRoute).errors.some(
+    (error) => error.code === "knowledge-gap.proof-claim.gate-route-missing"
+  ));
+  const invalidGateTimeout = structuredClone(proofContractModel);
+  invalidGateTimeout.gates[0].commands[1].timeoutMs = 0;
+  assert.ok(validateProjectModel(invalidGateTimeout).errors.some(
+    (error) => error.code === "gate.command.timeout.invalid"
+  ));
+  const duplicateGateClaim = structuredClone(proofContractModel);
+  duplicateGateClaim.gates[0].commands[1].claimRefs.push("dependency-works");
+  assert.ok(validateProjectModel(duplicateGateClaim).errors.some(
+    (error) => error.code === "gate.claim.duplicate"
+  ));
+  const proofContractBaseline = governanceBaseline(proofContractModel);
+  const closedProofContract = structuredClone(proofContractModel);
+  closedProofContract.knowledgeGaps[0].status = "closed";
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: proofContractBaseline,
+      currentModel: closedProofContract
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("gap-closure-transition-uncompiled")
+  );
+  const closedProofContractBaseline = governanceBaseline(closedProofContract);
+  const rewrittenClosureHistory = structuredClone(closedProofContract);
+  rewrittenClosureHistory.knowledgeGaps[0].resolution = "A replacement closure narrative.";
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: closedProofContractBaseline,
+      currentModel: rewrittenClosureHistory
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("gap-closure-history-mismatch")
+  );
+
+  const rewrittenProofClaim = structuredClone(closedProofContract);
+  rewrittenProofClaim.contracts[1].claims[0].statement = "A weaker dependency statement is substituted.";
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: proofContractBaseline,
+      currentModel: rewrittenProofClaim
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("proof-claim-semantic-mismatch")
+  );
+
+  const movedProofClaim = structuredClone(closedProofContract);
+  movedProofClaim.contracts[0].claims.push(movedProofClaim.contracts[1].claims.pop());
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: proofContractBaseline,
+      currentModel: movedProofClaim
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("proof-claim-semantic-mismatch")
+  );
+
+  const rewrittenProofRoute = structuredClone(closedProofContract);
+  rewrittenProofRoute.gates[0].commands[1].discriminatoryPower = {
+    rejects: ["only a weaker dependency failure"]
+  };
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: proofContractBaseline,
+      currentModel: rewrittenProofRoute
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("gate-route-semantic-mismatch")
+  );
+
+  const rewrittenProofTimeout = structuredClone(closedProofContract);
+  rewrittenProofTimeout.gates[0].commands[1].timeoutMs = 1;
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: proofContractBaseline,
+      currentModel: rewrittenProofTimeout
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("gate-route-semantic-mismatch")
+  );
+
+  const fullGateProofContract = structuredClone(proofContractModel);
+  fullGateProofContract.projectDocument.changePolicy.fullGate = "minimum";
+  fullGateProofContract.gates[0].appliesTo = ["integration"];
+  assert.equal(validateProjectModel(fullGateProofContract).valid, true);
+  const rewrittenFullGatePolicy = structuredClone(fullGateProofContract);
+  delete rewrittenFullGatePolicy.projectDocument.changePolicy.fullGate;
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: governanceBaseline(fullGateProofContract),
+      currentModel: rewrittenFullGatePolicy
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("gate-route-semantic-mismatch")
+  );
+
+  const declarationBaselineModel = criteriaModel;
+  const declaredOpenContract = structuredClone(declarationBaselineModel);
+  declaredOpenContract.knowledgeGaps[0].proofClaimRefs = ["dependency-works"];
+  assert.doesNotThrow(() => assertKnowledgeGapProofContractsPreserved({
+    governanceBaseline: governanceBaseline(declarationBaselineModel),
+    currentModel: declaredOpenContract
+  }));
+  declaredOpenContract.knowledgeGaps[0].status = "closed";
+  assert.throws(
+    () => assertKnowledgeGapProofContractsPreserved({
+      governanceBaseline: governanceBaseline(declarationBaselineModel),
+      currentModel: declaredOpenContract
+    }),
+    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+      && error.details.problems.includes("proof-contract-and-closure-mixed")
+  );
+
+  const invalidProofContracts = structuredClone(criteriaModel);
+  invalidProofContracts.knowledgeGaps[0].proofClaimRefs = [
+    "core-works",
+    "missing-proof-claim",
+    "missing-proof-claim"
+  ];
+  invalidProofContracts.knowledgeGaps.push({
+    id: "second-fixture-gap",
+    status: "open",
+    statement: "A second Gap cannot own the first Gap's proof Claim.",
+    proofClaimRefs: ["core-works"]
+  });
+  const invalidProofCodes = validateProjectModel(invalidProofContracts).errors
+    .map((error) => error.code);
+  assert.ok(invalidProofCodes.includes("knowledge-gap.proof-claim.unknown"));
+  assert.ok(invalidProofCodes.includes("knowledge-gap.proof-claim.duplicate"));
+  assert.ok(invalidProofCodes.includes("knowledge-gap.proof-claim.criterion-overlap"));
+  assert.ok(invalidProofCodes.includes("knowledge-gap.proof-claim.shared"));
+  const emptyProofContract = structuredClone(criteriaModel);
+  emptyProofContract.knowledgeGaps[0].proofClaimRefs = [];
+  assert.ok(validateProjectModel(emptyProofContract).errors.some(
+    (error) => error.code === "knowledge-gap.proof-claim.invalid"
+  ));
 
   const invalidCriteria = structuredClone(criteriaModel);
   invalidCriteria.plan.outcomes[0].acceptance.criteria[0] = {
@@ -382,15 +532,53 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
       && proof.packages[0].evidenceBindings[0].observationStatus === "passed"
       && /^sha256:[a-f0-9]{64}$/u.test(proof.packages[0].evidenceBindings[0].evidenceDigest)
   )));
-  assert.deepEqual(
-    transitionCompiled.appendedTransitions[0].gapDispositions[0].packages.map((entry) => ({
-      changeId: entry.changeId,
-      acceptanceDigest: entry.acceptanceDigest
-    })),
-    [transitionCase.packageRef]
+  assert.equal(
+    Object.hasOwn(projectedProofs[0].packages[0].evidenceBindings[0], "provenanceKind"),
+    false
   );
+  const gapProof = transitionCompiled.appendedTransitions[0].gapDispositions[0];
+  assert.deepEqual(gapProof.proofClaimRefs, ["dependency-works"]);
+  assert.deepEqual(
+    gapProof.packages.map((entry) => ({
+      changeId: entry.changeId,
+      acceptanceDigest: entry.acceptanceDigest,
+      claimRefs: entry.claimRefs,
+      evidenceRoutes: entry.evidenceBindings.map((binding) => ({
+        provenanceKind: binding.provenanceKind,
+        gateId: binding.gateId,
+        commandId: binding.commandId,
+        claimRefs: binding.claimRefs
+      }))
+    })),
+    [{
+      ...transitionCase.packageRef,
+      claimRefs: ["dependency-works"],
+      evidenceRoutes: [{
+        provenanceKind: "gate-command",
+        gateId: "minimum",
+        commandId: "dependency-proof-command",
+        claimRefs: ["dependency-works"]
+      }]
+    }]
+  );
+  const legacyTransitionCompiled = compileOutcomeTransitions(transitionFixture({ proofContract: false }));
+  const legacyGap = legacyTransitionCompiled.appendedTransitions[0].gapDispositions[0];
+  assert.equal(Object.hasOwn(legacyGap, "proofClaimRefs"), false);
+  assert.deepEqual(Object.keys(legacyGap.packages[0]).sort(), [
+    "acceptanceDigest",
+    "acceptedAt",
+    "changeId"
+  ]);
 
   const transitionFailures = [
+    {
+      name: "Gap closed without an Outcome Transition consuming the closure",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        fixture.currentModel.plan.outcomes[0].status = "active";
+        fixture.currentModel.plan.outcomeTransitions = [];
+      }
+    },
     {
       name: "missing stable Criterion proof",
       code: "OUTCOME_TRANSITION_CRITERIA_INCOMPLETE",
@@ -437,6 +625,90 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
       }
     },
     {
+      name: "indirect-only Evidence used as Gap closure proof",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        const evidence = fixture.acceptedRecord.acceptance.package.evidence
+          .find((item) => item.id === "evidence-dependency-works");
+        evidence.directSupportBindings = [];
+        evidence.supportBindings = [{
+          obligationId: "indirect-fixture-obligation",
+          claimId: "dependency-works"
+        }];
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "Evidence self-identifies as Gate output but its bound run is not configured",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        fixture.acceptedRecord.acceptance.package.gateRuns[0].kind = "builtin-oracle";
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "configured Gate selection does not contain the proof command",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        fixture.acceptedRecord.acceptance.package.gateRuns[0].selection.selectedCommandIds = [
+          "minimum-command"
+        ];
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "Package accepted before the Gap proof Contract declaration",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        const packageBaseline = fixture.acceptedRecord.acceptance.package.governanceBaseline;
+        delete packageBaseline.knowledgeGaps[0].proofClaimRefs;
+        refreshGovernanceDigest(packageBaseline);
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "Package froze a proof Claim under the wrong Contract owner",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        const packageBaseline = fixture.acceptedRecord.acceptance.package.governanceBaseline;
+        packageBaseline.contracts[0].claims.push(packageBaseline.contracts[1].claims.pop());
+        refreshGovernanceDigest(packageBaseline);
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
+      name: "unrelated accepted implementation used as closedBy proof",
+      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      mutate(fixture) {
+        replaceTransitionProofPackage(fixture, outcomeChange({
+          id: "accepted-unrelated-implementation",
+          claims: [{ id: "core-works", statement: "Core remains correct." }]
+        }));
+      }
+    },
+    {
+      name: "current Gate proof route drift",
+      code: "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN",
+      mutate(fixture) {
+        fixture.currentModel.gates[0].commands[1].command = [
+          process.execPath,
+          "-e",
+          "process.exit(1)"
+        ];
+      }
+    },
+    {
+      name: "Package Gate proof route drift",
+      code: "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      mutate(fixture) {
+        const packageBaseline = fixture.acceptedRecord.acceptance.package.governanceBaseline;
+        packageBaseline.gates[0].commands[1].oracle.description =
+          "A historically weaker oracle no longer matches the Closure Contract route.";
+        refreshGovernanceDigest(packageBaseline);
+        resealFixtureRecord(fixture);
+      }
+    },
+    {
       name: "inexact closed Gap disposition",
       code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
       mutate(fixture) {
@@ -445,7 +717,7 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
     },
     {
       name: "Knowledge Gap meaning rewritten during closure",
-      code: "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      code: "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN",
       mutate(fixture) {
         fixture.currentModel.knowledgeGaps[0].statement = "A weaker uncertainty replaces the frozen Gap.";
       }
@@ -577,6 +849,9 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
 
   const declaredMissingLedger = transitionFixture({ mode: "declared" });
   declaredMissingLedger.currentModel.plan.outcomeTransitions = [];
+  declaredMissingLedger.currentModel.knowledgeGaps[0] = structuredClone(
+    declaredMissingLedger.governanceBaseline.knowledgeGaps[0]
+  );
   const declaredCompilation = compileOutcomeTransitions(declaredMissingLedger);
   assert.equal(declaredCompilation.status, "unresolved");
   assert.deepEqual(declaredCompilation.unresolved, [{
@@ -714,7 +989,7 @@ function addForeignContract(model) {
   model.projectDocument.assuranceBoundary.governed.push("foreign");
 }
 
-function transitionFixture({ mode = "enforced" } = {}) {
+function transitionFixture({ mode = "enforced", proofContract = true } = {}) {
   const baselineModel = baseModel();
   enableOutcomeCriteria(baselineModel, [{
     id: "LGT-001-C2",
@@ -722,6 +997,7 @@ function transitionFixture({ mode = "enforced" } = {}) {
     claimRefs: ["dependency-works"],
     gapRefs: []
   }]);
+  if (proofContract) baselineModel.knowledgeGaps[0].proofClaimRefs = ["dependency-works"];
   baselineModel.projectDocument.changePolicy.outcomeTransitionMode = mode;
   baselineModel.plan.outcomeTransitions = [];
   const governance = governanceBaseline(baselineModel);
@@ -797,28 +1073,30 @@ function transitionFixture({ mode = "enforced" } = {}) {
 
 function sealedAcceptedRecord({ change, governanceBaseline, outcomeAlignment }) {
   const acceptedAt = "2026-07-16T10:00:00.000Z";
-  const evidence = change.claims.map((claim) => ({
-    id: `evidence-${claim.id}`,
-    claim: structuredClone(claim),
-    oracle: {
-      kind: "deterministic-fixture-oracle",
-      description: `Reject an incorrect ${claim.id} behavior.`
-    },
-    observation: { status: "passed", exitCode: 0 },
-    provenance: {
-      kind: "gate-command",
-      changeId: change.id,
-      gateId: "minimum",
-      commandId: `verify-${claim.id}`,
-      verificationSubjectDigest: "sha256:fixture-subject",
-      projectModelDigest: "sha256:fixture-model",
-      git: { contentDigest: "sha256:fixture-git" }
-    },
-    applicability: { module: "core" },
-    discriminatoryPower: { rejects: [`incorrect-${claim.id}`] },
-    residualUncertainty: ["The synthetic fixture covers only its declared behavior."],
-    directSupportBindings: [{ claimId: claim.id, claimStatement: claim.statement }]
-  }));
+  const gate = governanceBaseline.gates.find((candidate) => candidate.id === "minimum");
+  const evidence = change.claims.map((claim) => {
+    const command = gate.commands.find((candidate) => candidate.claimRefs.includes(claim.id));
+    return {
+      id: `evidence-${claim.id}`,
+      claim: structuredClone(claim),
+      oracle: structuredClone(command.oracle),
+      observation: { status: "passed", exitCode: 0 },
+      provenance: {
+        kind: "gate-command",
+        changeId: change.id,
+        gateId: gate.id,
+        commandId: command.id,
+        command: structuredClone(command.command),
+        verificationSubjectDigest: "sha256:fixture-subject",
+        projectModelDigest: "sha256:fixture-model",
+        git: { contentDigest: "sha256:fixture-git" }
+      },
+      applicability: { ...structuredClone(command.applicability), module: change.primaryModule },
+      discriminatoryPower: structuredClone(command.discriminatoryPower),
+      residualUncertainty: structuredClone(command.residualUncertainty),
+      directSupportBindings: [{ claimId: claim.id, claimStatement: claim.statement }]
+    };
+  });
   const acceptedPackage = {
     schemaVersion: 1,
     changeId: change.id,
@@ -836,6 +1114,11 @@ function sealedAcceptedRecord({ change, governanceBaseline, outcomeAlignment }) 
       projectModelDigest: "sha256:fixture-model",
       gitContentDigest: "sha256:fixture-git",
       verificationSubjectDigest: "sha256:fixture-subject",
+      selection: {
+        primaryModule: change.primaryModule,
+        selectedCommandIds: evidence.map((item) => item.provenance.commandId),
+        skippedCommandIds: []
+      },
       commandResults: evidence.map((item) => ({
         id: item.provenance.commandId,
         status: "passed",
@@ -860,6 +1143,26 @@ function sealedAcceptedRecord({ change, governanceBaseline, outcomeAlignment }) 
       package: acceptedPackage
     }
   };
+}
+
+function replaceTransitionProofPackage(fixture, implementationChange) {
+  const compiled = compileChangeAgainstGovernance(implementationChange, fixture.governanceBaseline);
+  const acceptedRecord = sealedAcceptedRecord({
+    change: implementationChange,
+    governanceBaseline: fixture.governanceBaseline,
+    outcomeAlignment: compiled.outcomeAlignment
+  });
+  const packageRef = {
+    changeId: acceptedRecord.id,
+    acceptanceDigest: acceptedRecord.acceptance.digest
+  };
+  fixture.acceptedRecord = acceptedRecord;
+  fixture.packageRef = packageRef;
+  fixture.resolvedPackages = [acceptedRecord];
+  fixture.transition.packageRefs = [structuredClone(packageRef)];
+  fixture.currentModel.plan.outcomeTransitions[0].packageRefs = [structuredClone(packageRef)];
+  fixture.currentModel.knowledgeGaps[0].closedBy = [structuredClone(packageRef)];
+  fixture.priorAcceptedPackages = acceptedPackageCatalog([packageRef]);
 }
 
 function resealFixtureRecord(fixture) {
@@ -963,6 +1266,18 @@ function baseModel() {
         applicability: { phase: "acceptance" },
         discriminatoryPower: { rejects: ["a failing command"] },
         residualUncertainty: ["The fixture is bounded."]
+      }, {
+        id: "dependency-proof-command",
+        command: [process.execPath, "-e", "process.exit(0)"],
+        appliesTo: ["core"],
+        claimRefs: ["dependency-works"],
+        oracle: {
+          kind: "process-exit",
+          description: "The dependency proof command exits zero only for the bounded fixture behavior."
+        },
+        applicability: { phase: "acceptance", dependency: "dependency" },
+        discriminatoryPower: { rejects: ["an incorrect dependency behavior"] },
+        residualUncertainty: ["The dependency proof remains bounded to the synthetic fixture."]
       }]
     }],
     plan: {

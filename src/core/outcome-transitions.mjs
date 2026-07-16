@@ -13,6 +13,84 @@ const DEFAULT_ALLOWED_ROUTES = new Set([
   "active->retired"
 ]);
 
+export function assertKnowledgeGapProofContractsPreserved({
+  governanceBaseline,
+  currentModel
+} = {}) {
+  return assertKnowledgeGapProofContractsPreservedInternal({
+    governanceBaseline,
+    currentModel,
+    allowOpenToClosed: false
+  });
+}
+
+function assertKnowledgeGapProofContractsPreservedInternal({
+  governanceBaseline,
+  currentModel,
+  allowOpenToClosed
+}) {
+  const baselineGaps = indexKnowledgeGaps(governanceBaseline?.knowledgeGaps, "frozen");
+  const currentGaps = indexKnowledgeGaps(currentModel?.knowledgeGaps, "current");
+  const baselineClaims = indexProofClaimDescriptors(governanceBaseline);
+  const currentClaims = indexProofClaimDescriptors(currentModel);
+
+  for (const [gapRef, frozenGap] of baselineGaps) {
+    const proofClaimRefs = normalizeStringList(frozenGap?.proofClaimRefs).sort();
+    if (proofClaimRefs.length === 0) continue;
+    const currentGap = currentGaps.get(gapRef);
+    if (!currentGap
+      || canonicalDigest(gapSemanticValue(frozenGap)) !== canonicalDigest(gapSemanticValue(currentGap))) {
+      throw knowledgeGapProofError(
+        "A declared Knowledge Gap Closure Contract cannot be removed or redefined.",
+        { gapRef, problems: [currentGap ? "gap-semantic-mismatch" : "current-gap-missing"] }
+      );
+    }
+    assertExactProofClaimSemantics({
+      gapRef,
+      proofClaimRefs,
+      baselineClaims,
+      currentClaims
+    });
+    for (const claimRef of proofClaimRefs) {
+      const frozenRoutes = gateRoutesForClaim(governanceBaseline, claimRef);
+      const currentRoutes = gateRoutesForClaim(currentModel, claimRef);
+      if (canonicalDigest(frozenRoutes) !== canonicalDigest(currentRoutes)) {
+        throw knowledgeGapProofError(
+          `Gate proof routes for Knowledge Gap Claim ${claimRef} cannot drift after declaration.`,
+          { gapRef, claimRef, problems: ["gate-route-semantic-mismatch"] }
+        );
+      }
+    }
+    if (frozenGap?.status === "closed") {
+      if (canonicalDigest(gapClosureValue(frozenGap)) !== canonicalDigest(gapClosureValue(currentGap))) {
+        throw knowledgeGapProofError(
+          `Closed Knowledge Gap ${gapRef} history cannot be reopened or rewritten in place.`,
+          { gapRef, problems: ["gap-closure-history-mismatch"] }
+        );
+      }
+    } else if (currentGap?.status === "closed" && !allowOpenToClosed) {
+      throw knowledgeGapProofError(
+        `Knowledge Gap ${gapRef} can close only inside a compiled Outcome Transition.`,
+        { gapRef, problems: ["gap-closure-transition-uncompiled"] }
+      );
+    }
+  }
+
+  for (const [gapRef, currentGap] of currentGaps) {
+    const currentProofClaimRefs = normalizeStringList(currentGap?.proofClaimRefs).sort();
+    if (currentProofClaimRefs.length === 0) continue;
+    const frozenProofClaimRefs = normalizeStringList(baselineGaps.get(gapRef)?.proofClaimRefs).sort();
+    if (frozenProofClaimRefs.length === 0 && currentGap?.status !== "open") {
+      throw knowledgeGapProofError(
+        "A Knowledge Gap Closure Contract must be declared while the Gap is open, before any closure amendment.",
+        { gapRef, problems: ["proof-contract-and-closure-mixed"] }
+      );
+    }
+  }
+
+  return { valid: true };
+}
+
 export function compileOutcomeTransitions({
   change,
   governanceBaseline,
@@ -43,6 +121,11 @@ export function compileOutcomeTransitions({
     );
   }
   assertGovernanceBaselineSeal(governanceBaseline);
+  assertKnowledgeGapProofContractsPreservedInternal({
+    governanceBaseline,
+    currentModel,
+    allowOpenToClosed: true
+  });
   const baselineProjectId = readProjectId(governanceBaseline);
   const currentProjectId = readProjectId(currentModel);
   if (!baselineProjectId || currentProjectId !== baselineProjectId) {
@@ -114,10 +197,10 @@ export function compileOutcomeTransitions({
   }
   const priorCatalog = normalizePriorAcceptedPackages(priorAcceptedPackages);
   const priorRefs = priorCatalog.refs;
-  const targetClaimIndex = new Map(asArray(governanceBaseline.contracts)
-    .flatMap((contract) => asArray(contract?.claims))
-    .map((claim) => [readString(claim?.id), claim])
-    .filter(([id]) => Boolean(id)));
+  const targetClaimIndex = indexContractClaims(governanceBaseline);
+  const currentClaimIndex = indexContractClaims(currentModel);
+  const targetProofClaimIndex = indexProofClaimDescriptors(governanceBaseline);
+  const currentProofClaimIndex = indexProofClaimDescriptors(currentModel);
   const baselineGaps = indexKnowledgeGaps(governanceBaseline?.knowledgeGaps, "frozen");
   const currentGaps = indexKnowledgeGaps(currentModel?.knowledgeGaps, "current");
   const allowedRoutes = new Set(normalizeStringList(
@@ -137,10 +220,19 @@ export function compileOutcomeTransitions({
     packageRecords,
     priorRefs,
     targetClaimIndex,
+    currentClaimIndex,
+    targetProofClaimIndex,
+    currentProofClaimIndex,
     baselineGaps,
     currentGaps,
+    currentModel,
     allowedRoutes
   })).sort(compareTransitions);
+  assertGapClosureDeltasCovered({
+    baselineGaps,
+    currentGaps,
+    appendedTransitions
+  });
 
   return finalizeCompilation({
     mode,
@@ -285,8 +377,12 @@ function compileTransition({
   packageRecords,
   priorRefs,
   targetClaimIndex,
+  currentClaimIndex,
+  targetProofClaimIndex,
+  currentProofClaimIndex,
   baselineGaps,
   currentGaps,
+  currentModel,
   allowedRoutes
 }) {
   const route = `${delta.from}->${delta.to}`;
@@ -318,18 +414,6 @@ function compileTransition({
   }));
   const usedPackageKeys = new Set();
 
-  const criterionProofs = criteria.map((criterion) => {
-    const supplied = transition.criterionAssessments
-      .find((assessment) => assessment.criterionRef === criterion.id);
-    return compileCriterionProof({
-      outcome: delta.baselineOutcome,
-      criterion,
-      supplied,
-      resolvedPool,
-      targetClaimIndex,
-      usedPackageKeys
-    });
-  });
   const requiredGapRefs = [...new Set(criteria.flatMap((criterion) => normalizeStringList(criterion.gapRefs)))].sort();
   const observedGapRefs = transition.gapDispositions.map((entry) => entry.gapRef).sort();
   const missingGapRefs = requiredGapRefs.filter((ref) => !observedGapRefs.includes(ref));
@@ -348,8 +432,26 @@ function compileTransition({
     resolvedPool,
     baselineGaps,
     currentGaps,
+    targetOutcome: delta.baselineOutcome,
+    targetClaimIndex,
+    currentClaimIndex,
+    targetProofClaimIndex,
+    currentProofClaimIndex,
+    currentModel,
     usedPackageKeys
   }));
+  const criterionProofs = criteria.map((criterion) => {
+    const supplied = transition.criterionAssessments
+      .find((assessment) => assessment.criterionRef === criterion.id);
+    return compileCriterionProof({
+      outcome: delta.baselineOutcome,
+      criterion,
+      supplied,
+      resolvedPool,
+      targetClaimIndex,
+      usedPackageKeys
+    });
+  });
   const unusedPackageRefs = transition.packageRefs
     .filter((ref) => !usedPackageKeys.has(packageRefKey(ref)));
   if (unusedPackageRefs.length > 0) {
@@ -496,6 +598,12 @@ function compileGapDisposition({
   resolvedPool,
   baselineGaps,
   currentGaps,
+  targetOutcome,
+  targetClaimIndex,
+  currentClaimIndex,
+  targetProofClaimIndex,
+  currentProofClaimIndex,
+  currentModel,
   usedPackageKeys
 }) {
   const frozenGap = baselineGaps.get(gapRef);
@@ -525,6 +633,26 @@ function compileGapDisposition({
       { gapRef, declaredRefs }
     );
   }
+  const proofClaimRefs = normalizeStringList(frozenGap?.proofClaimRefs).sort();
+  const proofClaims = proofClaimRefs.map((claimRef) => {
+    const frozenClaim = targetClaimIndex.get(claimRef);
+    const currentClaim = currentClaimIndex.get(claimRef);
+    const frozenDescriptor = targetProofClaimIndex.get(claimRef);
+    const currentDescriptor = currentProofClaimIndex.get(claimRef);
+    if (!frozenClaim
+      || !currentClaim
+      || !frozenDescriptor
+      || !currentDescriptor
+      || canonicalDigest(frozenDescriptor) !== canonicalDigest(currentDescriptor)) {
+      throw transitionError(
+        "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+        `Knowledge Gap ${gapRef} proof Claim ${claimRef} must preserve its exact Contract ownership and meaning.`,
+        { gapRef, claimRef, problems: ["proof-claim-semantic-mismatch"] }
+      );
+    }
+    return frozenClaim;
+  });
+  const coveredProofClaimRefs = new Set();
   const packages = declaredRefs.map((ref) => {
     const selected = resolvedPool.find((entry) => packageRefKey(entry.ref) === packageRefKey(ref));
     if (!selected) {
@@ -534,15 +662,171 @@ function compileGapDisposition({
         { gapRef, missingPackageRef: ref }
       );
     }
+    const proof = proofClaimRefs.length === 0
+      ? null
+      : compileGapPackageProof({
+        gapRef,
+        proofClaimRefs,
+        proofClaims,
+        selected,
+        targetOutcome,
+        targetClaimIndex,
+        targetProofClaimIndex,
+        currentModel
+      });
+    proof?.claimRefs.forEach((claimRef) => coveredProofClaimRefs.add(claimRef));
     usedPackageKeys.add(packageRefKey(ref));
-    return { ...ref, acceptedAt: selected.inspection.acceptedAt };
+    return proof
+      ? {
+        ...ref,
+        acceptedAt: selected.inspection.acceptedAt,
+        claimRefs: proof.claimRefs,
+        evidenceBindings: proof.evidenceBindings
+      }
+      : { ...ref, acceptedAt: selected.inspection.acceptedAt };
   }).sort(comparePackageProofs);
-  return {
+  const missingProofClaimRefs = proofClaimRefs.filter((claimRef) => !coveredProofClaimRefs.has(claimRef));
+  if (missingProofClaimRefs.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      `Knowledge Gap ${gapRef} proof Claims are not completely covered by its closedBy Packages.`,
+      { gapRef, missingProofClaimRefs, problems: ["proof-claim-coverage-incomplete"] }
+    );
+  }
+  const disposition = {
     gapRef,
     rationale: supplied.rationale,
     resolution: gap.resolution,
     reopenTrigger: gap.reopenTrigger,
     packages
+  };
+  return proofClaimRefs.length > 0
+    ? { ...disposition, proofClaimRefs }
+    : disposition;
+}
+
+function compileGapPackageProof({
+  gapRef,
+  proofClaimRefs,
+  proofClaims,
+  selected,
+  targetOutcome,
+  targetClaimIndex,
+  targetProofClaimIndex,
+  currentModel
+}) {
+  const packageContent = selected.inspection.package;
+  const packageBaseline = packageContent?.governanceBaseline;
+  const packageGap = asArray(packageBaseline?.knowledgeGaps)
+    .find((candidate) => candidate?.id === gapRef);
+  const packageProofClaimRefs = normalizeStringList(packageGap?.proofClaimRefs).sort();
+  if (canonicalDigest(packageProofClaimRefs) !== canonicalDigest(proofClaimRefs)) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      `Accepted Package ${selected.ref.changeId} predates or changes the declared Closure Contract for ${gapRef}.`,
+      {
+        gapRef,
+        changeId: selected.ref.changeId,
+        expectedProofClaimRefs: proofClaimRefs,
+        observedProofClaimRefs: packageProofClaimRefs,
+        problems: ["gap-proof-contract-not-predeclared"]
+      }
+    );
+  }
+
+  const packageBaselineClaims = indexProofClaimDescriptors(packageBaseline);
+  const mismatchedBaselineClaimRefs = proofClaims
+    .filter((claim) => (
+      canonicalDigest(packageBaselineClaims.get(claim.id) ?? null)
+        !== canonicalDigest(targetProofClaimIndex.get(claim.id) ?? null)
+    ))
+    .map((claim) => claim.id);
+  if (mismatchedBaselineClaimRefs.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      `Accepted Package ${selected.ref.changeId} did not freeze the exact Closure Contract Claim semantics.`,
+      {
+        gapRef,
+        changeId: selected.ref.changeId,
+        mismatchedClaimRefs: mismatchedBaselineClaimRefs,
+        problems: ["package-proof-claim-semantic-mismatch"]
+      }
+    );
+  }
+
+  const packageClaims = new Map(asArray(packageContent?.claims)
+    .map((claim) => [readString(claim?.id), claim])
+    .filter(([claimRef]) => Boolean(claimRef)));
+  const coveredClaims = proofClaims.filter((claim) => (
+    packageClaims.get(claim.id)?.statement === claim.statement
+  ));
+  if (coveredClaims.length === 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      `Accepted Package ${selected.ref.changeId} covers none of the required Closure Contract Claims.`,
+      { gapRef, changeId: selected.ref.changeId, proofClaimRefs, problems: ["package-proof-claim-missing"] }
+    );
+  }
+  const evidenceBindings = deriveEvidenceBindings(packageContent, coveredClaims, {
+    outcomeRef: targetOutcome.id,
+    gapRef,
+    changeId: selected.ref.changeId
+  }, { directGateOnly: true, currentModel });
+
+  const exceptions = asArray(packageContent?.outcomeAlignment?.exceptions).filter((entry) => (
+    entry?.outcomeRef === targetOutcome.id
+  ));
+  const targetContributions = asArray(packageContent?.outcomeAlignment?.contributions).filter((entry) => (
+    entry?.outcomeRef === targetOutcome.id
+  ));
+  if (packageContent?.changeKind !== "implementation"
+    || packageContent?.outcomeAlignment?.status !== "complete"
+    || exceptions.length > 0
+    || targetContributions.length === 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      `Accepted Package ${selected.ref.changeId} is not a complete implementation Contribution to ${targetOutcome.id}.`,
+      {
+        gapRef,
+        outcomeRef: targetOutcome.id,
+        changeId: selected.ref.changeId,
+        problems: [
+          ...(packageContent?.changeKind === "implementation" ? [] : ["package-kind-not-implementation"]),
+          ...(packageContent?.outcomeAlignment?.status === "complete" ? [] : ["outcome-alignment-incomplete"]),
+          ...(exceptions.length === 0 ? [] : ["exception-proof-forbidden"]),
+          ...(targetContributions.length > 0 ? [] : ["target-outcome-contribution-missing"])
+        ]
+      }
+    );
+  }
+  for (const contribution of targetContributions) {
+    const targetCriterion = asArray(targetOutcome?.acceptance?.criteria)
+      .find((criterion) => criterion?.id === contribution?.criterionRef);
+    if (!targetCriterion) {
+      throw transitionError(
+        "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+        `Accepted Package ${selected.ref.changeId} Contribution targets an unknown frozen Criterion.`,
+        {
+          gapRef,
+          outcomeRef: targetOutcome.id,
+          changeId: selected.ref.changeId,
+          criterionRef: contribution?.criterionRef ?? null,
+          problems: ["target-criterion-missing"]
+        }
+      );
+    }
+    validateContributionBinding({
+      packageContent,
+      contribution,
+      targetOutcome,
+      targetCriterion,
+      targetClaimIndex
+    });
+  }
+
+  return {
+    claimRefs: coveredClaims.map((claim) => claim.id).sort(),
+    evidenceBindings
   };
 }
 
@@ -704,7 +988,10 @@ function validateContributionBinding({
   return claims;
 }
 
-function deriveEvidenceBindings(packageContent, claims, context) {
+function deriveEvidenceBindings(packageContent, claims, context, {
+  directGateOnly = false,
+  currentModel = null
+} = {}) {
   const evidence = asArray(packageContent.evidence);
   const duplicateEvidenceIds = duplicates(evidence.map((item) => readString(item?.id)).filter(Boolean));
   const allRunBindingIds = asArray(packageContent.gateRuns)
@@ -721,13 +1008,24 @@ function deriveEvidenceBindings(packageContent, claims, context) {
   for (const claim of claims) {
     const matching = evidence.filter((item) => {
       if (!isPositiveObservation(item?.observation)) return false;
-      if (!["builtin-oracle", "gate-command"].includes(readString(item?.provenance?.kind))) return false;
+      const provenanceKind = readString(item?.provenance?.kind);
+      if (directGateOnly ? provenanceKind !== "gate-command" : !["builtin-oracle", "gate-command"].includes(provenanceKind)) {
+        return false;
+      }
       if (!readString(item?.oracle?.kind) || !isSubstantive(item?.residualUncertainty)) return false;
-      if (!evidenceBindsOnePassedRun(item, packageContent)) return false;
-      return (item?.claim?.id === claim.id && item?.claim?.statement === claim.statement)
-        || asArray(item?.directSupportBindings).some((binding) => (
+      if (!evidenceBindsOnePassedRun(item, packageContent, { requireConfiguredGate: directGateOnly })) {
+        return false;
+      }
+      const directlySupports = asArray(item?.directSupportBindings).filter((binding) => (
           binding?.claimId === claim.id && binding?.claimStatement === claim.statement
-        ));
+      )).length === 1;
+      if (directGateOnly) {
+        if (!directlySupports) return false;
+        assertDirectGateEvidenceRoute({ item, claim, packageContent, currentModel, context });
+        return true;
+      }
+      return (item?.claim?.id === claim.id && item?.claim?.statement === claim.statement)
+        || directlySupports;
     });
     if (matching.length === 0) {
       throw transitionError(
@@ -741,6 +1039,11 @@ function deriveEvidenceBindings(packageContent, claims, context) {
         evidenceId: item.id,
         evidenceDigest: canonicalDigest(item),
         claimRefs: [],
+        ...(directGateOnly ? {
+          provenanceKind: readString(item?.provenance?.kind) ?? null,
+          gateId: readString(item?.provenance?.gateId) ?? null,
+          commandId: readString(item?.provenance?.commandId) ?? null
+        } : {}),
         oracleKind: readString(item?.oracle?.kind) ?? null,
         observationStatus: readString(item?.observation?.status) ?? null,
         residualUncertainty: cloneJson(item.residualUncertainty)
@@ -752,7 +1055,74 @@ function deriveEvidenceBindings(packageContent, claims, context) {
   return [...summaries.values()].sort((left, right) => left.evidenceId.localeCompare(right.evidenceId));
 }
 
-function evidenceBindsOnePassedRun(item, packageContent) {
+function assertDirectGateEvidenceRoute({ item, claim, packageContent, currentModel, context }) {
+  const gateId = readString(item?.provenance?.gateId);
+  const commandId = readString(item?.provenance?.commandId);
+  const packageRoutes = gateRouteValues(packageContent?.governanceBaseline)
+    .filter((route) => route.gateId === gateId && route.commandId === commandId);
+  const currentRoutes = gateRouteValues(currentModel)
+    .filter((route) => route.gateId === gateId && route.commandId === commandId);
+  if (packageRoutes.length !== 1 || currentRoutes.length !== 1) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      `Accepted Package ${context.changeId} Evidence does not resolve one exact current Gate route.`,
+      {
+        ...context,
+        claimRef: claim.id,
+        gateId: gateId ?? null,
+        commandId: commandId ?? null,
+        problems: ["gate-route-missing-or-ambiguous"]
+      }
+    );
+  }
+  const packageRoute = packageRoutes[0];
+  const currentRoute = currentRoutes[0];
+  const routeProblems = [];
+  if (canonicalDigest(packageRoute) !== canonicalDigest(currentRoute)) {
+    routeProblems.push("gate-route-semantic-mismatch");
+  }
+  if (!packageRoute.claimRefs.includes(claim.id)) {
+    routeProblems.push("gate-route-claim-mismatch");
+  }
+  if (!gateRouteAppliesToModule(packageRoute, packageContent?.primaryModule)) {
+    routeProblems.push("gate-route-module-inapplicable");
+  }
+  if (!gateRouteAppliesToModule(currentRoute, packageContent?.primaryModule)) {
+    routeProblems.push("current-gate-route-module-inapplicable");
+  }
+  const evidenceSemantics = {
+    command: cloneJson(item?.provenance?.command),
+    oracle: cloneJson(item?.oracle),
+    applicability: cloneJson(item?.applicability),
+    discriminatoryPower: cloneJson(item?.discriminatoryPower),
+    residualUncertainty: cloneJson(item?.residualUncertainty)
+  };
+  const expectedEvidenceSemantics = {
+    command: cloneJson(packageRoute.command),
+    oracle: cloneJson(packageRoute.oracle),
+    applicability: gateEvidenceApplicability(packageRoute.applicability, packageContent?.primaryModule),
+    discriminatoryPower: cloneJson(packageRoute.discriminatoryPower),
+    residualUncertainty: cloneJson(packageRoute.residualUncertainty)
+  };
+  if (canonicalDigest(evidenceSemantics) !== canonicalDigest(expectedEvidenceSemantics)) {
+    routeProblems.push("evidence-gate-route-semantic-mismatch");
+  }
+  if (routeProblems.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_PROOF_INELIGIBLE",
+      `Accepted Package ${context.changeId} Evidence does not preserve its exact Gate route semantics.`,
+      {
+        ...context,
+        claimRef: claim.id,
+        gateId,
+        commandId,
+        problems: routeProblems
+      }
+    );
+  }
+}
+
+function evidenceBindsOnePassedRun(item, packageContent, { requireConfiguredGate = false } = {}) {
   const itemId = readString(item?.id);
   const itemDigest = canonicalDigest(item);
   if (!itemId) return false;
@@ -776,6 +1146,14 @@ function evidenceBindsOnePassedRun(item, packageContent) {
     return run.kind === "builtin-oracle";
   }
   if (provenance.kind !== "gate-command" || provenance.gateId !== run.gateId) return false;
+  if (requireConfiguredGate) {
+    const selectedCommandIds = asArray(run?.selection?.selectedCommandIds);
+    if (run.kind !== "configured-gate"
+      || run?.selection?.primaryModule !== packageContent.primaryModule
+      || selectedCommandIds.filter((id) => id === provenance.commandId).length !== 1) {
+      return false;
+    }
+  }
   const commandResults = asArray(run.commandResults).filter((result) => result?.evidenceId === itemId);
   return commandResults.length === 1
     && commandResults[0]?.id === provenance.commandId
@@ -1155,6 +1533,107 @@ function criterionSemanticValue(criterion) {
   };
 }
 
+function indexContractClaims(model) {
+  return new Map(asArray(model?.contracts)
+    .flatMap((contract) => asArray(contract?.claims))
+    .map((claim) => [readString(claim?.id), claim])
+    .filter(([claimRef]) => Boolean(claimRef)));
+}
+
+function indexProofClaimDescriptors(model) {
+  const moduleIndex = new Map(asArray(model?.modules)
+    .map((module) => [readString(module?.id), module])
+    .filter(([moduleRef]) => Boolean(moduleRef)));
+  return new Map(asArray(model?.contracts).flatMap((contract) => {
+    const contractRef = readString(contract?.id) ?? null;
+    const ownerModuleRef = readModelReference(contract?.owner, ["module", "moduleId", "id"])
+      ?? null;
+    const factAuthorityRef = readModelReference(moduleIndex.get(ownerModuleRef)?.factAuthority)
+      ?? null;
+    return asArray(contract?.claims).flatMap((claim) => {
+      const id = readString(claim?.id);
+      if (!id) return [];
+      return [[id, {
+        id,
+        statement: readString(claim?.statement) ?? null,
+        contractRef,
+        ownerModuleRef,
+        factAuthorityRef
+      }]];
+    });
+  }));
+}
+
+function assertExactProofClaimSemantics({
+  gapRef,
+  proofClaimRefs,
+  baselineClaims,
+  currentClaims
+}) {
+  const mismatchedClaimRefs = proofClaimRefs.filter((claimRef) => {
+    const frozenClaim = baselineClaims.get(claimRef);
+    const currentClaim = currentClaims.get(claimRef);
+    return !frozenClaim
+      || !currentClaim
+      || canonicalDigest(frozenClaim) !== canonicalDigest(currentClaim);
+  });
+  if (mismatchedClaimRefs.length > 0) {
+    throw knowledgeGapProofError(
+      "Knowledge Gap Closure Contract Claims must preserve their exact statement, Contract owner, and Fact Authority.",
+      { gapRef, mismatchedClaimRefs, problems: ["proof-claim-semantic-mismatch"] }
+    );
+  }
+}
+
+function gateRoutesForClaim(model, claimRef) {
+  return gateRouteValues(model).filter((route) => route.claimRefs.includes(claimRef));
+}
+
+function gateRouteValues(model) {
+  const fullGateId = readString(model?.projectDocument?.changePolicy?.fullGate);
+  return asArray(model?.gates).flatMap((gate) => {
+    const commands = Array.isArray(gate?.commands)
+      ? gate.commands
+      : gate?.command ? [gate] : [];
+    return commands.map((command) => ({
+      gateId: readString(gate?.id) ?? null,
+      commandId: readString(command?.id) ?? null,
+      command: cloneJson(command?.command),
+      timeoutMs: command?.timeoutMs ?? null,
+      isFullGate: readString(gate?.id) === fullGateId,
+      gateAppliesTo: normalizeStringList(gate?.appliesTo).sort(),
+      appliesTo: normalizeStringList(command?.appliesTo).sort(),
+      claimRefs: normalizeStringList(command?.claimRefs).sort(),
+      oracle: cloneJson(command?.oracle),
+      applicability: cloneJson(command?.applicability),
+      discriminatoryPower: cloneJson(command?.discriminatoryPower),
+      residualUncertainty: cloneJson(command?.residualUncertainty)
+    }));
+  }).sort((left, right) => (
+    (left.gateId ?? "").localeCompare(right.gateId ?? "")
+      || (left.commandId ?? "").localeCompare(right.commandId ?? "")
+  ));
+}
+
+function gateEvidenceApplicability(configured, primaryModule) {
+  const value = cloneJson(configured);
+  const conditions = value && typeof value === "object" && !Array.isArray(value)
+    ? value
+    : { description: value };
+  return {
+    ...conditions,
+    module: primaryModule
+  };
+}
+
+function gateRouteAppliesToModule(route, primaryModule) {
+  const commandApplies = route.appliesTo.length === 0 || route.appliesTo.includes(primaryModule);
+  if (!commandApplies) return false;
+  if (route.gateAppliesTo.length === 0 || route.gateAppliesTo.includes(primaryModule)) return true;
+  return route.isFullGate === true
+    && (route.gateAppliesTo.includes("integration") || route.gateAppliesTo.includes("release"));
+}
+
 function indexKnowledgeGaps(value, label) {
   const entries = asArray(value);
   const ids = entries.map((gap) => readString(gap?.id)).filter(Boolean);
@@ -1175,8 +1654,42 @@ function gapSemanticValue(gap) {
     statement: readString(gap?.statement) ?? null,
     affects: normalizeStringList(gap?.affects).sort(),
     owner: readString(gap?.owner) ?? null,
-    expansionTrigger: readString(gap?.expansionTrigger) ?? null
+    expansionTrigger: readString(gap?.expansionTrigger) ?? null,
+    proofClaimRefs: normalizeStringList(gap?.proofClaimRefs).sort()
   };
+}
+
+function gapClosureValue(gap) {
+  return {
+    status: readString(gap?.status) ?? null,
+    resolution: readString(gap?.resolution) ?? null,
+    reopenTrigger: readString(gap?.reopenTrigger) ?? null,
+    closedBy: cloneJson(gap?.closedBy ?? null)
+  };
+}
+
+function assertGapClosureDeltasCovered({ baselineGaps, currentGaps, appendedTransitions }) {
+  const coveredGapRefs = new Set(asArray(appendedTransitions)
+    .flatMap((transition) => asArray(transition?.gapDispositions))
+    .map((disposition) => readString(disposition?.gapRef))
+    .filter(Boolean));
+  const unboundGapRefs = [...baselineGaps].flatMap(([gapRef, frozenGap]) => {
+    const currentGap = currentGaps.get(gapRef);
+    const hasProofContract = normalizeStringList(frozenGap?.proofClaimRefs).length > 0;
+    return hasProofContract
+      && frozenGap?.status === "open"
+      && currentGap?.status === "closed"
+      && !coveredGapRefs.has(gapRef)
+      ? [gapRef]
+      : [];
+  });
+  if (unboundGapRefs.length > 0) {
+    throw transitionError(
+      "OUTCOME_TRANSITION_GAP_UNRESOLVED",
+      "Every Knowledge Gap closure delta must be consumed by an exact compiled Outcome Transition.",
+      { unboundGapRefs, problems: ["gap-closure-transition-unbound"] }
+    );
+  }
 }
 
 function assertGovernanceBaselineSeal(governanceBaseline) {
@@ -1241,6 +1754,16 @@ function readString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function readModelReference(value, keys = ["id", "module", "moduleId", "target"]) {
+  if (typeof value === "string") return readString(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  for (const key of keys) {
+    const reference = readString(value[key]);
+    if (reference) return reference;
+  }
+  return undefined;
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : [];
 }
@@ -1274,6 +1797,14 @@ function escapeRegExp(value) {
 
 function ledgerIssue(code, location, message, details) {
   return { code, location, message, ...(details ? { details } : {}) };
+}
+
+function knowledgeGapProofError(message, details) {
+  const error = new Error(message);
+  error.code = "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN";
+  error.statusCode = 422;
+  error.details = details;
+  return error;
 }
 
 function transitionError(code, message, details) {
