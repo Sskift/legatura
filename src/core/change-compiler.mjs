@@ -215,6 +215,41 @@ export function compileOutcomeAlignmentAgainstGovernance(change, governanceBasel
   });
 }
 
+export function compileClaimGateRoutes(model, claimRef) {
+  const exactClaimRef = readString(claimRef);
+  if (!exactClaimRef) return [];
+  const moduleRefs = normalizeStringList(
+    asArray(model?.modules).map((module) => readModelReference(module))
+  ).sort();
+  const fullGateId = readString(model?.projectDocument?.changePolicy?.fullGate);
+  return asArray(model?.gates).flatMap((gate) => {
+    const commands = Array.isArray(gate?.commands)
+      ? gate.commands
+      : gate?.command ? [gate] : [];
+    return commands
+      .filter((command) => normalizeStringList(command?.claimRefs).includes(exactClaimRef))
+      .map((command) => ({
+        claimRef: exactClaimRef,
+        gateId: readString(gate?.id) ?? null,
+        commandId: readString(command?.id) ?? null,
+        command: cloneJson(command?.command),
+        timeoutMs: command?.timeoutMs ?? null,
+        effectiveModuleRefs: moduleRefs.filter((moduleRef) => (
+          gateSelectsModule(gate, moduleRef, fullGateId)
+            && commandSelectsModule(command, moduleRef)
+        )),
+        oracle: cloneJson(command?.oracle),
+        applicability: cloneJson(command?.applicability),
+        discriminatoryPower: cloneJson(command?.discriminatoryPower),
+        residualUncertainty: cloneJson(command?.residualUncertainty)
+      }));
+  }).sort((left, right) => (
+    (left.gateId ?? "").localeCompare(right.gateId ?? "")
+      || (left.commandId ?? "").localeCompare(right.commandId ?? "")
+      || canonicalDigest(left).localeCompare(canonicalDigest(right))
+  ));
+}
+
 function compileIntegrityTarget(change) {
   const changeKind = readString(change.changeKind) ?? "implementation";
   if (!INTEGRITY_CHANGE_KINDS.includes(changeKind)) return null;
@@ -1110,6 +1145,7 @@ function compileVerificationObligations({ claims, primaryModule, governanceBasel
     const targets = normalizeStringList(gate.appliesTo);
     return targets.length === 0 || targets.includes(primaryModule.id);
   });
+  const applicableGateIds = new Set(applicableGates.map((gate) => readString(gate?.id)).filter(Boolean));
   const authoritativeClaims = new Map(governanceBaseline.contracts.flatMap((contract) => (
     asArray(contract.claims).map((claim) => [claim.id, claim])
   )));
@@ -1130,23 +1166,37 @@ function compileVerificationObligations({ claims, primaryModule, governanceBasel
       );
     }
     const user = suppliedByClaim.get(claim.id) ?? {};
-    const exactGateIds = unique(applicableGates
-      .filter((gate) => asArray(gate.commands)
-        .some((command) => commandAppliesToModule(command, primaryModule.id)
-          && normalizeStringList(command.claimRefs).includes(claim.id)))
-      .map((gate) => gate.id));
+    const exactRoutes = compileAcceptanceClaimRoutes({
+      governanceBaseline,
+      claimId: claim.id,
+      primaryModuleId: primaryModule.id,
+      applicableGateIds
+    });
+    const exactGateIds = unique(exactRoutes.map((route) => route.gateId));
     const userGateRefs = normalizeStringList(user.gateClaimRefs ?? user.evidenceSourceRefs ?? user.supportedBy);
     const crossClaimRefs = userGateRefs.filter((ref) => ref !== claim.id);
+    const sourceRoutes = compileAcceptanceSourceRoutes({
+      governanceBaseline,
+      claimIds: crossClaimRefs,
+      primaryModuleId: primaryModule.id,
+      applicableGateIds
+    });
     let mapping;
     if (claim.id === "project-model-self-consistent") {
       mapping = { status: "mapped", kind: "builtin-oracle", sourceIds: ["project-model"] };
     } else if (exactGateIds.length > 0) {
-      mapping = { status: "mapped", kind: "exact-contract-claim", gateIds: exactGateIds };
+      mapping = {
+        status: "mapped",
+        kind: "exact-contract-claim",
+        gateIds: exactGateIds,
+        routes: exactRoutes
+      };
     } else if (crossClaimRefs.length > 0 && hasCrossMappingSemantics(user)) {
       mapping = {
         status: "pending-authority",
         kind: "cross-claim",
         sourceClaimIds: crossClaimRefs,
+        sourceRoutes,
         requiredApproval: `approvedObligationIds must include ${readString(user.id) ?? `verify-${claim.id}`}`
       };
     } else {
@@ -1172,6 +1222,63 @@ function compileVerificationObligations({ claims, primaryModule, governanceBasel
       mapping
     };
   });
+}
+
+function compileAcceptanceClaimRoutes({
+  governanceBaseline,
+  claimId,
+  primaryModuleId,
+  applicableGateIds
+}) {
+  const routes = compileClaimGateRoutes(governanceBaseline, claimId)
+    .filter((route) => applicableGateIds.has(route.gateId)
+      && asArray(route.effectiveModuleRefs).includes(primaryModuleId))
+    .map((route) => ({ gateId: route.gateId, commandId: route.commandId }));
+  return uniqueGateCommandRoutes(routes);
+}
+
+function compileAcceptanceSourceRoutes({
+  governanceBaseline,
+  claimIds,
+  primaryModuleId,
+  applicableGateIds
+}) {
+  const routes = claimIds.flatMap((sourceClaimId) => compileAcceptanceClaimRoutes({
+    governanceBaseline,
+    claimId: sourceClaimId,
+    primaryModuleId,
+    applicableGateIds
+  }).map((route) => ({ sourceClaimId, ...route })));
+  const indexed = new Map();
+  for (const route of routes) {
+    const sourceClaimId = readString(route?.sourceClaimId);
+    const gateId = readString(route?.gateId);
+    const commandId = readString(route?.commandId);
+    if (!sourceClaimId || !gateId || !commandId) continue;
+    indexed.set(
+      `${sourceClaimId}\u0000${gateId}\u0000${commandId}`,
+      { sourceClaimId, gateId, commandId }
+    );
+  }
+  return [...indexed.values()].sort((left, right) => (
+    left.sourceClaimId.localeCompare(right.sourceClaimId)
+      || left.gateId.localeCompare(right.gateId)
+      || left.commandId.localeCompare(right.commandId)
+  ));
+}
+
+function uniqueGateCommandRoutes(routes) {
+  const indexed = new Map();
+  for (const route of routes) {
+    const gateId = readString(route?.gateId);
+    const commandId = readString(route?.commandId);
+    if (!gateId || !commandId) continue;
+    indexed.set(`${gateId}\u0000${commandId}`, { gateId, commandId });
+  }
+  return [...indexed.values()].sort((left, right) => (
+    left.gateId.localeCompare(right.gateId)
+      || left.commandId.localeCompare(right.commandId)
+  ));
 }
 
 function compileVerificationPlan({ primaryModule, governanceBaseline, verificationObligations }) {
@@ -1397,9 +1504,22 @@ function hasCrossMappingSemantics(obligation) {
     && isSubstantive(obligation.discriminatoryPower));
 }
 
-function commandAppliesToModule(command, moduleId) {
-  const appliesTo = normalizeStringList(command?.appliesTo);
-  return appliesTo.length === 0 || appliesTo.includes(moduleId);
+function gateSelectsModule(gate, moduleRef, fullGateId) {
+  const appliesTo = normalizeGateScope(gate?.appliesTo);
+  if (appliesTo.length === 0 || appliesTo.includes(moduleRef)) return true;
+  return readString(gate?.id) === fullGateId
+    && (appliesTo.includes("integration") || appliesTo.includes("release"));
+}
+
+function commandSelectsModule(command, moduleRef) {
+  const appliesTo = normalizeGateScope(command?.appliesTo);
+  return appliesTo.length === 0 || appliesTo.includes(moduleRef);
+}
+
+function normalizeGateScope(value) {
+  if (value === undefined || value === null) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values.map(readString).filter(Boolean))];
 }
 
 function decisionAuthorityIds(governanceBaseline) {
@@ -1432,6 +1552,16 @@ function readReference(value, keys = ["id", "module", "moduleId", "contract", "c
   for (const key of keys) {
     const candidate = readString(value[key]);
     if (candidate) return candidate;
+  }
+  return undefined;
+}
+
+function readModelReference(value, keys = ["id", "module", "moduleId", "target"]) {
+  if (typeof value === "string") return readString(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  for (const key of keys) {
+    const reference = readString(value[key]);
+    if (reference) return reference;
   }
   return undefined;
 }

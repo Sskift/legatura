@@ -1,5 +1,10 @@
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { compileOutcomeAlignmentAgainstGovernance } from "./change-compiler.mjs";
+import {
+  compileClaimGateRoutes,
+  compileOutcomeAlignmentAgainstGovernance
+} from "./change-compiler.mjs";
+
+export { compileClaimGateRoutes };
 
 export const OUTCOME_TRANSITION_SCHEMA_VERSION = 1;
 
@@ -1580,59 +1585,6 @@ function assertExactProofClaimSemantics({
       { gapRef, mismatchedClaimRefs, problems: ["proof-claim-semantic-mismatch"] }
     );
   }
-}
-
-export function compileClaimGateRoutes(model, claimRef) {
-  const exactClaimRef = readString(claimRef);
-  if (!exactClaimRef) return [];
-  const moduleRefs = normalizeStringList(
-    asArray(model?.modules).map((module) => readModelReference(module))
-  ).sort();
-  const fullGateId = readString(model?.projectDocument?.changePolicy?.fullGate);
-  return asArray(model?.gates).flatMap((gate) => {
-    const commands = Array.isArray(gate?.commands)
-      ? gate.commands
-      : gate?.command ? [gate] : [];
-    return commands
-      .filter((command) => normalizeStringList(command?.claimRefs).includes(exactClaimRef))
-      .map((command) => ({
-        claimRef: exactClaimRef,
-        gateId: readString(gate?.id) ?? null,
-        commandId: readString(command?.id) ?? null,
-        command: cloneJson(command?.command),
-        timeoutMs: command?.timeoutMs ?? null,
-        effectiveModuleRefs: moduleRefs.filter((moduleRef) => (
-          gateSelectsModule(gate, moduleRef, fullGateId)
-            && commandSelectsModule(command, moduleRef)
-        )),
-        oracle: cloneJson(command?.oracle),
-        applicability: cloneJson(command?.applicability),
-        discriminatoryPower: cloneJson(command?.discriminatoryPower),
-        residualUncertainty: cloneJson(command?.residualUncertainty)
-      }));
-  }).sort((left, right) => (
-    (left.gateId ?? "").localeCompare(right.gateId ?? "")
-      || (left.commandId ?? "").localeCompare(right.commandId ?? "")
-      || canonicalDigest(left).localeCompare(canonicalDigest(right))
-  ));
-}
-
-function gateSelectsModule(gate, moduleRef, fullGateId) {
-  const appliesTo = normalizeGateScope(gate?.appliesTo);
-  if (appliesTo.length === 0 || appliesTo.includes(moduleRef)) return true;
-  return readString(gate?.id) === fullGateId
-    && (appliesTo.includes("integration") || appliesTo.includes("release"));
-}
-
-function commandSelectsModule(command, moduleRef) {
-  const appliesTo = normalizeGateScope(command?.appliesTo);
-  return appliesTo.length === 0 || appliesTo.includes(moduleRef);
-}
-
-function normalizeGateScope(value) {
-  if (value === undefined || value === null) return [];
-  const values = Array.isArray(value) ? value : [value];
-  return [...new Set(values.map(readString).filter(Boolean))];
 }
 
 function gateEvidenceApplicability(configured, primaryModule) {

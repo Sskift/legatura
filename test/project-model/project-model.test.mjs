@@ -403,6 +403,44 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
     ["LGT-001-C1"]
   );
   assert.ok(compiled.contextCapsule.knowledgeGaps.some((gap) => gap.id === "fixture-gap"));
+  const compiledCoreRoutePairs = compileClaimGateRoutes(uniqueBaseline, "core-works")
+    .filter((route) => route.effectiveModuleRefs.includes("core"))
+    .map(({ gateId, commandId }) => ({ gateId, commandId }));
+  assert.deepEqual(compiled.verificationObligations[0].mapping.routes, compiledCoreRoutePairs);
+  assert.deepEqual(compiled.verificationObligations[0].mapping.routes, [{
+    gateId: "minimum",
+    commandId: "minimum-command"
+  }]);
+
+  const integrationRouteModel = structuredClone(uniqueModel);
+  integrationRouteModel.projectDocument.changePolicy.fullGate = "full";
+  integrationRouteModel.projectDocument.changePolicy.fullGateBefore = ["integrated"];
+  integrationRouteModel.gates.push({
+    id: "full",
+    appliesTo: ["integration"],
+    commands: [{
+      ...structuredClone(integrationRouteModel.gates[0].commands[0]),
+      id: "full-core-command",
+      applicability: { phase: "integration" }
+    }]
+  });
+  assert.equal(
+    validateProjectModel(integrationRouteModel).valid,
+    true,
+    JSON.stringify(validateProjectModel(integrationRouteModel).errors)
+  );
+  const integrationRouteBaseline = governanceBaseline(integrationRouteModel);
+  assert.ok(compileClaimGateRoutes(integrationRouteBaseline, "core-works").some((route) => (
+    route.gateId === "full"
+      && route.commandId === "full-core-command"
+      && route.effectiveModuleRefs.includes("core")
+  )));
+  const integrationRouteCompiled = compileChangeAgainstGovernance(change, integrationRouteBaseline);
+  assert.deepEqual(integrationRouteCompiled.verificationObligations[0].mapping.routes, [{
+    gateId: "minimum",
+    commandId: "minimum-command"
+  }]);
+  assert.deepEqual(integrationRouteCompiled.verificationObligations[0].mapping.gateIds, ["minimum"]);
 
   const scalarPlanRef = compileChangeAgainstGovernance(outcomeChange({
     planRefs: "  LGT-001  "
@@ -545,6 +583,40 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
   assert.deepEqual(dependencyCompiled.outcomeAlignment.contributions.map((entry) => entry.claimRefs), [
     ["dependency-works"]
   ]);
+  assert.deepEqual(dependencyCompiled.verificationObligations[0].mapping.routes, [{
+    gateId: "minimum",
+    commandId: "dependency-proof-command"
+  }]);
+
+  const crossClaimCompiled = compileChangeAgainstGovernance(outcomeChange({
+    claims: [{
+      id: "composed-behavior",
+      statement: "The composed behavior remains correct."
+    }],
+    compilerInput: {
+      ...outcomeChange().compilerInput,
+      verificationObligations: [{
+        id: "verify-composed-behavior",
+        claimId: "composed-behavior",
+        gateClaimRefs: ["dependency-works", "core-works"],
+        mappingRationale: "The bounded fixture explicitly composes the two governed source Claims.",
+        applicability: { module: "core", scenario: "synthetic composition" },
+        discriminatoryPower: {
+          rejects: ["either governed source command reports a non-zero exit"]
+        }
+      }]
+    }
+  }), uniqueBaseline);
+  assert.equal(crossClaimCompiled.verificationObligations[0].mapping.kind, "cross-claim");
+  assert.deepEqual(crossClaimCompiled.verificationObligations[0].mapping.sourceRoutes, [{
+    sourceClaimId: "core-works",
+    gateId: "minimum",
+    commandId: "minimum-command"
+  }, {
+    sourceClaimId: "dependency-works",
+    gateId: "minimum",
+    commandId: "dependency-proof-command"
+  }]);
 
   const mixedAmbiguityModel = baseModel();
   enableOutcomeCriteria(mixedAmbiguityModel, [{
