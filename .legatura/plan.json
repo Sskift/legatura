@@ -158,7 +158,14 @@
       "outcome": "Every ordinary Change is compiled against an active Development Outcome through an explicit, reviewable contribution, and humans can inspect how architecture Claims map to Gates, Evidence, and open Gaps.",
       "dependsOn": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"],
       "acceptance": {
-        "claimRefs": ["change-aligns-with-active-plan"],
+        "claimRefs": [
+          "project-model-references-are-consistent",
+          "context-capsule-cannot-broaden-scope",
+          "change-aligns-with-active-plan",
+          "change-lifecycle-requires-preconditions",
+          "accepted-package-binds-exact-content",
+          "workbench-is-loopback-and-bounded"
+        ],
         "gapRefs": [
           "architecture-acceptance-profile-not-projected",
           "outcome-contribution-not-machine-validated",
@@ -171,6 +178,47 @@
           "Each ordinary Change binds its primary Module and Claims to a reviewable contribution toward the selected Outcome, with any exception decided by Plan authority.",
           "Outcome activation and achievement transitions bind exact Evidence and authority to their declared transition and exit criteria.",
           "Project Atlas projects Outcome to Claim, Gate, current Evidence, Residual Uncertainty, and Knowledge Gap from the same fact authorities."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-010-C1",
+            "statement": "The Development Plan is validated, included in the frozen Governance Baseline, and exposed by Project Model inspection.",
+            "claimRefs": ["project-model-references-are-consistent"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-010-C2",
+            "statement": "Compilation rejects missing, unknown, or non-active Outcome references when plan alignment is required.",
+            "claimRefs": ["change-aligns-with-active-plan"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-010-C3",
+            "statement": "Only selected Outcomes enter the Context Capsule and acceptance subject.",
+            "claimRefs": ["context-capsule-cannot-broaden-scope"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-010-C4",
+            "statement": "Each ordinary Change binds its primary Module and Claims to a reviewable contribution toward the selected Outcome, with any exception decided by Plan authority.",
+            "claimRefs": ["change-aligns-with-active-plan"],
+            "gapRefs": ["outcome-contribution-not-machine-validated"]
+          },
+          {
+            "id": "LGT-010-C5",
+            "statement": "Outcome activation and achievement transitions bind exact Evidence and authority to their declared transition and exit criteria.",
+            "claimRefs": [
+              "change-lifecycle-requires-preconditions",
+              "accepted-package-binds-exact-content"
+            ],
+            "gapRefs": ["outcome-transition-evidence-not-machine-bound"]
+          },
+          {
+            "id": "LGT-010-C6",
+            "statement": "Project Atlas projects Outcome to Claim, Gate, current Evidence, Residual Uncertainty, and Knowledge Gap from the same fact authorities.",
+            "claimRefs": ["workbench-is-loopback-and-bounded"],
+            "gapRefs": ["architecture-acceptance-profile-not-projected"]
+          }
         ]
       },
       "nonGoals": ["Issue tracker synchronization", "Automatic Outcome completion", "A generic portfolio planning tool"]
@@ -589,11 +637,47 @@
       "nonGoals": ["Feature delivery", "Convenience refactoring", "Deadline-driven reprioritization"]
     }
   ],
+  "outcomeGovernance": {
+    "schemaVersion": 1,
+    "criteria": {
+      "identity": "stable-within-outcome",
+      "statementMirror": "acceptance.exitCriteria",
+      "requiredBeforeStatusChange": true
+    },
+    "contribution": {
+      "semanticInputs": ["primaryModule", "planRefs", "claims"],
+      "derivedFields": ["moduleRef", "claimRefs", "contributionId", "bindingDigest"],
+      "criterionSelection": "unique-claim-match-or-explicit-hint",
+      "noMatch": "reject-or-plan-authorized-exception",
+      "exceptionProgress": "none",
+      "exceptionTransitionUse": "forbidden"
+    },
+    "transition": {
+      "ledger": "append-only",
+      "ledgerField": "outcomeTransitions",
+      "allowed": [
+        "planned->active",
+        "conditional->active",
+        "active->achieved",
+        "planned->retired",
+        "conditional->retired",
+        "active->retired"
+      ],
+      "packageReferenceFields": ["changeId", "acceptanceDigest"],
+      "proofBaseline": "prior-sealed-accepted-packages",
+      "historicalValidity": "accepted-package-seal",
+      "currentApplicability": "not-required-for-historical-proof",
+      "selfProof": "forbidden",
+      "authority": "governance-maintainer"
+    }
+  },
+  "outcomeTransitions": [],
   "changeRules": {
     "planBeforeImplementation": "A new or materially changed Outcome uses a plan-amendment Change that can touch only .legatura/** and cannot reference the plan it edits; implementation follows in a later Change against the accepted baseline.",
     "stableIds": "Outcome ids are never reused or renamed; retired Outcomes remain as historical records with reasons and replacements.",
     "activation": "Only Outcomes with satisfied dependencies may become active. Conditional Outcomes also require the activation condition in their acceptance criteria to be evidenced.",
-    "completion": "Normative rule: an active Outcome becomes achieved only through authority review of Evidence against every exit criterion and disposition of referenced Knowledge Gaps. Machine binding of that transition is an open LGT-010 gap.",
+    "contribution": "An ordinary Change explicitly selects its Module, Outcome, and Claims. The compiler may infer a Criterion only from one unique exact Claim match; ambiguity requires a narrow Criterion hint and no match fails closed unless Plan authority records a non-progress exception.",
+    "completion": "Normative rule: an active Outcome becomes achieved only through a separate plan-amendment whose append-only Transition cites prior sealed Accepted Change Packages against every stable Criterion and disposes referenced Knowledge Gaps. The current plan-amendment cannot prove itself; machine enforcement remains an open LGT-010 gap while outcomeTransitionMode is declared.",
     "frozenBaseline": "A Change is compiled and accepted against its frozen Governance Baseline; editing the plan during that Change cannot authorize it.",
     "implementationTracking": "Issues, pull requests, files, task plans, and agent conversations reference Outcomes but never become the Development Plan."
   },

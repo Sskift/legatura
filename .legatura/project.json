@@ -103,6 +103,9 @@
     "fullGate": "full",
     "fullGateBefore": ["integrated"],
     "contextExpansion": "recorded",
-    "requirePlanRefs": true
+    "requirePlanRefs": true,
+    "outcomeAlignmentMode": "declared",
+    "outcomeTransitionMode": "declared",
+    "outcomeCriterionSelection": "unique-claim-match-or-explicit-hint"
   }
 }
