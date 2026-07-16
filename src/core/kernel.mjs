@@ -143,6 +143,73 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     });
   }
 
+  async function assertGovernanceWatermarkCurrent(change) {
+    const frozenCatalog = assertPriorAcceptedPackageCatalog(change.priorAcceptedPackages);
+    if (!frozenCatalog) {
+      throw kernelError(
+        "ACCEPTED_PACKAGE_CATALOG_INVALID",
+        `Change ${change.id} has no Candidate-frozen Accepted Package catalog.`,
+        409,
+        { changeId: change.id, problems: ["candidate-catalog-missing"] }
+      );
+    }
+
+    const governanceBaseline = readGovernanceBaseline(change);
+    const records = (await store.list()).filter((record) => record?.id !== change.id);
+    const frozenReferences = new Set(frozenCatalog.entries.map((entry) => canonicalDigest(entry)));
+    const supersedingPackages = [];
+
+    for (const record of records) {
+      if (!claimsHistoricalAcceptance(record)) continue;
+      const claimedReference = {
+        changeId: readString(record?.id),
+        acceptanceDigest: readString(record?.acceptance?.digest)
+      };
+      if (claimedReference.changeId && claimedReference.acceptanceDigest
+        && frozenReferences.has(canonicalDigest(claimedReference))) continue;
+      const inspection = inspectAcceptedPackageRecord(record);
+      if (!inspection.valid) {
+        throw kernelError(
+          "ACCEPTED_PACKAGE_CATALOG_INVALID",
+          `Cannot evaluate Candidate governance history because Change ${record?.id ?? "unknown"} claims an invalid Accepted Package.`,
+          409,
+          { changeId: record?.id ?? null, problems: inspection.problems }
+        );
+      }
+      const packageContent = inspection.package;
+      if (!acceptedPackageMatchesProject(packageContent, resolvedRepoPath, governanceBaseline)) continue;
+      const rawModelAmendmentPaths = packageContent?.scopeAnalysis?.modelAmendmentPaths;
+      const hasModelAmendmentPathList = Array.isArray(rawModelAmendmentPaths);
+      const modelAmendmentPaths = hasModelAmendmentPathList
+        ? normalizeStringList(rawModelAmendmentPaths).sort()
+        : [];
+      const decisionType = readString(packageContent?.authorityDecision?.decisionType);
+      const legacyNormativeAmendment = !hasModelAmendmentPathList
+        && decisionType === "normative-amendment";
+      if (modelAmendmentPaths.length === 0 && !legacyNormativeAmendment) continue;
+      supersedingPackages.push({
+        reference: inspection.reference,
+        acceptedAt: inspection.acceptedAt,
+        modelAmendmentPaths,
+        decisionType: decisionType ?? null
+      });
+    }
+
+    if (supersedingPackages.length > 0) {
+      throw kernelError(
+        "GOVERNANCE_BASELINE_STALE",
+        `Change ${change.id} predates historically Accepted Project Model governance; create a successor Candidate.`,
+        409,
+        {
+          changeId: change.id,
+          governanceBaselineDigest: governanceBaseline.digest,
+          frozenAcceptedPackagesDigest: frozenCatalog.digest,
+          supersedingPackages
+        }
+      );
+    }
+  }
+
   async function createChange(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw kernelError("CHANGE_INPUT_INVALID", "createChange input must be an object.", 400);
@@ -248,6 +315,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         409
       );
     }
+    await assertGovernanceWatermarkCurrent(change);
     change = applyCompilePatch(change, patch, now());
     const inspection = await inspectProject();
     assertValidProject(inspection);
@@ -287,6 +355,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         409
       );
     }
+    await assertGovernanceWatermarkCurrent(change);
     const inspection = await inspectProject();
     const observedAt = now();
     const model = await loadProjectModel(resolvedRepoPath);
@@ -395,6 +464,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     const request = readAcceptanceRequest(idOrInput, optionalDecision);
     let change = await requireChange(request.changeId);
     change = await refreshChange(change);
+    await assertGovernanceWatermarkCurrent(change);
     const inspection = await inspectProject();
     assertValidProject(inspection);
     if (change.changeKind !== "plan-amendment" || change.compilation) {
@@ -1534,10 +1604,7 @@ function freezePriorAcceptedPackageCatalog({ records, createdAt, repoPath, gover
   const entries = [];
   const seenChangeIds = new Set();
   for (const record of Array.isArray(records) ? records : []) {
-    const claimsHistoricalAcceptance = Boolean(record?.acceptance)
-      || ["Accepted", "Integrated"].includes(record?.state)
-      || (Array.isArray(record?.history) && record.history.some((event) => event?.to === "Accepted"));
-    if (!claimsHistoricalAcceptance) continue;
+    if (!claimsHistoricalAcceptance(record)) continue;
     const inspection = inspectAcceptedPackageRecord(record);
     if (!inspection.valid) {
       throw kernelError(
@@ -1555,14 +1622,7 @@ function freezePriorAcceptedPackageCatalog({ records, createdAt, repoPath, gover
         { changeId: record.id, acceptedAt: inspection.acceptedAt, createdAt }
       );
     }
-    const packageContent = inspection.package;
-    const sameRepository = readString(packageContent?.repoPath)
-      && path.resolve(packageContent.repoPath) === path.resolve(repoPath);
-    const sameProject = readProjectId(packageContent?.governanceBaseline)
-      === readProjectId(governanceBaseline);
-    const samePlan = readString(packageContent?.governanceBaseline?.plan?.id)
-      === readString(governanceBaseline?.plan?.id);
-    if (!sameRepository || !sameProject || !samePlan) continue;
+    if (!acceptedPackageMatchesProject(inspection.package, repoPath, governanceBaseline)) continue;
     if (seenChangeIds.has(inspection.reference.changeId)) {
       throw kernelError(
         "ACCEPTED_PACKAGE_CATALOG_INVALID",
@@ -1577,6 +1637,21 @@ function freezePriorAcceptedPackageCatalog({ records, createdAt, repoPath, gover
   entries.sort(comparePackageReferences);
   const snapshot = { schemaVersion: 1, entries };
   return cloneJson({ ...snapshot, digest: canonicalDigest(snapshot) });
+}
+
+function claimsHistoricalAcceptance(record) {
+  return Boolean(record?.acceptance)
+    || ["Accepted", "Integrated"].includes(record?.state)
+    || (Array.isArray(record?.history) && record.history.some((event) => event?.to === "Accepted"));
+}
+
+function acceptedPackageMatchesProject(packageContent, repoPath, governanceBaseline) {
+  const packageRepoPath = readString(packageContent?.repoPath);
+  return Boolean(packageRepoPath)
+    && path.resolve(packageRepoPath) === path.resolve(repoPath)
+    && readProjectId(packageContent?.governanceBaseline) === readProjectId(governanceBaseline)
+    && readString(packageContent?.governanceBaseline?.plan?.id)
+      === readString(governanceBaseline?.plan?.id);
 }
 
 function assertPriorAcceptedPackageCatalog(value, { required = false } = {}) {

@@ -91,6 +91,7 @@ test("frozen governance and Gap proof contracts are enforced across lifecycle bo
   );
 
   await assertGapProofLifecycleGuards(t);
+  await assertStaleGovernanceCandidateGuards(t);
 });
 
 test("tampering with an Accepted Change Package invalidates reads and cannot be integrated", async (t) => {
@@ -501,6 +502,107 @@ async function assertGapProofLifecycleGuards(t) {
   assert.equal(closureRefusal.state, "Candidate");
   assert.deepEqual(closureRefusal.gateRuns, []);
   assert.equal(closureRefusal.acceptance, null);
+}
+
+async function assertStaleGovernanceCandidateGuards(t) {
+  const fixture = await createFixture(t, { gateWritesMarker: true });
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const compileChangeId = "stale-governance-before-compile";
+  const gateChangeId = "stale-governance-before-gate";
+  const acceptChangeId = "stale-governance-before-accept";
+  for (const changeId of [compileChangeId, gateChangeId, acceptChangeId]) {
+    await kernel.createChange(changeInput(changeId));
+  }
+
+  await kernel.compileChange(gateChangeId);
+  await kernel.compileChange(acceptChangeId);
+  const evidenceReady = await kernel.runGate(acceptChangeId, "minimum");
+  assert.equal(evidenceReady.change.state, "EvidenceReady");
+  await rm(fixture.gateMarkerPath, { force: true });
+
+  const governanceChangeId = "accepted-governance-after-candidates";
+  const modulePath = ".legatura/modules/core.json";
+  const moduleFile = path.join(fixture.repoPath, modulePath);
+  const originalModule = await readFile(moduleFile, "utf8");
+  await kernel.createChange({
+    ...changeInput(governanceChangeId),
+    knowledgeClosure: {
+      status: "complete",
+      entries: [{
+        kind: "model-amendment",
+        refs: [modulePath],
+        statement: "The governed Module records an Accepted security review.",
+        rationale: "Later Candidates must inherit the reviewed Project Model baseline."
+      }]
+    }
+  });
+  await addModelMetadata(fixture.repoPath, modulePath, "accepted governance watermark");
+  await kernel.compileChange(governanceChangeId);
+  const governanceGate = await kernel.runGate(governanceChangeId, "minimum");
+  assert.equal(governanceGate.change.state, "EvidenceReady");
+  const acceptedGovernance = await kernel.acceptChange(governanceChangeId, {
+    status: "approved",
+    authority: "maintainer",
+    decidedBy: "security-invariants-test",
+    decisionType: "normative-amendment",
+    rationale: "Accept the exact Project Model amendment.",
+    amendmentRefs: [modulePath]
+  });
+  assert.equal(acceptedGovernance.state, "Accepted");
+  const acceptedReference = {
+    changeId: governanceChangeId,
+    acceptanceDigest: acceptedGovernance.acceptance.digest
+  };
+  const integratedGovernance = await kernel.acceptChange(governanceChangeId, { integrate: true });
+  assert.equal(integratedGovernance.state, "Integrated", "the governance Package must not stale itself");
+
+  await writeFile(moduleFile, originalModule, "utf8");
+  await rm(fixture.gateMarkerPath, { force: true });
+  const invalidatedGovernance = await kernel.getChange(governanceChangeId);
+  assert.equal(invalidatedGovernance.acceptance.valid, false);
+  assert.equal(invalidatedGovernance.state, "Submitted");
+
+  const rejectsStaleCandidate = (error) => isStaleGovernanceError(
+    error,
+    acceptedReference,
+    modulePath
+  );
+  await assert.rejects(() => kernel.compileChange(compileChangeId), rejectsStaleCandidate);
+  const compileRefusal = await readRuntimeChange(fixture.repoPath, compileChangeId);
+  assert.equal(compileRefusal.state, "Candidate");
+  assert.equal(compileRefusal.compilation, undefined);
+  assert.deepEqual(compileRefusal.gateRuns, []);
+  assert.equal(compileRefusal.authorityDecision, null);
+  assert.equal(compileRefusal.acceptance, null);
+
+  await assert.rejects(() => kernel.runGate(gateChangeId, "minimum"), rejectsStaleCandidate);
+  const gateRefusal = await readRuntimeChange(fixture.repoPath, gateChangeId);
+  assert.equal(gateRefusal.state, "Submitted");
+  assert.deepEqual(gateRefusal.gateRuns, []);
+  assert.equal(gateRefusal.authorityDecision, null);
+  assert.equal(gateRefusal.acceptance, null);
+  await assertFileMissing(fixture.gateMarkerPath);
+
+  await assert.rejects(
+    () => kernel.acceptChange(acceptChangeId, CASE_DECISION),
+    rejectsStaleCandidate
+  );
+  const acceptRefusal = await readRuntimeChange(fixture.repoPath, acceptChangeId);
+  assert.equal(acceptRefusal.state, "EvidenceReady");
+  assert.deepEqual(acceptRefusal.gateRuns, evidenceReady.change.gateRuns);
+  assert.equal(acceptRefusal.authorityDecision, null);
+  assert.equal(acceptRefusal.acceptance, null);
+}
+
+function isStaleGovernanceError(error, expectedReference, expectedPath) {
+  if (error?.code !== "GOVERNANCE_BASELINE_STALE") return false;
+  const superseding = error?.details?.supersedingPackages;
+  return Array.isArray(superseding) && superseding.some((entry) => (
+    entry?.reference?.changeId === expectedReference.changeId
+      && entry.reference.acceptanceDigest === expectedReference.acceptanceDigest
+      && entry.modelAmendmentPaths?.includes(expectedPath)
+      && entry.decisionType === "normative-amendment"
+  ));
 }
 
 function isProofRouteRewrite(error) {

@@ -15,6 +15,7 @@
       "Outcome exceptions require the frozen Development Plan authority and can never grant progress or transition proof.",
       "Acceptance re-derives compiler-owned Change projections from the frozen Governance Baseline before sealing them.",
       "Every Candidate freezes a content-addressed catalog of prior Accepted Packages; plan-amendment Transition proof is re-resolved before Gate execution and acceptance.",
+      "Within the local single-writer Change Store, a later historically Accepted Project Model amendment makes every earlier Candidate stale before compilation, Gate execution, or acceptance.",
       "Declared Knowledge Gap Closure Contracts are rechecked before ordinary Change compilation, Gate execution, and acceptance; only the Outcome Transition compiler may authorize a Gap closure delta.",
       "A Change id can produce at most one Accepted Package; invalidated historical acceptance requires a new follow-up Change.",
       "Plan amendments cannot remove or reinterpret stable Outcome Criteria or add Criteria during an Outcome status transition.",
