@@ -40,10 +40,17 @@ const MAX_CHANGE_PLAN_REF_LENGTH = 256;
 export const CLAIM_GATE_ROUTE_INDEX_LIMITS = Object.freeze({
   claimRefs: 4096,
   modules: 2048,
+  contracts: 4096,
+  modelClaims: 4096,
+  refsPerModule: 256,
+  visibilityRefs: 65536,
   gates: 2048,
   commands: 8192,
   refsPerCommand: 256,
   totalCommandClaimRefs: 65536,
+  routeSelectionRows: 2048,
+  refsPerRouteSelection: 256,
+  routeSelectionClaimRefs: 65536,
   routes: 8192,
   routeBytes: 16384,
   totalRouteBytes: 2 * 1024 * 1024,
@@ -252,6 +259,9 @@ export function compileClaimGateRouteIndex(model, options = {}) {
   const { claimRefs, limits } = normalizeClaimGateRouteIndexOptions(options);
   const budget = {
     commands: 0,
+    contracts: 0,
+    modelClaims: 0,
+    visibilityRefs: 0,
     totalCommandClaimRefs: 0,
     routes: 0,
     totalRouteBytes: 0,
@@ -259,14 +269,29 @@ export function compileClaimGateRouteIndex(model, options = {}) {
   };
   const normalizedClaimRefs = normalizeRequestedClaimRefs(claimRefs, limits, budget);
   const routesByClaim = new Map(normalizedClaimRefs.map((claimRef) => [claimRef, []]));
+  const acceptanceModuleRefsByClaim = new Map(
+    normalizedClaimRefs.map((claimRef) => [claimRef, []])
+  );
+  for (const claimRef of normalizedClaimRefs) {
+    const claimCoverageBytes = Buffer.byteLength(
+      JSON.stringify([claimRef, []]),
+      "utf8"
+    );
+    consumeClaimGateRouteAggregateBytes(
+      budget,
+      limits,
+      (4 * claimCoverageBytes) + 32,
+      `claimRefs.${claimRef}.acceptanceMetadata`
+    );
+  }
   const inputGuard = createClaimGateRouteInputGuard(model);
   const priorInputGuard = activeClaimGateRouteInputGuard;
   activeClaimGateRouteInputGuard = inputGuard;
   try {
+    const moduleClaimVisibility = compileBoundedModuleClaimVisibility(model, limits, budget);
     if (normalizedClaimRefs.length > 0) {
       const selectedClaimRefs = new Set(normalizedClaimRefs);
-      const modules = readRouteIndexArrayProperty(model, "modules", "model.modules");
-      const moduleRefs = compileRouteModuleRefs(modules, limits, budget);
+      const moduleRefs = moduleClaimVisibility.moduleRefs;
       const gates = readRouteIndexArrayProperty(model, "gates", "model.gates");
       assertClaimGateRouteLimit("gates", gates.length, limits);
       const projectDocument = readOptionalRouteIndexDataProperty(
@@ -353,6 +378,11 @@ export function compileClaimGateRouteIndex(model, options = {}) {
             )
               && normalizedCommandScopeSelectsModule(commandScope, moduleRef)
           ));
+          reserveClaimGateRouteWork(budget, limits, moduleRefs.length);
+          const acceptanceModuleRefs = moduleRefs.filter((moduleRef) => (
+            normalizedAcceptanceGateScopeSelectsModule(gateSemantics.scope, moduleRef)
+              && normalizedCommandScopeSelectsModule(commandScope, moduleRef)
+          ));
 
           const routeTemplate = compileBoundedRouteTemplate({
             commandValues: readBoundedRouteCommandValues(command, location),
@@ -365,6 +395,7 @@ export function compileClaimGateRouteIndex(model, options = {}) {
           });
           for (const claimRef of matchingClaimRefs) {
             reserveClaimGateRouteWork(budget, limits, 1);
+            reserveClaimGateRouteWork(budget, limits, acceptanceModuleRefs.length);
             budget.routes += 1;
             assertClaimGateRouteLimit("routes", budget.routes, limits);
             const route = cloneRouteForClaim(routeTemplate, claimRef);
@@ -372,7 +403,21 @@ export function compileClaimGateRouteIndex(model, options = {}) {
             assertClaimGateRouteLimit("routeBytes", routeBytes, limits);
             budget.totalRouteBytes += routeBytes;
             assertClaimGateRouteLimit("totalRouteBytes", budget.totalRouteBytes, limits);
-            routesByClaim.get(claimRef).push({ route, digest: canonicalDigest(route) });
+            const acceptanceMetadataBytes = Buffer.byteLength(
+              JSON.stringify([claimRef, acceptanceModuleRefs]),
+              "utf8"
+            ) + 16;
+            consumeClaimGateRouteAggregateBytes(
+              budget,
+              limits,
+              acceptanceMetadataBytes,
+              `${location}.acceptanceModuleRefs`
+            );
+            routesByClaim.get(claimRef).push({
+              route,
+              digest: canonicalDigest(route),
+              acceptanceModuleRefs
+            });
           }
         }
       }
@@ -383,15 +428,21 @@ export function compileClaimGateRouteIndex(model, options = {}) {
           reserveClaimGateRouteWork(budget, limits, 1);
           return compareCompiledClaimGateRoutes(left, right);
         });
+        acceptanceModuleRefsByClaim.set(
+          claimRef,
+          compiled.map((entry) => [...entry.acceptanceModuleRefs])
+        );
         routesByClaim.set(claimRef, compiled.map((entry) => entry.route));
       }
     }
     return brandCompiledClaimGateRouteIndex({
+      acceptanceModuleRefsByClaim,
       routesByClaim,
       model,
       claimRefs: normalizedClaimRefs,
       limits,
-      inputGuard
+      inputGuard,
+      moduleClaimVisibility
     });
   } finally {
     activeClaimGateRouteInputGuard = priorInputGuard;
@@ -430,6 +481,355 @@ export function projectCompiledClaimGateRouteIndex(index, options = {}) {
   }
 }
 
+export function projectCompiledModuleClaimGateIndex(index, options = {}) {
+  const priorInputGuard = activeClaimGateRouteInputGuard;
+  activeClaimGateRouteInputGuard = null;
+  try {
+    return projectCompiledModuleClaimGateIndexWithoutGuardCapture(index, options);
+  } finally {
+    activeClaimGateRouteInputGuard = priorInputGuard;
+  }
+}
+
+function projectCompiledModuleClaimGateIndexWithoutGuardCapture(index, options) {
+  assertNotRouteIndexProxy(index, "index");
+  const compiled = ((typeof index === "object" && index !== null)
+    || typeof index === "function")
+    ? COMPILED_CLAIM_GATE_ROUTE_INDEXES.get(index)
+    : undefined;
+  if (!compiled) throw invalidCompiledClaimGateRouteIndexError();
+
+  const projection = normalizeCompiledModuleClaimGateProjectionOptions(options, compiled);
+  if (projection.model !== compiled.model) {
+    throw invalidCompiledClaimGateRouteIndexError({ reason: "model-identity-mismatch" });
+  }
+  assertCompiledClaimGateRouteProjectionLimits(compiled, projection.limits);
+  assertClaimGateRouteInputGuardCurrent(compiled.inputGuard);
+  assertCompiledClaimGateRouteProductDigestCurrent(compiled);
+
+  const visibility = compiled.moduleClaimVisibility;
+  const knownModules = new Set(visibility.moduleRefs);
+  const visibilityByModule = new Map(visibility.visibilityByModule.map(([moduleRef, entries]) => [
+    moduleRef,
+    new Map(entries)
+  ]));
+  const claimsByContract = new Map(visibility.claimsByContract);
+  const globalClaims = new Map(visibility.globalClaims);
+  const requestedRouteClaims = new Map();
+  const claimsByModule = new Map();
+  const budget = {
+    ...compiled.usage,
+    workUnits: projection.workUnits,
+    projectionBindings: 0,
+    routeSelections: projection.routeSelectionRows
+  };
+
+  for (const moduleRef of projection.moduleRefs) {
+    if (!knownModules.has(moduleRef)) throwUnknownModuleClaimProjectionReference(moduleRef);
+    const claimOptions = new Map();
+    const contractVisibility = visibilityByModule.get(moduleRef) ?? new Map();
+    for (const [contractRef, visibilityKinds] of contractVisibility) {
+      const contractClaims = claimsByContract.get(contractRef);
+      if (!contractClaims) {
+        throw invalidCompiledClaimGateRouteIndexError({
+          reason: "module-visibility-content-invalid",
+          moduleRef,
+          contractRef
+        });
+      }
+      for (const descriptor of contractClaims) {
+        reserveClaimGateRouteWork(budget, projection.limits, 1);
+        budget.projectionBindings += 1;
+        const existing = claimOptions.get(descriptor.claimRef);
+        if (existing && existing.contractRef !== contractRef) {
+          throw invalidCompiledClaimGateRouteIndexError({
+            reason: "claim-contract-identity-conflict",
+            claimRef: descriptor.claimRef
+          });
+        }
+        const projectedDescriptor = {
+          claimRef: descriptor.claimRef,
+          statement: descriptor.statement,
+          contractRef,
+          visibilityKinds: mergeVisibilityKinds(
+            existing?.visibilityKinds ?? [],
+            visibilityKinds
+          )
+        };
+        const descriptorBytes = Buffer.byteLength(JSON.stringify(projectedDescriptor), "utf8");
+        assertClaimGateRouteLimit("routeBytes", descriptorBytes, projection.limits);
+        budget.totalRouteBytes += descriptorBytes;
+        assertClaimGateRouteLimit(
+          "totalRouteBytes",
+          budget.totalRouteBytes,
+          projection.limits
+        );
+        claimOptions.set(descriptor.claimRef, projectedDescriptor);
+      }
+    }
+    const claims = [...claimOptions.values()].sort((left, right) => (
+      left.claimRef.localeCompare(right.claimRef)
+    ));
+    claimsByModule.set(moduleRef, claims);
+    requestedRouteClaims.set(moduleRef, new Set(claims.map((claim) => claim.claimRef)));
+  }
+
+  for (const [moduleRef, claimRefs] of projection.routeSelections) {
+    if (!knownModules.has(moduleRef)) throwUnknownModuleClaimProjectionReference(moduleRef);
+    if (!requestedRouteClaims.has(moduleRef)) requestedRouteClaims.set(moduleRef, new Set());
+    for (const claimRef of claimRefs) {
+      reserveClaimGateRouteWork(budget, projection.limits, 1);
+      if (!globalClaims.has(claimRef)) {
+        throw claimGateRouteIndexError(
+          "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+          "Module Claim Gate route selections must reference a known Contract Claim.",
+          { moduleRef, claimRef }
+        );
+      }
+      requestedRouteClaims.get(moduleRef).add(claimRef);
+    }
+  }
+
+  const requiredClaimRefs = [...new Set([...requestedRouteClaims.values()]
+    .flatMap((claimRefs) => [...claimRefs]))].sort();
+  const missingClaimRefs = requiredClaimRefs.filter((claimRef) => !compiled.claimRefSet.has(claimRef));
+  if (missingClaimRefs.length > 0) {
+    throw invalidCompiledClaimGateRouteIndexError({
+      reason: "claim-coverage-incomplete",
+      claimRefs: missingClaimRefs
+    });
+  }
+
+  const authoritativeEntries = new Map(compiled.entries);
+  const acceptanceEntries = new Map(compiled.acceptanceEntries);
+  const routesByModule = new Map();
+  for (const moduleRef of [...requestedRouteClaims.keys()].sort()) {
+    const routesByClaim = new Map();
+    for (const claimRef of [...requestedRouteClaims.get(moduleRef)].sort()) {
+      reserveClaimGateRouteWork(budget, projection.limits, 1);
+      const routes = authoritativeEntries.get(claimRef);
+      const routeAcceptance = acceptanceEntries.get(claimRef);
+      if (!Array.isArray(routes)
+        || !Array.isArray(routeAcceptance)
+        || routes.length !== routeAcceptance.length) {
+        throw invalidCompiledClaimGateRouteIndexError({
+          reason: "acceptance-route-metadata-conflict",
+          claimRef
+        });
+      }
+      const selectedRoutes = [];
+      for (let routeIndex = 0; routeIndex < routes.length; routeIndex += 1) {
+        reserveClaimGateRouteWork(budget, projection.limits, 1);
+        const acceptedModuleRefs = routeAcceptance[routeIndex];
+        if (!Array.isArray(acceptedModuleRefs)) {
+          throw invalidCompiledClaimGateRouteIndexError({
+            reason: "acceptance-route-metadata-conflict",
+            claimRef
+          });
+        }
+        if (!sortedReferenceListHas(
+          acceptedModuleRefs,
+          moduleRef,
+          budget,
+          projection.limits
+        )) continue;
+        budget.routes += 1;
+        assertClaimGateRouteLimit("routes", budget.routes, projection.limits);
+        const routeBytes = Buffer.byteLength(JSON.stringify(routes[routeIndex]), "utf8");
+        assertClaimGateRouteLimit("routeBytes", routeBytes, projection.limits);
+        budget.totalRouteBytes += routeBytes;
+        assertClaimGateRouteLimit(
+          "totalRouteBytes",
+          budget.totalRouteBytes,
+          projection.limits
+        );
+        selectedRoutes.push(structuredClone(routes[routeIndex]));
+      }
+      routesByClaim.set(claimRef, selectedRoutes);
+    }
+    routesByModule.set(moduleRef, routesByClaim);
+  }
+
+  const observation = Object.freeze({
+    schemaVersion: 1,
+    workUnits: budget.workUnits,
+    routes: budget.routes,
+    totalRouteBytes: budget.totalRouteBytes,
+    modules: requestedRouteClaims.size,
+    claimBindings: budget.projectionBindings,
+    routeSelections: budget.routeSelections
+  });
+  return { claimsByModule, routesByModule, observation };
+}
+
+function normalizeCompiledModuleClaimGateProjectionOptions(options, compiled) {
+  assertPlainRouteIndexObject(
+    options,
+    "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+    "Module Claim Gate projection options must be a plain object."
+  );
+  const allowedOptionKeys = new Set(["model", "moduleRefs", "routeSelections", "limits"]);
+  for (const key in options) {
+    if (!Object.hasOwn(options, key)) continue;
+    if (!allowedOptionKeys.has(key)) {
+      throw claimGateRouteIndexError(
+        "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+        "Module Claim Gate projection options contain an unsupported field.",
+        { field: key }
+      );
+    }
+    assertRouteIndexDataProperty(options, key, "projection");
+  }
+  const model = Object.hasOwn(options, "model")
+    ? readRouteIndexDataProperty(options, "model", "projection")
+    : undefined;
+  const rawLimits = Object.hasOwn(options, "limits")
+    ? readRouteIndexDataProperty(options, "limits", "projection")
+    : {};
+  const limits = compileClaimGateRouteProjectionLimits(rawLimits, compiled.limits);
+  const budget = { workUnits: compiled.usage.workUnits };
+  const rawModuleRefs = Object.hasOwn(options, "moduleRefs")
+    ? readRouteIndexDataProperty(options, "moduleRefs", "projection")
+    : [];
+  const moduleRefs = normalizeBoundedProjectionReferenceList(
+    rawModuleRefs,
+    "projection.moduleRefs",
+    "modules",
+    limits,
+    budget
+  );
+  const rawRouteSelections = Object.hasOwn(options, "routeSelections")
+    ? readRouteIndexDataProperty(options, "routeSelections", "projection")
+    : [];
+  if (!Array.isArray(rawRouteSelections)) throw invalidClaimGateRouteJsonError("projection.routeSelections");
+  const routeSelections = assertRouteIndexArray(rawRouteSelections, "projection.routeSelections");
+  assertClaimGateRouteLimit(
+    "routeSelectionRows",
+    routeSelections.length,
+    limits,
+    "projection.routeSelections"
+  );
+  assertPotentialClaimGateRouteWork(budget, limits, routeSelections.length);
+  const selectionsByModule = new Map();
+  let rawSelectionClaimRefs = 0;
+  for (let index = 0; index < routeSelections.length; index += 1) {
+    reserveClaimGateRouteWork(budget, limits, 1);
+    const location = `projection.routeSelections.${index}`;
+    const selection = readRouteIndexArrayValue(routeSelections, index, location);
+    assertPlainRouteIndexObject(
+      selection,
+      "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+      "Each Module Claim Gate route selection must be a plain object."
+    );
+    for (const key in selection) {
+      if (!Object.hasOwn(selection, key)) continue;
+      if (!new Set(["moduleRef", "claimRefs"]).has(key)) {
+        throw claimGateRouteIndexError(
+          "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+          "Module Claim Gate route selections contain an unsupported field.",
+          { location, field: key }
+        );
+      }
+      assertRouteIndexDataProperty(selection, key, location);
+    }
+    const moduleRef = normalizeBoundedRequiredModelText(
+      readRouteIndexDataProperty(selection, "moduleRef", location),
+      `${location}.moduleRef`,
+      limits,
+      "Module reference"
+    );
+    const rawClaimRefs = readRouteIndexDataProperty(selection, "claimRefs", location);
+    if (!Array.isArray(rawClaimRefs)) throw invalidClaimGateRouteJsonError(`${location}.claimRefs`);
+    const claimRefs = assertRouteIndexArray(rawClaimRefs, `${location}.claimRefs`);
+    assertClaimGateRouteLimit(
+      "refsPerRouteSelection",
+      claimRefs.length,
+      limits,
+      `${location}.claimRefs`
+    );
+    rawSelectionClaimRefs += claimRefs.length;
+    assertClaimGateRouteLimit(
+      "routeSelectionClaimRefs",
+      rawSelectionClaimRefs,
+      limits,
+      `${location}.claimRefs`
+    );
+    assertPotentialClaimGateRouteWork(budget, limits, claimRefs.length);
+    if (!selectionsByModule.has(moduleRef)) selectionsByModule.set(moduleRef, new Set());
+    for (let claimIndex = 0; claimIndex < claimRefs.length; claimIndex += 1) {
+      reserveClaimGateRouteWork(budget, limits, 1);
+      const claimRef = normalizeBoundedRequiredModelText(
+        readRouteIndexArrayValue(
+          claimRefs,
+          claimIndex,
+          `${location}.claimRefs.${claimIndex}`
+        ),
+        `${location}.claimRefs.${claimIndex}`,
+        limits,
+        "Claim reference"
+      );
+      selectionsByModule.get(moduleRef).add(claimRef);
+    }
+  }
+  return {
+    model,
+    moduleRefs,
+    routeSelectionRows: routeSelections.length,
+    routeSelections: [...selectionsByModule.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([moduleRef, claimRefs]) => [moduleRef, [...claimRefs].sort()]),
+    limits,
+    workUnits: budget.workUnits
+  };
+}
+
+function normalizeBoundedProjectionReferenceList(raw, location, dimension, limits, budget) {
+  if (!Array.isArray(raw)) throw invalidClaimGateRouteJsonError(location);
+  const values = assertRouteIndexArray(raw, location);
+  assertClaimGateRouteLimit(dimension, values.length, limits, location);
+  assertPotentialClaimGateRouteWork(budget, limits, values.length);
+  const normalized = new Set();
+  for (let index = 0; index < values.length; index += 1) {
+    reserveClaimGateRouteWork(budget, limits, 1);
+    normalized.add(normalizeBoundedRequiredModelText(
+      readRouteIndexArrayValue(values, index, `${location}.${index}`),
+      `${location}.${index}`,
+      limits,
+      "Module reference"
+    ));
+  }
+  return [...normalized].sort();
+}
+
+function mergeVisibilityKinds(left, right) {
+  return [...new Set([...left, ...right])].sort(compareVisibilityKinds);
+}
+
+function sortedReferenceListHas(values, target, budget, limits) {
+  const comparisons = values.length === 0
+    ? 0
+    : Math.ceil(Math.log2(values.length + 1));
+  reserveClaimGateRouteWork(budget, limits, comparisons);
+  let low = 0;
+  let high = values.length - 1;
+  while (low <= high) {
+    const middle = low + Math.floor((high - low) / 2);
+    const value = values[middle];
+    if (value === target) return true;
+    if (value < target) low = middle + 1;
+    else high = middle - 1;
+  }
+  return false;
+}
+
+function throwUnknownModuleClaimProjectionReference(moduleRef) {
+  throw claimGateRouteIndexError(
+    "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+    "Module Claim Gate projection must reference a known Module.",
+    { moduleRef }
+  );
+}
+
 function projectCompiledClaimGateRouteIndexWithoutGuardCapture(index, options) {
   assertNotRouteIndexProxy(index, "index");
   const compiled = ((typeof index === "object" && index !== null)
@@ -455,14 +855,7 @@ function projectCompiledClaimGateRouteIndexWithoutGuardCapture(index, options) {
   }
   assertCompiledClaimGateRouteProjectionLimits(compiled, projection.limits);
   assertClaimGateRouteInputGuardCurrent(compiled.inputGuard);
-  if (canonicalDigest({
-    claimRefs: compiled.claimRefs,
-    entries: compiled.entries,
-    observation: compiled.observation,
-    routePolicyContentDigest: compiled.inputGuard.contentDigest
-  }) !== compiled.productDigest) {
-    throw invalidCompiledClaimGateRouteIndexError({ reason: "product-content-drift" });
-  }
+  assertCompiledClaimGateRouteProductDigestCurrent(compiled);
 
   const authoritativeEntries = new Map(compiled.entries);
   const routesByClaim = new Map(projection.claimRefs.map((claimRef) => [
@@ -473,19 +866,31 @@ function projectCompiledClaimGateRouteIndexWithoutGuardCapture(index, options) {
 }
 
 function brandCompiledClaimGateRouteIndex({
+  acceptanceModuleRefsByClaim,
   routesByClaim,
   model,
   claimRefs,
   limits,
-  inputGuard
+  inputGuard,
+  moduleClaimVisibility
 }) {
   const token = Object.freeze(Object.create(null));
+  const sealedInputGuard = sealClaimGateRouteInputGuard(inputGuard, limits);
   const usage = Object.freeze({ ...claimGateRouteLimitUsage(limits) });
   const entries = deepFreezeRouteProductValue(
     [...routesByClaim.entries()].map(([claimRef, routes]) => [
       claimRef,
       structuredClone(routes)
     ])
+  );
+  const acceptanceEntries = deepFreezeRouteProductValue(
+    [...acceptanceModuleRefsByClaim.entries()].map(([claimRef, routeModuleRefs]) => [
+      claimRef,
+      structuredClone(routeModuleRefs)
+    ])
+  );
+  const frozenModuleClaimVisibility = deepFreezeRouteProductValue(
+    structuredClone(moduleClaimVisibility)
   );
   const observation = Object.freeze({
     schemaVersion: 1,
@@ -495,17 +900,21 @@ function brandCompiledClaimGateRouteIndex({
   });
   const compiled = {
     model,
+    acceptanceEntries,
     claimRefs: Object.freeze([...claimRefs]),
     claimRefSet: new Set(claimRefs),
     entries,
     limits: Object.freeze({ ...limits }),
     usage,
-    inputGuard: sealClaimGateRouteInputGuard(inputGuard),
+    inputGuard: sealedInputGuard,
+    moduleClaimVisibility: frozenModuleClaimVisibility,
     observation
   };
   compiled.productDigest = canonicalDigest({
+    acceptanceEntries: compiled.acceptanceEntries,
     claimRefs: compiled.claimRefs,
     entries: compiled.entries,
+    moduleClaimVisibility: compiled.moduleClaimVisibility,
     observation,
     routePolicyContentDigest: compiled.inputGuard.contentDigest
   });
@@ -623,6 +1032,19 @@ function invalidCompiledClaimGateRouteIndexError(details) {
   );
 }
 
+function assertCompiledClaimGateRouteProductDigestCurrent(compiled) {
+  if (canonicalDigest({
+    acceptanceEntries: compiled.acceptanceEntries,
+    claimRefs: compiled.claimRefs,
+    entries: compiled.entries,
+    moduleClaimVisibility: compiled.moduleClaimVisibility,
+    observation: compiled.observation,
+    routePolicyContentDigest: compiled.inputGuard.contentDigest
+  }) !== compiled.productDigest) {
+    throw invalidCompiledClaimGateRouteIndexError({ reason: "product-content-drift" });
+  }
+}
+
 function deepFreezeRouteProductValue(value) {
   if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
   for (const key of Object.keys(value)) deepFreezeRouteProductValue(value[key]);
@@ -639,30 +1061,41 @@ function createClaimGateRouteInputGuard(model) {
   };
 }
 
-function sealClaimGateRouteInputGuard(guard) {
-  const semanticRecords = guard.records.map((record) => {
+function sealClaimGateRouteInputGuard(guard, limits) {
+  const semanticRecords = [];
+  for (const record of guard.records) {
+    let semanticRecord;
     if (record.type === "descriptor") {
-      return {
+      semanticRecord = {
         type: record.type,
         location: record.location,
         key: record.key,
         present: record.present,
         ...(record.present ? { value: guardedValueIdentity(guard, record.value) } : {})
       };
-    }
-    if (record.type === "prototype") {
-      return {
+    } else if (record.type === "prototype") {
+      semanticRecord = {
         type: record.type,
         location: record.location,
         value: guardedValueIdentity(guard, record.value)
       };
+    } else {
+      semanticRecord = {
+        type: record.type,
+        location: record.location,
+        value: record.value
+      };
     }
-    return {
-      type: record.type,
-      location: record.location,
-      value: record.value
-    };
-  });
+    const recordBytes = Buffer.byteLength(JSON.stringify(semanticRecord), "utf8") + 1;
+    const observedBytes = claimGateRouteLimitUsage(limits).totalRouteBytes + recordBytes;
+    assertClaimGateRouteLimit(
+      "totalRouteBytes",
+      observedBytes,
+      limits,
+      record.location
+    );
+    semanticRecords.push(semanticRecord);
+  }
   for (const record of guard.records) {
     if (record.type === "enumerable-keys") Object.freeze(record.value);
     Object.freeze(record);
@@ -980,9 +1413,229 @@ function compileRouteModuleRefs(modules, limits, budget) {
       `model.modules.${index}`,
       limits
     );
-    if (moduleRef) moduleRefs.add(moduleRef);
+    if (!moduleRef || moduleRefs.has(moduleRef)) {
+      throw claimGateRouteIndexError(
+        "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+        "Claim Gate route Models require unique non-empty Module ids.",
+        { location: `model.modules.${index}` }
+      );
+    }
+    moduleRefs.add(moduleRef);
   }
   return [...moduleRefs].sort();
+}
+
+function compileBoundedModuleClaimVisibility(model, limits, budget) {
+  const modules = readRouteIndexArrayProperty(model, "modules", "model.modules");
+  const moduleRefs = compileRouteModuleRefs(modules, limits, budget);
+  const modulesByRef = new Map();
+  for (let index = 0; index < modules.length; index += 1) {
+    const module = readRouteIndexArrayValue(modules, index, `model.modules.${index}`);
+    const moduleRef = readBoundedModelReference(module, `model.modules.${index}`, limits);
+    consumeClaimGateRouteAggregateBytes(
+      budget,
+      limits,
+      (2 * Buffer.byteLength(JSON.stringify(moduleRef), "utf8")) + 16,
+      `model.modules.${index}`
+    );
+    modulesByRef.set(moduleRef, { module, index });
+  }
+
+  const contracts = readRouteIndexArrayProperty(model, "contracts", "model.contracts");
+  budget.contracts = contracts.length;
+  assertClaimGateRouteLimit("contracts", budget.contracts, limits, "model.contracts");
+  assertPotentialClaimGateRouteWork(budget, limits, contracts.length);
+  const claimsByContract = new Map();
+  const globalClaims = new Map();
+  let totalClaims = 0;
+  for (let contractIndex = 0; contractIndex < contracts.length; contractIndex += 1) {
+    reserveClaimGateRouteWork(budget, limits, 1);
+    const contractLocation = `model.contracts.${contractIndex}`;
+    const contract = readRouteIndexArrayValue(contracts, contractIndex, contractLocation);
+    const contractRef = readBoundedModelReference(contract, contractLocation, limits);
+    if (!contractRef || claimsByContract.has(contractRef)) {
+      throw claimGateRouteIndexError(
+        "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+        "Claim Gate route Models require unique non-empty Contract ids.",
+        { location: contractLocation }
+      );
+    }
+    consumeClaimGateRouteAggregateBytes(
+      budget,
+      limits,
+      Buffer.byteLength(JSON.stringify(contractRef), "utf8") + 16,
+      contractLocation
+    );
+    const claims = readRouteIndexArrayProperty(
+      contract,
+      "claims",
+      `${contractLocation}.claims`
+    );
+    totalClaims += claims.length;
+    budget.modelClaims = totalClaims;
+    assertClaimGateRouteLimit(
+      "modelClaims",
+      budget.modelClaims,
+      limits,
+      `${contractLocation}.claims`
+    );
+    assertPotentialClaimGateRouteWork(budget, limits, claims.length);
+    const descriptors = [];
+    for (let claimIndex = 0; claimIndex < claims.length; claimIndex += 1) {
+      reserveClaimGateRouteWork(budget, limits, 1);
+      const claimLocation = `${contractLocation}.claims.${claimIndex}`;
+      const claim = readRouteIndexArrayValue(claims, claimIndex, claimLocation);
+      const claimRef = readBoundedModelReference(claim, claimLocation, limits);
+      const statement = normalizeBoundedRequiredModelText(
+        readOptionalRouteIndexDataProperty(claim, "statement", `${claimLocation}.statement`),
+        `${claimLocation}.statement`,
+        limits,
+        "Claim statement"
+      );
+      if (!claimRef || globalClaims.has(claimRef)) {
+        throw claimGateRouteIndexError(
+          "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+          "Claim Gate route Models require globally unique non-empty Claim ids.",
+          { location: claimLocation, claimRef: claimRef ?? null }
+        );
+      }
+      const descriptor = { claimRef, statement, contractRef };
+      const descriptorMetadataBytes = Buffer.byteLength(
+        JSON.stringify([[claimRef, descriptor], descriptor]),
+        "utf8"
+      ) + 32;
+      consumeClaimGateRouteAggregateBytes(
+        budget,
+        limits,
+        descriptorMetadataBytes,
+        claimLocation
+      );
+      descriptors.push(descriptor);
+      globalClaims.set(claimRef, descriptor);
+    }
+    descriptors.sort((left, right) => left.claimRef.localeCompare(right.claimRef));
+    claimsByContract.set(contractRef, descriptors);
+  }
+
+  const visibilityByModule = new Map();
+  for (const moduleRef of moduleRefs) {
+    const { module, index } = modulesByRef.get(moduleRef);
+    const moduleLocation = `model.modules.${index}`;
+    const visibleContracts = new Map();
+    const publicContracts = readOptionalBoundedModelList(
+      module,
+      "publicContracts",
+      `${moduleLocation}.publicContracts`,
+      limits,
+      budget
+    );
+    for (let contractIndex = 0; contractIndex < publicContracts.length; contractIndex += 1) {
+      reserveClaimGateRouteWork(budget, limits, 1);
+      const location = `${moduleLocation}.publicContracts.${contractIndex}`;
+      const contractRef = readBoundedModelReference(
+        readRouteIndexArrayValue(publicContracts, contractIndex, location),
+        location,
+        limits,
+        ["id", "contract", "contractId"]
+      );
+      addBoundedContractVisibility(
+        visibleContracts,
+        claimsByContract,
+        contractRef,
+        "owned",
+        location
+      );
+    }
+    const dependencies = readOptionalBoundedModelList(
+      module,
+      "dependencies",
+      `${moduleLocation}.dependencies`,
+      limits,
+      budget
+    );
+    for (let dependencyIndex = 0; dependencyIndex < dependencies.length; dependencyIndex += 1) {
+      reserveClaimGateRouteWork(budget, limits, 1);
+      const location = `${moduleLocation}.dependencies.${dependencyIndex}`;
+      const dependency = readRouteIndexArrayValue(dependencies, dependencyIndex, location);
+      const contractRef = readBoundedModelReference(
+        dependency,
+        location,
+        limits,
+        ["via", "contract", "contractId"]
+      );
+      addBoundedContractVisibility(
+        visibleContracts,
+        claimsByContract,
+        contractRef,
+        "dependency",
+        location
+      );
+    }
+    const visibilityEntries = [...visibleContracts.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([contractRef, kinds]) => [
+        contractRef,
+        [...kinds].sort(compareVisibilityKinds)
+      ]);
+    for (const entry of visibilityEntries) {
+      consumeClaimGateRouteAggregateBytes(
+        budget,
+        limits,
+        Buffer.byteLength(JSON.stringify([moduleRef, entry]), "utf8") + 16,
+        `${moduleLocation}.visibility`
+      );
+    }
+    visibilityByModule.set(moduleRef, visibilityEntries);
+  }
+
+  return {
+    moduleRefs,
+    claimsByContract: [...claimsByContract.entries()].sort(([left], [right]) => (
+      left.localeCompare(right)
+    )),
+    globalClaims: [...globalClaims.entries()].sort(([left], [right]) => left.localeCompare(right)),
+    visibilityByModule: [...visibilityByModule.entries()]
+  };
+}
+
+function readOptionalBoundedModelList(value, key, location, limits, budget) {
+  const observed = readOptionalRouteIndexDataProperty(value, key, location);
+  if (observed === undefined || observed === null) return [];
+  if (!Array.isArray(observed)) throw invalidClaimGateRouteJsonError(location);
+  const values = assertRouteIndexArray(observed, location);
+  assertClaimGateRouteLimit("refsPerModule", values.length, limits, location);
+  budget.visibilityRefs += values.length;
+  assertClaimGateRouteLimit(
+    "visibilityRefs",
+    budget.visibilityRefs,
+    limits,
+    location
+  );
+  assertPotentialClaimGateRouteWork(budget, limits, values.length);
+  return values;
+}
+
+function addBoundedContractVisibility(
+  visibility,
+  claimsByContract,
+  contractRef,
+  visibilityKind,
+  location
+) {
+  if (!contractRef || !claimsByContract.has(contractRef)) {
+    throw claimGateRouteIndexError(
+      "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+      "Module Claim visibility must reference a known Contract.",
+      { location, contractRef: contractRef ?? null }
+    );
+  }
+  if (!visibility.has(contractRef)) visibility.set(contractRef, new Set());
+  visibility.get(contractRef).add(visibilityKind);
+}
+
+function compareVisibilityKinds(left, right) {
+  const rank = { owned: 0, dependency: 1 };
+  return rank[left] - rank[right] || left.localeCompare(right);
 }
 
 function normalizeBoundedCommandClaimRefs(value, location, limits, budget) {
@@ -1038,6 +1691,10 @@ function normalizeBoundedRouteStringList(values, location, limits, budget) {
 function normalizedGateScopeSelectsModule(scope, gateId, moduleRef, fullGateId) {
   if (scope.size === 0 || scope.has(moduleRef)) return true;
   return gateId === fullGateId && (scope.has("integration") || scope.has("release"));
+}
+
+function normalizedAcceptanceGateScopeSelectsModule(scope, moduleRef) {
+  return scope.size === 0 || scope.has(moduleRef);
 }
 
 function normalizedCommandScopeSelectsModule(scope, moduleRef) {
@@ -1218,7 +1875,12 @@ function compareCompiledClaimGateRoutes(left, right) {
     || left.digest.localeCompare(right.digest);
 }
 
-function readBoundedModelReference(value, location, limits) {
+function readBoundedModelReference(
+  value,
+  location,
+  limits,
+  keys = ["id", "module", "moduleId", "target"]
+) {
   if (typeof value === "string") {
     return normalizeBoundedOptionalRouteText(value, location, limits);
   }
@@ -1230,7 +1892,7 @@ function readBoundedModelReference(value, location, limits) {
     throw invalidClaimGateRouteJsonError(location);
   }
   recordClaimGateRoutePrototype(value, location);
-  for (const key of ["id", "module", "moduleId", "target"]) {
+  for (const key of keys) {
     const descriptor = guardedRouteIndexOwnDescriptor(value, key, `${location}.${key}`);
     if (!descriptor) continue;
     if (!("value" in descriptor)) {
@@ -1248,6 +1910,26 @@ function readBoundedModelReference(value, location, limits) {
     if (reference) return reference;
   }
   return undefined;
+}
+
+function normalizeBoundedRequiredModelText(value, location, limits, label) {
+  if (typeof value !== "string") {
+    throw claimGateRouteIndexError(
+      "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+      `${label} must be a non-empty string.`,
+      { location }
+    );
+  }
+  assertBoundedRouteText(value, location, limits);
+  const normalized = value.trim();
+  if (!normalized) {
+    throw claimGateRouteIndexError(
+      "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID",
+      `${label} must be a non-empty string.`,
+      { location }
+    );
+  }
+  return normalized;
 }
 
 function normalizeBoundedRequiredRouteText(value, location, limits) {
@@ -1289,6 +1971,12 @@ function consumeBoundedRouteBytes(routeBudget, limits, bytes, location) {
   const observed = routeBudget.bytes + bytes;
   assertClaimGateRouteLimit("routeBytes", observed, limits, location);
   routeBudget.bytes = observed;
+}
+
+function consumeClaimGateRouteAggregateBytes(budget, limits, bytes, location) {
+  const observed = budget.totalRouteBytes + bytes;
+  assertClaimGateRouteLimit("totalRouteBytes", observed, limits, location);
+  budget.totalRouteBytes = observed;
 }
 
 function reserveClaimGateRouteWork(budget, limits, units) {

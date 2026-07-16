@@ -5,7 +5,8 @@ import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   compileClaimGateRouteIndex,
   INTEGRITY_CHANGE_KINDS,
-  projectCompiledClaimGateRouteIndex
+  projectCompiledClaimGateRouteIndex,
+  projectCompiledModuleClaimGateIndex
 } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
@@ -20,7 +21,8 @@ export {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
   compileClaimGateRoutes,
-  projectCompiledClaimGateRouteIndex
+  projectCompiledClaimGateRouteIndex,
+  projectCompiledModuleClaimGateIndex
 };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
