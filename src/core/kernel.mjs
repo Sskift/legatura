@@ -7,7 +7,6 @@ import {
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   assertIntegrityFailureEvidenceCurrent,
-  compileClaimGateRoutes,
   compileChangeAgainstGovernance,
   parseChangePlanRefs,
   validateIntegrityFailureEvidence
@@ -28,7 +27,9 @@ import {
 import { readGitBinding } from "./git-binding.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
+  compileClaimGateRouteIndex,
   loadProjectModel,
+  projectCompiledClaimGateRouteIndex,
   publicProjectModel,
   validateProjectModel
 } from "./project-model.mjs";
@@ -920,35 +921,39 @@ function compileArchitectureProfileFromSnapshot(snapshot) {
   );
   preflightArchitectureProfileSnapshotFacts(snapshot.records);
   const model = publicProjectModel(snapshot.inspection);
-  const routeWorkBudget = {
-    observed: 0,
-    routeCache: new Map(),
-    claimDescriptorCache: new Map()
-  };
   const { modelClaimRefs } = compileArchitectureProfileModelMembership(model);
+  const evidenceWorkBudget = { observed: 0 };
+  const preparedFacts = snapshot.records.map((record) => (
+    prepareArchitectureProfileChangeFact(record, snapshot, evidenceWorkBudget)
+  ));
+  const historicalRequirements = collectArchitectureProfileRouteRequirements(preparedFacts);
+  const routeQuery = createArchitectureProfileRouteQueryBudget();
+  requireArchitectureProfileDigest(model.digest, "model.digest");
+  const currentRouteProvider = compileArchitectureProfileRouteProvider({
+    model,
+    claimRefs: modelClaimRefs,
+    budget: routeQuery,
+    location: "model.claimGateRoutes"
+  });
   const currentClaimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
     model,
-    routeWorkBudget,
+    routeQuery,
     "model.claimDescriptors"
   );
-  const currentClaimRouteDigests = compileArchitectureProfileRouteDigestIndex(
-    model,
-    modelClaimRefs,
-    routeWorkBudget,
-    "model.claimGateRoutes"
+  const historicalProviders = compileArchitectureProfileHistoricalProviders(
+    historicalRequirements,
+    routeQuery
   );
   const changeFacts = [];
-  const evidenceWorkBudget = { observed: 0 };
   let associationCount = 0;
-  for (const record of snapshot.records) {
+  for (const prepared of preparedFacts) {
     const fact = normalizeArchitectureProfileChangeFact(
-      record,
+      prepared,
       snapshot,
       modelClaimRefs,
       currentClaimDescriptors,
-      currentClaimRouteDigests,
-      evidenceWorkBudget,
-      routeWorkBudget
+      currentRouteProvider.routeDigests,
+      historicalProviders
     );
     associationCount += fact.evidence.reduce((count, item) => (
       count + item.claimAssociations.length
@@ -967,16 +972,19 @@ function compileArchitectureProfileFromSnapshot(snapshot) {
     }
     changeFacts.push(fact);
   }
-  return compileArchitectureProfile({
-    model,
-    source: {
-      snapshotDigest: snapshot.digest,
-      projectModelDigest: snapshot.inspection.digest,
-      gitContentDigest: snapshot.inspection.git.contentDigest,
-      changeStoreDigest: snapshot.changeStoreDigest
+  return compileArchitectureProfile(
+    {
+      model,
+      source: {
+        snapshotDigest: snapshot.digest,
+        projectModelDigest: snapshot.inspection.digest,
+        gitContentDigest: snapshot.inspection.git.contentDigest,
+        changeStoreDigest: snapshot.changeStoreDigest
+      },
+      changeFacts
     },
-    changeFacts
-  });
+    { claimGateRouteIndex: currentRouteProvider.token }
+  );
 }
 
 function preflightArchitectureProfileSnapshotFacts(records) {
@@ -1045,8 +1053,8 @@ function preflightArchitectureProfileSnapshotFacts(records) {
 }
 
 function compileArchitectureProfileModelMembership(model) {
-  // This is a bounded membership index over the compiler's declared route inputs,
-  // not a second eligibility evaluator; compileArchitectureProfile revalidates every edge.
+  // This is only a bounded Contract Claim membership index. Route policy is owned by
+  // the Project Model Provider and is compiled below as one reusable product.
   const contracts = Array.isArray(model.contracts) ? model.contracts : [];
   const gates = Array.isArray(model.gates) ? model.gates : [];
   const modules = Array.isArray(model.modules) ? model.modules : [];
@@ -1083,85 +1091,7 @@ function compileArchitectureProfileModelMembership(model) {
       "model.claims"
     );
   }
-  const currentClaimRouteKeys = new Set();
-  let commandCount = 0;
-  for (const [gateIndex, gate] of gates.entries()) {
-    const commands = Array.isArray(gate?.commands) ? gate.commands : gate?.command ? [gate] : [];
-    assertArchitectureProfileCountBound(
-      commands.length,
-      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
-      `model.gates.${gateIndex}.commands`
-    );
-    commandCount += commands.length;
-    assertArchitectureProfileCountBound(
-      commandCount,
-      ARCHITECTURE_PROFILE_LIMITS.routes,
-      "model.gateCommands"
-    );
-    for (const [commandIndex, command] of commands.entries()) {
-      assertArchitectureProfileOptionalListBound(
-        command?.claimRefs,
-        `model.gates.${gateIndex}.commands.${commandIndex}.claimRefs`
-      );
-      const claimRefs = normalizeStringList(command?.claimRefs);
-      assertArchitectureProfileCountBound(
-        claimRefs.length,
-        ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
-        `model.gates.${gateIndex}.commands.${commandIndex}.claimRefs`
-      );
-      for (const claimRef of claimRefs) {
-        if (!modelClaimRefs.has(claimRef)) continue;
-        currentClaimRouteKeys.add(architectureProfileRouteKey(
-          claimRef,
-          gate?.id,
-          command?.id
-        ));
-      }
-      assertArchitectureProfileCountBound(
-        currentClaimRouteKeys.size,
-        ARCHITECTURE_PROFILE_LIMITS.routes,
-        "model.claimGateRoutes"
-      );
-    }
-  }
-  const modelRouteWork = (modelClaimRefs.size * (commandCount + modules.length))
-    + (currentClaimRouteKeys.size * modules.length);
-  assertArchitectureProfileCountBound(
-    modelRouteWork,
-    ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT,
-    "model.claimGateRouteWork"
-  );
   return { modelClaimRefs };
-}
-
-function compileArchitectureProfileSourceRouteDigests(source, assessment, budget, location) {
-  const sourceClaimRefs = new Set((assessment.coverage?.eligibleClaimAssociations ?? [])
-    .filter((association) => association?.kind !== "builtin")
-    .map((association) => readString(association?.sourceClaimRef))
-    .filter(Boolean));
-  if (sourceClaimRefs.size === 0) return new Map();
-  return compileArchitectureProfileRouteDigestIndex(
-    readGovernanceBaseline(source),
-    sourceClaimRefs,
-    budget,
-    location
-  );
-}
-
-function compileArchitectureProfileSourceClaimDescriptors(source, assessment, budget, location) {
-  const endpointClaimRefs = new Set((assessment.coverage?.eligibleClaimAssociations ?? [])
-    .flatMap((association) => [
-      readString(association?.targetClaimRef),
-      readString(association?.sourceClaimRef)
-    ])
-    .filter(Boolean));
-  if (endpointClaimRefs.size === 0) return new Map();
-  const descriptors = compileArchitectureProfileClaimDescriptorIndex(
-    readGovernanceBaseline(source),
-    budget,
-    location
-  );
-  return new Map([...descriptors].filter(([claimRef]) => endpointClaimRefs.has(claimRef)));
 }
 
 function compileArchitectureProfileClaimDescriptorIndex(model, budget, location) {
@@ -1173,6 +1103,11 @@ function compileArchitectureProfileClaimDescriptorIndex(model, budget, location)
   assertArchitectureProfileCountBound(
     contracts.length,
     ARCHITECTURE_PROFILE_LIMITS.contracts,
+    `${location}.contracts`
+  );
+  consumeArchitectureProfileRouteQueryWork(
+    budget,
+    contracts.length,
     `${location}.contracts`
   );
   const descriptors = new Map();
@@ -1189,6 +1124,11 @@ function compileArchitectureProfileClaimDescriptorIndex(model, budget, location)
       claimCount,
       ARCHITECTURE_PROFILE_LIMITS.claims,
       `${location}.claims`
+    );
+    consumeArchitectureProfileRouteQueryWork(
+      budget,
+      claims.length,
+      `${location}.contracts.${contractIndex}.claims`
     );
     const contractRef = requireArchitectureProfileString(
       readModelReference(contract),
@@ -1225,85 +1165,187 @@ function compileArchitectureProfileClaimDescriptorIndex(model, budget, location)
       });
     }
   }
-  consumeArchitectureProfileRouteWork(
-    budget,
-    contracts.length + claimCount,
-    location
-  );
   budget.claimDescriptorCache.set(cacheKey, descriptors);
   return descriptors;
 }
 
-function compileArchitectureProfileRouteDigestIndex(model, claimRefs, budget, location) {
+function createArchitectureProfileRouteQueryBudget() {
+  return {
+    limits: {
+      workUnits: ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT,
+      routes: ARCHITECTURE_PROFILE_LIMITS.routes,
+      totalRouteBytes: ARCHITECTURE_PROFILE_LIMITS.profileBytes
+    },
+    observed: { workUnits: 0, routes: 0, totalRouteBytes: 0 },
+    claimDescriptorCache: new Map()
+  };
+}
+
+function collectArchitectureProfileRouteRequirements(preparedFacts) {
+  const requirements = new Map();
+  for (const prepared of preparedFacts) {
+    for (const sourceContext of prepared.evidenceSources) {
+      const associations = sourceContext.forceInvalid
+        ? []
+        : sourceContext.assessment.coverage?.eligibleClaimAssociations ?? [];
+      if (associations.length === 0) continue;
+      const baseline = sourceContext.assessment.governanceBaseline;
+      if (!baseline) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_FACT_INVALID",
+          "Architecture Profile Evidence associations require a verified Governance Baseline.",
+          422,
+          { location: sourceContext.location }
+        );
+      }
+      const baselineDigest = requireArchitectureProfileDigest(
+        baseline.digest,
+        `${sourceContext.location}.governanceBaseline.digest`
+      );
+      sourceContext.providerKey = baselineDigest;
+      if (!requirements.has(baselineDigest)) {
+        requirements.set(baselineDigest, {
+          baseline,
+          baselineDigest,
+          routeClaimRefs: new Set()
+        });
+      }
+      const requirement = requirements.get(baselineDigest);
+      for (const association of associations) {
+        if (association?.kind === "builtin") continue;
+        const sourceClaimRef = readString(association?.sourceClaimRef);
+        if (sourceClaimRef) requirement.routeClaimRefs.add(sourceClaimRef);
+      }
+      assertArchitectureProfileCountBound(
+        requirement.routeClaimRefs.size,
+        ARCHITECTURE_PROFILE_LIMITS.claims,
+        `${sourceContext.location}.sourceClaimRefs`
+      );
+    }
+  }
+  return requirements;
+}
+
+function compileArchitectureProfileHistoricalProviders(requirements, budget) {
+  const providers = new Map();
+  const ordered = [...requirements.values()].sort((left, right) => (
+    left.baselineDigest.localeCompare(right.baselineDigest)
+  ));
+  for (const requirement of ordered) {
+    const location = `historicalBaseline.${requirement.baselineDigest}`;
+    const claimDescriptors = compileArchitectureProfileClaimDescriptorIndex(
+      requirement.baseline,
+      budget,
+      `${location}.claimDescriptors`
+    );
+    const routeProvider = requirement.routeClaimRefs.size > 0
+      ? compileArchitectureProfileRouteProvider({
+          model: requirement.baseline,
+          claimRefs: requirement.routeClaimRefs,
+          budget,
+          location: `${location}.claimGateRoutes`,
+          baselineDigest: requirement.baselineDigest
+        })
+      : { routeDigests: new Map(), token: null };
+    providers.set(requirement.baselineDigest, {
+      claimDescriptors,
+      routeDigests: routeProvider.routeDigests
+    });
+  }
+  return providers;
+}
+
+function compileArchitectureProfileRouteProvider({
+  model,
+  claimRefs,
+  budget,
+  location,
+  baselineDigest
+}) {
   const exactClaimRefs = [...new Set([...claimRefs].map(readString).filter(Boolean))].sort();
   assertArchitectureProfileCountBound(
     exactClaimRefs.length,
     ARCHITECTURE_PROFILE_LIMITS.claims,
     `${location}.claims`
   );
-  if (exactClaimRefs.length === 0) return new Map();
-  const modelBindingDigest = requireArchitectureProfileDigest(model?.digest, `${location}.modelDigest`);
-  const cacheKey = `routes\u0000${modelBindingDigest}\u0000${canonicalDigest(exactClaimRefs)}`;
-  const cached = budget.routeCache.get(cacheKey);
-  if (cached) return cached;
-  const modules = Array.isArray(model?.modules) ? model.modules : [];
-  const gates = Array.isArray(model?.gates) ? model.gates : [];
-  assertArchitectureProfileCountBound(
-    modules.length,
-    ARCHITECTURE_PROFILE_LIMITS.modules,
-    `${location}.modules`
-  );
-  assertArchitectureProfileCountBound(
-    gates.length,
-    ARCHITECTURE_PROFILE_LIMITS.gates,
-    `${location}.gates`
-  );
-  const requestedClaims = new Set(exactClaimRefs);
-  let commandCount = 0;
-  let commandClaimRefCount = 0;
-  let matchedRouteCount = 0;
-  for (const [gateIndex, gate] of gates.entries()) {
-    const commands = Array.isArray(gate?.commands) ? gate.commands : gate?.command ? [gate] : [];
-    assertArchitectureProfileCountBound(
-      commands.length,
-      ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
-      `${location}.gates.${gateIndex}.commands`
-    );
-    commandCount += commands.length;
-    assertArchitectureProfileCountBound(
-      commandCount,
-      ARCHITECTURE_PROFILE_LIMITS.routes,
-      `${location}.commands`
-    );
-    for (const [commandIndex, command] of commands.entries()) {
-      const claimRefLocation = `${location}.gates.${gateIndex}.commands.${commandIndex}.claimRefs`;
-      assertArchitectureProfileOptionalListBound(command?.claimRefs, claimRefLocation);
-      const normalizedClaimRefs = normalizeStringList(command?.claimRefs);
-      commandClaimRefCount += normalizedClaimRefs.length;
-      assertArchitectureProfileCountBound(
-        commandClaimRefCount,
-        ARCHITECTURE_PROFILE_LIMITS.relations,
-        `${location}.commandClaimRefs`
-      );
-      matchedRouteCount += normalizedClaimRefs.filter((claimRef) => (
-        requestedClaims.has(claimRef)
-      )).length;
-      assertArchitectureProfileCountBound(
-        matchedRouteCount,
-        ARCHITECTURE_PROFILE_LIMITS.routes,
-        `${location}.matchedRoutes`
-      );
-    }
+  let token;
+  try {
+    token = compileClaimGateRouteIndex(model, {
+      claimRefs: exactClaimRefs,
+      limits: architectureProfileRouteProviderLimits(budget)
+    });
+  } catch (error) {
+    throwArchitectureProfileRouteProviderError(error, budget, location, baselineDigest);
   }
+  let projection;
+  try {
+    projection = projectCompiledClaimGateRouteIndex(token, {
+      model,
+      claimRefs: exactClaimRefs
+    });
+  } catch (error) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_ROUTE_PROVIDER_INVALID",
+      "Architecture Profile could not reuse its freshly compiled route Provider.",
+      500,
+      {
+        location,
+        ...(baselineDigest ? { baselineDigest } : {}),
+        ...(readString(error?.code) ? { providerCode: error.code } : {})
+      }
+    );
+  }
+  consumeArchitectureProfileRouteProviderObservation(
+    budget,
+    projection.observation,
+    location,
+    baselineDigest
+  );
+  const provider = {
+    token,
+    routeDigests: compileArchitectureProfileRouteDigestIndex(
+      projection.routesByClaim,
+      budget,
+      location,
+      baselineDigest
+    )
+  };
+  return provider;
+}
 
-  const routeWork = exactClaimRefs.length
-      * (modules.length + gates.length + commandCount + commandClaimRefCount)
-    + (matchedRouteCount * (modules.length + 8));
-  consumeArchitectureProfileRouteWork(budget, routeWork, location);
+function architectureProfileRouteProviderLimits(budget) {
+  return {
+    claimRefs: ARCHITECTURE_PROFILE_LIMITS.claims,
+    modules: ARCHITECTURE_PROFILE_LIMITS.modules,
+    gates: ARCHITECTURE_PROFILE_LIMITS.gates,
+    commands: ARCHITECTURE_PROFILE_LIMITS.routes,
+    refsPerCommand: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+    totalCommandClaimRefs: ARCHITECTURE_PROFILE_LIMITS.relations,
+    routes: budget.limits.routes - budget.observed.routes,
+    totalRouteBytes: budget.limits.totalRouteBytes - budget.observed.totalRouteBytes,
+    depth: ARCHITECTURE_PROFILE_LIMITS.depth,
+    textBytes: ARCHITECTURE_PROFILE_LIMITS.textBytes,
+    workUnits: budget.limits.workUnits - budget.observed.workUnits
+  };
+}
 
+function compileArchitectureProfileRouteDigestIndex(
+  routesByClaim,
+  budget,
+  location,
+  baselineDigest
+) {
   const index = new Map();
-  for (const claimRef of exactClaimRefs) {
-    for (const route of compileClaimGateRoutes(model, claimRef)) {
+  for (const [claimRef, routes] of routesByClaim) {
+    for (const route of routes) {
+      // Route bytes are already bounded by the Provider observation; one additional
+      // unit per digest keeps projection work bounded without reinterpreting policy.
+      consumeArchitectureProfileRouteQueryWork(
+        budget,
+        1,
+        `${location}.routeDigests`,
+        baselineDigest
+      );
       const key = architectureProfileRouteKey(claimRef, route?.gateId, route?.commandId);
       const digest = canonicalDigest(route);
       if (index.has(key) && index.get(key) !== digest) {
@@ -1315,35 +1357,123 @@ function compileArchitectureProfileRouteDigestIndex(model, claimRefs, budget, lo
         );
       }
       index.set(key, digest);
-      assertArchitectureProfileCountBound(
-        index.size,
-        ARCHITECTURE_PROFILE_LIMITS.routes,
-        `${location}.routes`
-      );
     }
   }
-  budget.routeCache.set(cacheKey, index);
   return index;
 }
 
-function consumeArchitectureProfileRouteWork(budget, units, location) {
-  budget.observed += units;
-  assertArchitectureProfileCountBound(
-    budget.observed,
-    ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT,
-    `${location}.work`
+function consumeArchitectureProfileRouteProviderObservation(
+  budget,
+  observation,
+  location,
+  baselineDigest
+) {
+  const next = {};
+  for (const dimension of ["workUnits", "routes", "totalRouteBytes"]) {
+    const units = observation?.[dimension];
+    if (!Number.isSafeInteger(units) || units < 0) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_ROUTE_PROVIDER_INVALID",
+        "Architecture Profile route Provider returned an invalid resource observation.",
+        500,
+        { dimension, location, ...(baselineDigest ? { baselineDigest } : {}) }
+      );
+    }
+    next[dimension] = budget.observed[dimension] + units;
+    assertArchitectureProfileRouteQueryLimit(
+      budget,
+      dimension,
+      next[dimension],
+      location,
+      baselineDigest
+    );
+  }
+  Object.assign(budget.observed, next);
+}
+
+function consumeArchitectureProfileRouteQueryWork(budget, units, location, baselineDigest) {
+  const observed = budget.observed.workUnits + units;
+  assertArchitectureProfileRouteQueryLimit(
+    budget,
+    "workUnits",
+    observed,
+    location,
+    baselineDigest
+  );
+  budget.observed.workUnits = observed;
+}
+
+function assertArchitectureProfileRouteQueryLimit(
+  budget,
+  dimension,
+  observed,
+  location,
+  baselineDigest
+) {
+  const limit = budget.limits[dimension];
+  if (observed <= limit) return;
+  throw kernelError(
+    "ARCHITECTURE_PROFILE_ROUTE_QUERY_LIMIT_EXCEEDED",
+    "Architecture Profile route query exceeded its aggregate resource budget.",
+    413,
+    { dimension, limit, observed, location, ...(baselineDigest ? { baselineDigest } : {}) }
   );
 }
 
-function normalizeArchitectureProfileChangeFact(
-  record,
-  snapshot,
-  modelClaimRefs,
-  currentClaimDescriptors,
-  currentClaimRouteDigests,
-  evidenceWorkBudget,
-  routeWorkBudget
-) {
+function throwArchitectureProfileRouteProviderError(error, budget, location, baselineDigest) {
+  if (error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED") {
+    const dimension = readString(error?.details?.dimension) ?? "workUnits";
+    const aggregateDimension = Object.hasOwn(budget.limits, dimension);
+    const localObserved = Number.isSafeInteger(error?.details?.observed)
+      ? error.details.observed
+      : 1;
+    if (!aggregateDimension) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_FACTS_UNBOUNDED",
+        "Architecture Profile route policy exceeded a fixed Provider bound.",
+        413,
+        {
+          dimension,
+          limit: Number.isSafeInteger(error?.details?.limit) ? error.details.limit : 0,
+          observed: localObserved,
+          location,
+          ...(baselineDigest ? { baselineDigest } : {})
+        }
+      );
+    }
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_ROUTE_QUERY_LIMIT_EXCEEDED",
+      "Architecture Profile route query exceeded its aggregate resource budget.",
+      413,
+      {
+        dimension,
+        limit: budget.limits[dimension],
+        observed: budget.observed[dimension] + localObserved,
+        location,
+        ...(baselineDigest ? { baselineDigest } : {})
+      }
+    );
+  }
+  if (error?.code === "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID") {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_FACT_INVALID",
+      "Architecture Profile route policy input is not a valid Project Model fact.",
+      422,
+      { location, providerCode: error.code, ...(baselineDigest ? { baselineDigest } : {}) }
+    );
+  }
+  if (readString(error?.code)?.startsWith("CLAIM_GATE_ROUTE_INDEX_")) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_ROUTE_PROVIDER_INVALID",
+      "Architecture Profile route Provider failed at its internal compilation boundary.",
+      500,
+      { location, providerCode: error.code, ...(baselineDigest ? { baselineDigest } : {}) }
+    );
+  }
+  throw error;
+}
+
+function prepareArchitectureProfileChangeFact(record, snapshot, evidenceWorkBudget) {
   if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw kernelError(
       "ARCHITECTURE_PROFILE_FACT_INVALID",
@@ -1383,64 +1513,77 @@ function normalizeArchitectureProfileChangeFact(
       workBudget: evidenceWorkBudget
     }
   );
-  const currentEvidence = normalizeArchitectureProfileEvidence({
-    source: record,
-    assessment: currentAssessment,
-    modelClaimRefs,
-    currentClaimDescriptors,
-    sourceClaimDescriptors: compileArchitectureProfileSourceClaimDescriptors(
-      record,
-      currentAssessment,
-      routeWorkBudget,
-      `change.${readString(record.id) ?? "unknown"}.currentClaimDescriptors`
-    ),
-    currentClaimRouteDigests,
-    sourceClaimRouteDigests: compileArchitectureProfileSourceRouteDigests(
-      record,
-      currentAssessment,
-      routeWorkBudget,
-      `change.${readString(record.id) ?? "unknown"}.currentRoutes`
-    ),
-    origin: "current-record",
-    forceInvalid: seal.present && !seal.intact
-  });
-  const sealedEvidence = sealedPackage
-    ? (() => {
-        const sealedAssessment = compileEvidenceAssessment(sealedPackage, {
+  return {
+    record,
+    contributions: [...currentContributions, ...sealedContributions],
+    evidenceSources: [
+      {
+        source: record,
+        assessment: currentAssessment,
+        origin: "current-record",
+        forceInvalid: seal.present && !seal.intact,
+        historical: false,
+        location: `change.${readString(record.id) ?? "unknown"}.current`
+      },
+      ...(sealedPackage ? [{
+        source: sealedPackage,
+        assessment: compileEvidenceAssessment(sealedPackage, {
           digest: sealedPackage.projectModelDigest,
           git: sealedPackage.currentGit,
           validation: { valid: true }
-        }, { workBudget: evidenceWorkBudget });
-        return normalizeArchitectureProfileEvidence({
-          source: sealedPackage,
-          assessment: sealedAssessment,
-          modelClaimRefs,
-          currentClaimDescriptors,
-          sourceClaimDescriptors: compileArchitectureProfileSourceClaimDescriptors(
-            sealedPackage,
-            sealedAssessment,
-            routeWorkBudget,
-            `change.${readString(record.id) ?? "unknown"}.sealedClaimDescriptors`
-          ),
-          currentClaimRouteDigests,
-          sourceClaimRouteDigests: compileArchitectureProfileSourceRouteDigests(
-            sealedPackage,
-            sealedAssessment,
-            routeWorkBudget,
-            `change.${readString(record.id) ?? "unknown"}.sealedRoutes`
-          ),
-          origin: "sealed-package",
-          acceptanceDigest: seal.acceptanceDigest,
-          historical: true
-        });
-      })()
-    : [];
+        }, { workBudget: evidenceWorkBudget }),
+        origin: "sealed-package",
+        acceptanceDigest: seal.acceptanceDigest,
+        historical: true,
+        forceInvalid: false,
+        location: `change.${readString(record.id) ?? "unknown"}.sealed`
+      }] : [])
+    ]
+  };
+}
+
+function normalizeArchitectureProfileChangeFact(
+  prepared,
+  snapshot,
+  modelClaimRefs,
+  currentClaimDescriptors,
+  currentClaimRouteDigests,
+  historicalProviders
+) {
+  const { record } = prepared;
+  const evidence = prepared.evidenceSources.flatMap((sourceContext) => {
+    const provider = sourceContext.providerKey
+      ? historicalProviders.get(sourceContext.providerKey)
+      : null;
+    if (sourceContext.providerKey && !provider) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_ROUTE_PROVIDER_INVALID",
+        "Architecture Profile Evidence could not resolve its prepared historical Provider.",
+        500,
+        { location: sourceContext.location, baselineDigest: sourceContext.providerKey }
+      );
+    }
+    return normalizeArchitectureProfileEvidence({
+      source: sourceContext.source,
+      assessment: sourceContext.assessment,
+      modelClaimRefs,
+      currentClaimDescriptors,
+      sourceClaimDescriptors: provider?.claimDescriptors ?? new Map(),
+      currentClaimRouteDigests,
+      sourceClaimRouteDigests: provider?.routeDigests ?? new Map(),
+      origin: sourceContext.origin,
+      ...(sourceContext.acceptanceDigest
+        ? { acceptanceDigest: sourceContext.acceptanceDigest }
+        : {}),
+      forceInvalid: sourceContext.forceInvalid,
+      historical: sourceContext.historical
+    });
+  });
   assertArchitectureProfileListBound(
-    [...currentEvidence, ...sealedEvidence],
+    evidence,
     ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
     `change.${readString(record.id) ?? "unknown"}.evidence`
   );
-
   return {
     schemaVersion: 1,
     sourceSnapshotDigest: snapshot.digest,
@@ -1450,8 +1593,8 @@ function normalizeArchitectureProfileChangeFact(
       record.primaryModule,
       `change.${record.id}.primaryModule`
     ),
-    contributions: [...currentContributions, ...sealedContributions],
-    evidence: [...currentEvidence, ...sealedEvidence]
+    contributions: prepared.contributions,
+    evidence
   };
 }
 

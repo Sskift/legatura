@@ -456,6 +456,80 @@ test("Change queries observe sources independently of N and keep list bodies bou
   )), false);
   assertEvidenceEligibilityFailsClosed();
   assertAssociationDerivationIsBounded();
+
+  const routeProductFixture = await createRouteProductFixture();
+  t.after(() => rm(routeProductFixture.repoPath, { recursive: true, force: true }));
+  const routeProductWriter = createKernel({ repoPath: routeProductFixture.repoPath });
+  const routeProductChanges = [];
+  for (const specification of [
+    { id: "union-a", targetClaimRef: "target-a", sourceClaimRef: "source-a" },
+    { id: "union-b", targetClaimRef: "target-b", sourceClaimRef: "source-b" },
+    { id: "union-a-repeat", targetClaimRef: "target-a", sourceClaimRef: "source-a" }
+  ]) {
+    routeProductChanges.push({
+      specification,
+      candidate: await routeProductWriter.createChange({
+        id: specification.id,
+        title: `Profile route product ${specification.id}`,
+        request: `Prove ${specification.targetClaimRef} through ${specification.sourceClaimRef}.`,
+        primaryModule: "core",
+        claims: [routeProductClaim(specification.targetClaimRef)]
+      })
+    });
+  }
+  assert.equal(new Set(routeProductChanges.map((entry) => (
+    entry.candidate.governanceBaseline.digest
+  ))).size, 1, "the N records share one verified frozen Governance Baseline");
+
+  for (const entry of routeProductChanges) {
+    entry.ready = await compileAndRunCrossClaimChange(
+      routeProductWriter,
+      entry.candidate.id,
+      entry.specification
+    );
+    assert.equal(entry.ready.change.state, "EvidenceReady");
+    entry.sourceEvidence = entry.ready.change.evidence.find((item) => (
+      item.provenance?.kind === "gate-command"
+        && item.provenance.commandId === `${entry.specification.sourceClaimRef}-route`
+    ));
+    assert.ok(entry.sourceEvidence);
+  }
+
+  const routeProductProfile = await createKernel({
+    repoPath: routeProductFixture.repoPath
+  }).inspectArchitectureProfile();
+  assert.deepEqual(routeProductProfile.entities.changes.map((change) => change.id).sort(), [
+    "union-a",
+    "union-a-repeat",
+    "union-b"
+  ]);
+  for (const entry of routeProductChanges) {
+    const evidenceFact = findProfileEvidence(
+      routeProductProfile,
+      entry.candidate.id,
+      entry.sourceEvidence.id,
+      "current-record"
+    );
+    const associations = routeProductProfile.relations.currentEvidenceClaimAssociations.filter((
+      relation
+    ) => relation.evidenceRef === evidenceFact.id);
+    assert.equal(associations.length, 1, "Profile must preserve the exact source subset per record");
+    assert.equal(associations[0].targetClaimRef, entry.specification.targetClaimRef);
+    assert.equal(associations[0].sourceClaimRef, entry.specification.sourceClaimRef);
+    const exactRoute = routeProductProfile.entities.routes.find((route) => (
+      route.id === associations[0].routeRef
+    ));
+    assert.equal(exactRoute.gateRef, "minimum");
+    assert.equal(exactRoute.commandRef, `${entry.specification.sourceClaimRef}-route`);
+  }
+  const serializedRouteProductProfile = JSON.stringify(routeProductProfile);
+  for (const operationalField of ["\"observation\"", "\"workUnits\"", "\"totalRouteBytes\""]) {
+    assert.equal(
+      serializedRouteProductProfile.includes(operationalField),
+      false,
+      `Profile leaked route-provider resource field ${operationalField}`
+    );
+  }
 });
 
 test("bounded stabilization accepts A/B/B and fails closed on A/B/C", async (t) => {
@@ -831,6 +905,88 @@ function sequencedGitRunner(heads) {
 
 function commandResult(stdout) {
   return { exitCode: 0, stdout, stderr: "" };
+}
+
+async function createRouteProductFixture() {
+  const fixture = await createFixture();
+  await writeJson(path.join(fixture.repoPath, ".legatura/contracts/core-behavior.json"), {
+    schemaVersion: 1,
+    id: "core-behavior",
+    name: "Core Behavior",
+    owner: "core",
+    maturity: "governed",
+    normativeSources: [],
+    claims: [
+      routeProductClaim("source-a"),
+      routeProductClaim("source-b"),
+      routeProductClaim("target-a"),
+      routeProductClaim("target-b")
+    ],
+    consumers: []
+  });
+  await writeJson(path.join(fixture.repoPath, ".legatura/gates/minimum.json"), {
+    schemaVersion: 1,
+    id: "minimum",
+    name: "Minimum Gate",
+    purpose: "Expose two exact source-Claim routes from one Governance Baseline.",
+    appliesTo: ["core"],
+    commands: [
+      routeProductCommand("source-a"),
+      routeProductCommand("source-b")
+    ]
+  });
+  await git(fixture.repoPath, "add", ".");
+  await git(fixture.repoPath, "commit", "-qm", "add exact route product fixture");
+  return fixture;
+}
+
+function routeProductClaim(claimRef) {
+  const statements = {
+    "source-a": "Source A remains correct under its exact Gate route.",
+    "source-b": "Source B remains correct under its exact Gate route.",
+    "target-a": "Target A remains correct under its approved source mapping.",
+    "target-b": "Target B remains correct under its approved source mapping."
+  };
+  return { id: claimRef, statement: statements[claimRef] };
+}
+
+function routeProductCommand(sourceClaimRef) {
+  return {
+    id: `${sourceClaimRef}-route`,
+    command: [process.execPath, "-e", "process.exit(0)"],
+    timeoutMs: 30_000,
+    claimRefs: [sourceClaimRef],
+    oracle: {
+      kind: "fixture",
+      description: `The exact ${sourceClaimRef} fixture route exits zero.`
+    },
+    applicability: { phase: "acceptance" },
+    discriminatoryPower: { rejects: [`A non-zero exit rejects ${sourceClaimRef}.`] },
+    residualUncertainty: ["Only the exact fixture route is covered."]
+  };
+}
+
+async function compileAndRunCrossClaimChange(kernel, changeId, specification) {
+  const obligationId = `verify-${specification.targetClaimRef}`;
+  await kernel.compileChange(changeId, {
+    verificationObligations: [{
+      id: obligationId,
+      claimId: specification.targetClaimRef,
+      gateClaimRefs: [specification.sourceClaimRef],
+      mappingRationale: "The fixture deliberately maps one target to one exact source route.",
+      applicability: "Only this fixture Core Module and the named source route.",
+      discriminatoryPower: "A non-zero process exit rejects the mapped target Claim."
+    }],
+    authorityDecision: {
+      status: "approved",
+      authority: "module-maintainer",
+      decidedBy: "architecture-profile-test",
+      decisionType: "case-decision",
+      rationale: "Approve the fixture's explicit one-source mapping.",
+      approvedObligationIds: [obligationId]
+    }
+  });
+  return kernel.runGate(changeId);
 }
 
 async function createFixture() {
