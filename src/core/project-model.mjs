@@ -5,10 +5,11 @@ import { INTEGRITY_CHANGE_KINDS } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
+  compileClaimGateRoutes,
   validateOutcomeTransitionLedger
 } from "./outcome-transitions.mjs";
 
-export { assertKnowledgeGapProofContractsPreserved };
+export { assertKnowledgeGapProofContractsPreserved, compileClaimGateRoutes };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
@@ -313,7 +314,7 @@ export function validateProjectModel(model) {
     claimIndex,
     modules: model.modules,
     gates: model.gates,
-    changePolicy,
+    projectDocument: model.projectDocument,
     plan: model.plan
   }, errors);
 
@@ -335,7 +336,7 @@ export function validateProjectModel(model) {
   };
 }
 
-function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, changePolicy, plan }, errors) {
+function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, projectDocument, plan }, errors) {
   const seen = new Set();
   const gapIndex = new Map();
   const proofClaimOwners = new Map();
@@ -389,7 +390,7 @@ function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, chan
               location,
               `Knowledge Gap proofClaimRefs references unknown Contract Claim: ${reference}.`
             ));
-          } else if (!hasExecutableGateRoute({ gates, modules, changePolicy }, reference)) {
+          } else if (!hasExecutableGateRoute({ modules, gates, projectDocument }, reference)) {
             errors.push(issue(
               "knowledge-gap.proof-claim.gate-route-missing",
               location,
@@ -473,35 +474,10 @@ function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, chan
   }
 }
 
-function hasExecutableGateRoute({ gates, modules, changePolicy }, claimRef) {
-  const moduleRefs = asArray(modules).map(readId).filter(Boolean);
-  const fullGateId = readString(changePolicy?.fullGate);
-  return asArray(gates).some((gate) => {
-    const commands = Array.isArray(gate?.commands)
-      ? gate.commands
-      : gate?.command ? [gate] : [];
-    return commands.some((command) => (
-      asArray(command?.claimRefs).includes(claimRef)
-        && Boolean(normalizeGateCommand(command?.command))
-        && moduleRefs.some((moduleRef) => (
-          gateAllowsModule(gate, moduleRef, fullGateId)
-            && referenceListAllowsModule(command?.appliesTo, moduleRef)
-        ))
-    ));
-  });
-}
-
-function gateAllowsModule(gate, moduleRef, fullGateId) {
-  const appliesTo = asArray(gate?.appliesTo).map(readString).filter(Boolean);
-  return appliesTo.length === 0
-    || appliesTo.includes(moduleRef)
-    || (readId(gate) === fullGateId
-      && (appliesTo.includes("integration") || appliesTo.includes("release")));
-}
-
-function referenceListAllowsModule(value, moduleRef) {
-  const appliesTo = asArray(value).map(readString).filter(Boolean);
-  return appliesTo.length === 0 || appliesTo.includes(moduleRef);
+function hasExecutableGateRoute(model, claimRef) {
+  return compileClaimGateRoutes(model, claimRef).some((route) => (
+    Boolean(normalizeGateCommand(route.command)) && route.effectiveModuleRefs.length > 0
+  ));
 }
 
 export function publicProjectModel(model) {

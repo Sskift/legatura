@@ -9,6 +9,7 @@ import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.m
 import { compileOutcomeTransitions } from "../../src/core/outcome-transitions.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
+  compileClaimGateRoutes,
   loadProjectModel,
   publicProjectModel,
   validateProjectModel
@@ -26,6 +27,21 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   const proofContractModel = structuredClone(criteriaModel);
   proofContractModel.knowledgeGaps[0].proofClaimRefs = ["dependency-works"];
   assert.equal(validateProjectModel(proofContractModel).valid, true);
+  assert.deepEqual(compileClaimGateRoutes(proofContractModel, "dependency-works"), [{
+    claimRef: "dependency-works",
+    gateId: "minimum",
+    commandId: "dependency-proof-command",
+    command: [process.execPath, "-e", "process.exit(0)"],
+    timeoutMs: null,
+    effectiveModuleRefs: ["core"],
+    oracle: {
+      kind: "process-exit",
+      description: "The dependency proof command exits zero only for the bounded fixture behavior."
+    },
+    applicability: { phase: "acceptance", dependency: "dependency" },
+    discriminatoryPower: { rejects: ["an incorrect dependency behavior"] },
+    residualUncertainty: ["The dependency proof remains bounded to the synthetic fixture."]
+  }]);
   const unroutableProofContract = structuredClone(proofContractModel);
   unroutableProofContract.gates[0].commands = [unroutableProofContract.gates[0].commands[0]];
   assert.ok(validateProjectModel(unroutableProofContract).errors.some(
@@ -92,29 +108,69 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
       && error.details.problems.includes("proof-claim-semantic-mismatch")
   );
 
-  const rewrittenProofRoute = structuredClone(closedProofContract);
-  rewrittenProofRoute.gates[0].commands[1].discriminatoryPower = {
-    rejects: ["only a weaker dependency failure"]
-  };
-  assert.throws(
-    () => assertKnowledgeGapProofContractsPreserved({
-      governanceBaseline: proofContractBaseline,
-      currentModel: rewrittenProofRoute
-    }),
-    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
-      && error.details.problems.includes("gate-route-semantic-mismatch")
+  const unrelatedRouteExpansion = structuredClone(proofContractModel);
+  unrelatedRouteExpansion.gates[0].commands[1].claimRefs.push("core-works");
+  addForeignContract(unrelatedRouteExpansion);
+  unrelatedRouteExpansion.gates[0].appliesTo.push("foreign");
+  assert.deepEqual(
+    compileClaimGateRoutes(unrelatedRouteExpansion, "dependency-works"),
+    compileClaimGateRoutes(proofContractModel, "dependency-works")
   );
+  assert.doesNotThrow(() => assertKnowledgeGapProofContractsPreserved({
+    governanceBaseline: proofContractBaseline,
+    currentModel: unrelatedRouteExpansion
+  }));
+  const scalarGateScope = structuredClone(proofContractModel);
+  scalarGateScope.gates[0].appliesTo = "core";
+  assert.deepEqual(
+    compileClaimGateRoutes(scalarGateScope, "dependency-works"),
+    compileClaimGateRoutes(proofContractModel, "dependency-works")
+  );
+  assert.doesNotThrow(() => assertKnowledgeGapProofContractsPreserved({
+    governanceBaseline: proofContractBaseline,
+    currentModel: scalarGateScope
+  }));
 
-  const rewrittenProofTimeout = structuredClone(closedProofContract);
-  rewrittenProofTimeout.gates[0].commands[1].timeoutMs = 1;
-  assert.throws(
-    () => assertKnowledgeGapProofContractsPreserved({
-      governanceBaseline: proofContractBaseline,
-      currentModel: rewrittenProofTimeout
-    }),
-    (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
-      && error.details.problems.includes("gate-route-semantic-mismatch")
-  );
+  const proofRouteAttacks = [
+    ["effective Module set", (model) => { delete model.gates[0].commands[1].appliesTo; }],
+    ["scalar parent Gate effective scope", (model) => { model.gates[0].appliesTo = "dependency"; }],
+    ["command", (model) => { model.gates[0].commands[1].command[2] = "process.exit(1)"; }],
+    ["command id", (model) => { model.gates[0].commands[1].id = "substituted-proof-command"; }],
+    ["timeout", (model) => { model.gates[0].commands[1].timeoutMs = 1; }],
+    ["oracle", (model) => {
+      model.gates[0].commands[1].oracle.description = "A weaker process-only oracle.";
+    }],
+    ["applicability", (model) => {
+      model.gates[0].commands[1].applicability.phase = "release";
+    }],
+    ["discriminatory power", (model) => {
+      model.gates[0].commands[1].discriminatoryPower = {
+        rejects: ["only a weaker dependency failure"]
+      };
+    }],
+    ["residual uncertainty", (model) => {
+      model.gates[0].commands[1].residualUncertainty = ["The proof no longer has the declared bound."];
+    }],
+    ["second route for the same Claim", (model) => {
+      model.gates[0].commands.push({
+        ...structuredClone(model.gates[0].commands[1]),
+        id: "second-dependency-proof-command"
+      });
+    }]
+  ];
+  for (const [name, mutate] of proofRouteAttacks) {
+    const rewrittenProofRoute = structuredClone(proofContractModel);
+    mutate(rewrittenProofRoute);
+    assert.throws(
+      () => assertKnowledgeGapProofContractsPreserved({
+        governanceBaseline: proofContractBaseline,
+        currentModel: rewrittenProofRoute
+      }),
+      (error) => error.code === "KNOWLEDGE_GAP_PROOF_CONTRACT_REWRITE_FORBIDDEN"
+        && error.details.problems.includes("gate-route-semantic-mismatch"),
+      name
+    );
+  }
 
   const fullGateProofContract = structuredClone(proofContractModel);
   fullGateProofContract.projectDocument.changePolicy.fullGate = "minimum";
@@ -499,6 +555,11 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
   const transitionCompiled = compileOutcomeTransitions(transitionCase);
   const transitionRepeated = compileOutcomeTransitions(transitionCase);
   assert.deepEqual(transitionCompiled, transitionRepeated);
+  const routeExpansionTransition = transitionFixture();
+  routeExpansionTransition.currentModel.gates[0].commands[1].claimRefs.push("core-works");
+  addForeignContract(routeExpansionTransition.currentModel);
+  routeExpansionTransition.currentModel.gates[0].appliesTo.push("foreign");
+  assert.equal(compileOutcomeTransitions(routeExpansionTransition).status, "complete");
   assert.equal(transitionCompiled.schemaVersion, 1);
   assert.equal(transitionCompiled.mode, "enforced");
   assert.equal(transitionCompiled.status, "complete");

@@ -13,6 +13,7 @@
       "publicProjectModel(model)",
       "compileChangeAgainstGovernance(change, baseline)",
       "compileOutcomeTransitions(input)",
+      "compileClaimGateRoutes(model, claimRef)",
       "assertKnowledgeGapProofContractsPreserved(input)"
     ],
     "invariants": [
@@ -24,7 +25,7 @@
       "Outcome Contributions are derived only from exact Change Claims visible through the primary Module's owned or dependency Contracts; ambiguous matches require an explicit Criterion hint.",
       "Enforced Outcome alignment admits only exact Contributions or explicit non-progress exception requests bound to frozen Development Plan authority.",
       "Outcome status deltas compile only from an append-only ledger whose prior Accepted Package proofs, exact Claim Evidence, closed Gaps, and authority assessments cover the frozen route semantics.",
-      "A Knowledge Gap Closure Contract requires at least one executable Gate route per proof Claim and freezes exact proof Claim ownership and Gate route semantics; closure requires prior sealed implementation Contributions whose direct positive Gate Evidence covers every proof Claim."
+      "A Knowledge Gap Closure Contract requires at least one executable Gate route per proof Claim and freezes exact proof Claim ownership, Gate and command identity, command, timeout, effective Module applicability, oracle, applicability, discriminatory power, and residual uncertainty while permitting unrelated Claims and raw scope edits that do not change that effective route; closure requires prior sealed implementation Contributions whose direct positive Gate Evidence covers every proof Claim."
     ]
   },
   "paths": {

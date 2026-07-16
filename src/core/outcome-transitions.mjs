@@ -52,8 +52,8 @@ function assertKnowledgeGapProofContractsPreservedInternal({
       currentClaims
     });
     for (const claimRef of proofClaimRefs) {
-      const frozenRoutes = gateRoutesForClaim(governanceBaseline, claimRef);
-      const currentRoutes = gateRoutesForClaim(currentModel, claimRef);
+      const frozenRoutes = compileClaimGateRoutes(governanceBaseline, claimRef);
+      const currentRoutes = compileClaimGateRoutes(currentModel, claimRef);
       if (canonicalDigest(frozenRoutes) !== canonicalDigest(currentRoutes)) {
         throw knowledgeGapProofError(
           `Gate proof routes for Knowledge Gap Claim ${claimRef} cannot drift after declaration.`,
@@ -1058,9 +1058,9 @@ function deriveEvidenceBindings(packageContent, claims, context, {
 function assertDirectGateEvidenceRoute({ item, claim, packageContent, currentModel, context }) {
   const gateId = readString(item?.provenance?.gateId);
   const commandId = readString(item?.provenance?.commandId);
-  const packageRoutes = gateRouteValues(packageContent?.governanceBaseline)
+  const packageRoutes = compileClaimGateRoutes(packageContent?.governanceBaseline, claim.id)
     .filter((route) => route.gateId === gateId && route.commandId === commandId);
-  const currentRoutes = gateRouteValues(currentModel)
+  const currentRoutes = compileClaimGateRoutes(currentModel, claim.id)
     .filter((route) => route.gateId === gateId && route.commandId === commandId);
   if (packageRoutes.length !== 1 || currentRoutes.length !== 1) {
     throw transitionError(
@@ -1081,13 +1081,10 @@ function assertDirectGateEvidenceRoute({ item, claim, packageContent, currentMod
   if (canonicalDigest(packageRoute) !== canonicalDigest(currentRoute)) {
     routeProblems.push("gate-route-semantic-mismatch");
   }
-  if (!packageRoute.claimRefs.includes(claim.id)) {
-    routeProblems.push("gate-route-claim-mismatch");
-  }
-  if (!gateRouteAppliesToModule(packageRoute, packageContent?.primaryModule)) {
+  if (!packageRoute.effectiveModuleRefs.includes(packageContent?.primaryModule)) {
     routeProblems.push("gate-route-module-inapplicable");
   }
-  if (!gateRouteAppliesToModule(currentRoute, packageContent?.primaryModule)) {
+  if (!currentRoute.effectiveModuleRefs.includes(packageContent?.primaryModule)) {
     routeProblems.push("current-gate-route-module-inapplicable");
   }
   const evidenceSemantics = {
@@ -1585,34 +1582,57 @@ function assertExactProofClaimSemantics({
   }
 }
 
-function gateRoutesForClaim(model, claimRef) {
-  return gateRouteValues(model).filter((route) => route.claimRefs.includes(claimRef));
-}
-
-function gateRouteValues(model) {
+export function compileClaimGateRoutes(model, claimRef) {
+  const exactClaimRef = readString(claimRef);
+  if (!exactClaimRef) return [];
+  const moduleRefs = normalizeStringList(
+    asArray(model?.modules).map((module) => readModelReference(module))
+  ).sort();
   const fullGateId = readString(model?.projectDocument?.changePolicy?.fullGate);
   return asArray(model?.gates).flatMap((gate) => {
     const commands = Array.isArray(gate?.commands)
       ? gate.commands
       : gate?.command ? [gate] : [];
-    return commands.map((command) => ({
-      gateId: readString(gate?.id) ?? null,
-      commandId: readString(command?.id) ?? null,
-      command: cloneJson(command?.command),
-      timeoutMs: command?.timeoutMs ?? null,
-      isFullGate: readString(gate?.id) === fullGateId,
-      gateAppliesTo: normalizeStringList(gate?.appliesTo).sort(),
-      appliesTo: normalizeStringList(command?.appliesTo).sort(),
-      claimRefs: normalizeStringList(command?.claimRefs).sort(),
-      oracle: cloneJson(command?.oracle),
-      applicability: cloneJson(command?.applicability),
-      discriminatoryPower: cloneJson(command?.discriminatoryPower),
-      residualUncertainty: cloneJson(command?.residualUncertainty)
-    }));
+    return commands
+      .filter((command) => normalizeStringList(command?.claimRefs).includes(exactClaimRef))
+      .map((command) => ({
+        claimRef: exactClaimRef,
+        gateId: readString(gate?.id) ?? null,
+        commandId: readString(command?.id) ?? null,
+        command: cloneJson(command?.command),
+        timeoutMs: command?.timeoutMs ?? null,
+        effectiveModuleRefs: moduleRefs.filter((moduleRef) => (
+          gateSelectsModule(gate, moduleRef, fullGateId)
+            && commandSelectsModule(command, moduleRef)
+        )),
+        oracle: cloneJson(command?.oracle),
+        applicability: cloneJson(command?.applicability),
+        discriminatoryPower: cloneJson(command?.discriminatoryPower),
+        residualUncertainty: cloneJson(command?.residualUncertainty)
+      }));
   }).sort((left, right) => (
     (left.gateId ?? "").localeCompare(right.gateId ?? "")
       || (left.commandId ?? "").localeCompare(right.commandId ?? "")
+      || canonicalDigest(left).localeCompare(canonicalDigest(right))
   ));
+}
+
+function gateSelectsModule(gate, moduleRef, fullGateId) {
+  const appliesTo = normalizeGateScope(gate?.appliesTo);
+  if (appliesTo.length === 0 || appliesTo.includes(moduleRef)) return true;
+  return readString(gate?.id) === fullGateId
+    && (appliesTo.includes("integration") || appliesTo.includes("release"));
+}
+
+function commandSelectsModule(command, moduleRef) {
+  const appliesTo = normalizeGateScope(command?.appliesTo);
+  return appliesTo.length === 0 || appliesTo.includes(moduleRef);
+}
+
+function normalizeGateScope(value) {
+  if (value === undefined || value === null) return [];
+  const values = Array.isArray(value) ? value : [value];
+  return [...new Set(values.map(readString).filter(Boolean))];
 }
 
 function gateEvidenceApplicability(configured, primaryModule) {
@@ -1624,14 +1644,6 @@ function gateEvidenceApplicability(configured, primaryModule) {
     ...conditions,
     module: primaryModule
   };
-}
-
-function gateRouteAppliesToModule(route, primaryModule) {
-  const commandApplies = route.appliesTo.length === 0 || route.appliesTo.includes(primaryModule);
-  if (!commandApplies) return false;
-  if (route.gateAppliesTo.length === 0 || route.gateAppliesTo.includes(primaryModule)) return true;
-  return route.isFullGate === true
-    && (route.gateAppliesTo.includes("integration") || route.gateAppliesTo.includes("release"));
 }
 
 function indexKnowledgeGaps(value, label) {
