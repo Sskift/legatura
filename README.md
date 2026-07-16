@@ -80,7 +80,7 @@ Project Model files are normative. Changing them is itself a Change and requires
 
 The Development Plan is not a task backlog. A normal Change must reference an already active Outcome from its frozen Governance Baseline; a planned Outcome is activated by an earlier `plan-amendment` Change that can modify only `.legatura/**`, references no Outcome, and cannot carry implementation. Existing Outcome ids and statements are permanent; achieved or retired state cannot be reopened, and achieved acceptance records cannot be rewritten. Other planned details evolve only through separately reviewed amendments. `LGT-099` is a standing integrity path, but the compiler accepts it only for a supported repair kind that binds a protected Claim to complete failed Evidence, and Plan authority must review it—it is not a feature escape hatch.
 
-The current bootstrap enforces referential alignment, active status, frozen-plan binding, amendment isolation, and exact integrity evidence. It does not yet prove that a Change substantively contributes to a particular Outcome exit criterion, nor bind post-bootstrap Outcome transitions to their exact exit Evidence. Those limits are explicit `LGT-010` Knowledge Gaps rather than inferred assurance.
+The current bootstrap enforces referential alignment, active status, frozen-plan binding, amendment isolation, exact Contract-visible Claim-to-Criterion Outcome Contributions, non-progress exceptions bound to Plan authority, acceptance-time rederivation, and exact integrity evidence. A Contribution proves reviewable relevance, not that an exit Criterion is satisfied; post-bootstrap Outcome transitions are not yet bound to exact exit Evidence. That remaining limit is the explicit `outcome-transition-evidence-not-machine-bound` Knowledge Gap rather than inferred assurance.
 
 ## Evidence, not test volume
 
@@ -106,6 +106,7 @@ Permanent tests are admitted by plausible failure and Contract Claim—not by fe
 - Knowledge Closure before acceptance;
 - durable Closure for model amendments and gaps: runtime-only notes cannot masquerade as future project knowledge;
 - authority type and subject binding;
+- exact active Outcome Contributions or explicit non-progress exceptions requiring frozen Plan authority;
 - canonical Accepted Change Package digests and invalidation after content changes;
 - minimum/full Gate separation, sealed Accepted packages, and post-acceptance integration assurance.
 
