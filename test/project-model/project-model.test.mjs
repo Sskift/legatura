@@ -543,6 +543,16 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
   resealFixtureRecord(satisfiedEvidence);
   assert.equal(compileOutcomeTransitions(satisfiedEvidence).status, "complete");
 
+  const historicallyAccepted = transitionFixture();
+  historicallyAccepted.acceptedRecord.state = "Submitted";
+  historicallyAccepted.acceptedRecord.history.push({
+    from: "Accepted",
+    to: "Submitted",
+    at: "2026-07-16T11:00:00.000Z",
+    reason: "Current repository drift invalidated applicability, not the historical Package seal."
+  });
+  assert.equal(compileOutcomeTransitions(historicallyAccepted).status, "complete");
+
   const rewrittenPrefix = transitionFixture();
   const sealedPrefix = {
     id: "LGT-000-T1",

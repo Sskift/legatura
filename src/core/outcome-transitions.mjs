@@ -229,7 +229,6 @@ export function inspectAcceptedPackageRecord(record) {
   const problems = [];
   const recordId = readString(record?.id);
   const recordState = readString(record?.state);
-  if (!["Accepted", "Integrated"].includes(recordState)) problems.push("record-state-not-accepted");
   const acceptanceDigest = readString(record?.acceptance?.digest);
   const packageContent = record?.acceptance?.package;
   if (!recordId) problems.push("record-id-missing");
