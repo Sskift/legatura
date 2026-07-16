@@ -6,10 +6,14 @@ import {
   compileArchitectureProfile
 } from "../../src/core/architecture-profile.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
-import { compileClaimGateRoutes } from "../../src/core/change-compiler.mjs";
+import {
+  compileClaimGateRouteIndex,
+  compileClaimGateRoutes
+} from "../../src/core/change-compiler.mjs";
 import {
   loadProjectModel,
-  projectModelContentDigest
+  projectModelContentDigest,
+  validateProjectModel
 } from "../../src/core/project-model.mjs";
 
 const PROFILE_CLAIM = "architecture-profile-relations-are-exact";
@@ -21,6 +25,18 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
   const changeFacts = createChangeFacts(model, source);
   const profile = compileArchitectureProfile({ model, source, changeFacts });
   assert.equal(model.digest, projectModelContentDigest(model));
+  const allClaimRefs = model.contracts
+    .flatMap((contract) => contract.claims)
+    .map((claim) => claim.id);
+  const routeIndex = compileClaimGateRouteIndex(model, { claimRefs: allClaimRefs });
+  assert.deepEqual([...routeIndex.keys()], [...new Set(allClaimRefs)].sort());
+  for (const claimRef of allClaimRefs) {
+    assert.deepEqual(
+      routeIndex.get(claimRef),
+      compileClaimGateRoutes(model, claimRef),
+      `indexed routes for ${claimRef} remain exact with the scalar compiler Interface`
+    );
+  }
 
   const reorderedFacts = structuredClone(changeFacts);
   reorderedFacts.reverse();
@@ -40,7 +56,7 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
     relation.criterionRef === criterion.id
       && relation.claimRef === "project-model-references-are-consistent"
   )));
-  const profileRoute = compileClaimGateRoutes(model, PROFILE_CLAIM)[0];
+  const profileRoute = routeIndex.get(PROFILE_CLAIM)[0];
   const routeRelation = profile.relations.claimGateRoutes.find((relation) => (
     relation.claimRef === PROFILE_CLAIM
   ));
@@ -93,6 +109,43 @@ test("Architecture Profiles preserve exact typed relations without aggregating a
     source: multiSource,
     changeFacts: multiSourceFacts
   });
+  const multiSourceRouteIndex = compileClaimGateRouteIndex(multiSourceModel, {
+    claimRefs: [PROFILE_CLAIM, SECOND_PROFILE_SOURCE_CLAIM]
+  });
+  const sharedCommandRoutes = [PROFILE_CLAIM, SECOND_PROFILE_SOURCE_CLAIM]
+    .map((claimRef) => multiSourceRouteIndex.get(claimRef).find((route) => (
+      route.gateId === "architecture-profile"
+        && route.commandId === multiSourceCommand.id
+    )));
+  assert.ok(sharedCommandRoutes.every(Boolean));
+  assert.equal(
+    canonicalDigest(sharedCommandRoutes[0].command),
+    canonicalDigest(sharedCommandRoutes[1].command)
+  );
+  assert.notEqual(canonicalDigest(sharedCommandRoutes[0]), canonicalDigest(sharedCommandRoutes[1]));
+  for (const route of sharedCommandRoutes) {
+    const routeRelation = multiSourceProfile.relations.claimGateRoutes.find((relation) => (
+      relation.claimRef === route.claimRef
+        && multiSourceProfile.entities.routes.some((item) => (
+          item.id === relation.routeRef
+            && item.gateRef === route.gateId
+            && item.commandRef === route.commandId
+        ))
+    ));
+    const projectedRoute = multiSourceProfile.entities.routes.find(
+      (item) => item.id === routeRelation?.routeRef
+    );
+    assert.equal(projectedRoute?.routeDigest, canonicalDigest(route));
+    assert.equal(projectedRoute?.commandDigest, canonicalDigest(route.command));
+  }
+  const untouchedSecondRoute = structuredClone(sharedCommandRoutes[1]);
+  sharedCommandRoutes[0].command[0] = "alias-probe";
+  sharedCommandRoutes[0].oracle.aliasProbe = true;
+  assert.deepEqual(
+    sharedCommandRoutes[1],
+    untouchedSecondRoute,
+    "fanout routes do not share mutable command or metadata aliases"
+  );
   const sharedObligationRelations = multiSourceProfile.relations.currentEvidenceClaimAssociations
     .filter((relation) => relation.obligationRef === "profile-cross-claim-obligation");
   assert.deepEqual(
@@ -114,6 +167,78 @@ test("Architecture Profile compilation fails closed on ambiguous, dangling, forg
   const model = await loadProjectModel(process.cwd());
   const source = profileSource(model);
   const legalFacts = createChangeFacts(model, source);
+  const allClaimRefs = model.contracts
+    .flatMap((contract) => contract.claims)
+    .map((claim) => claim.id);
+  assert.throws(
+    () => compileClaimGateRouteIndex(model, {
+      claimRefs: allClaimRefs,
+      limits: { routes: 1 }
+    }),
+    (error) => (
+      error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED"
+        && error?.statusCode === 413
+        && error?.details?.dimension === "routes"
+    ),
+    "a caller-tightened route budget fails closed inside the shared compiler Interface"
+  );
+  const unmatchedModel = structuredClone(model);
+  const oversizedUnmatchedText = "unmatched".repeat(512);
+  unmatchedModel.gates.unshift({
+    id: oversizedUnmatchedText,
+    appliesTo: [oversizedUnmatchedText],
+    commands: [{ id: oversizedUnmatchedText, claimRefs: ["unselected-claim"] }]
+  });
+  unmatchedModel.gates
+    .find((gate) => gate.id === "architecture-profile")
+    .commands.unshift({ id: oversizedUnmatchedText, claimRefs: ["unselected-claim"] });
+  assert.deepEqual(
+    compileClaimGateRouteIndex(unmatchedModel, { claimRefs: [PROFILE_CLAIM] })
+      .get(PROFILE_CLAIM),
+    compileClaimGateRoutes(model, PROFILE_CLAIM),
+    "unmatched Gate and command fields remain outside selected Claim route semantics"
+  );
+  const accessorModel = structuredClone(model);
+  const accessorCommand = accessorModel.gates
+    .find((gate) => gate.id === "architecture-profile")
+    .commands[0];
+  const specialOracle = JSON.parse(
+    '{"__proto__":{"polluted":true},"constructor":"exact","toJSON":"literal"}'
+  );
+  let accessorHits = 0;
+  Object.defineProperty(accessorCommand, "oracle", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      accessorHits += 1;
+      return specialOracle;
+    }
+  });
+  assert.throws(
+    () => compileClaimGateRouteIndex(accessorModel, { claimRefs: [PROFILE_CLAIM] }),
+    (error) => error?.code === "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID"
+  );
+  assert.equal(accessorHits, 0, "route indexing rejects accessors without executing them");
+  Object.defineProperty(accessorCommand, "oracle", {
+    configurable: true,
+    enumerable: true,
+    value: specialOracle,
+    writable: true
+  });
+  const specialRoute = compileClaimGateRouteIndex(accessorModel, {
+    claimRefs: [PROFILE_CLAIM]
+  }).get(PROFILE_CLAIM).find((route) => (
+    route.gateId === "architecture-profile" && route.commandId === accessorCommand.id
+  ));
+  assert.ok(specialRoute);
+  assert.deepEqual(specialRoute.oracle, specialOracle);
+  assert.equal(Object.hasOwn(specialRoute.oracle, "__proto__"), true);
+  assert.throws(
+    () => validateProjectModel(model, {
+      claimGateRouteIndexRequest: new Map([[PROFILE_CLAIM, []]])
+    }),
+    (error) => error?.code === "CLAIM_GATE_ROUTE_INDEX_INPUT_INVALID"
+  );
   const forgedModel = structuredClone(model);
   const forgedClaim = forgedModel.contracts
     .flatMap((contract) => contract.claims)

@@ -1,7 +1,6 @@
 import { Buffer } from "node:buffer";
 
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { compileClaimGateRoutes } from "./change-compiler.mjs";
 import { projectModelContentDigest, validateProjectModel } from "./project-model.mjs";
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
@@ -84,7 +83,8 @@ export function compileArchitectureProfile(input = {}) {
     byteLimit: ARCHITECTURE_PROFILE_LIMITS.metadataBytes
   });
   preflightArchitectureProfileModel(model);
-  const validation = validateProjectModel(model);
+  const validation = validateArchitectureProfileModel(model);
+  const claimGateRouteIndex = validation.claimGateRouteIndex;
   if (!validation.valid) {
     throw profileError(
       "ARCHITECTURE_PROFILE_MODEL_INVALID",
@@ -101,7 +101,7 @@ export function compileArchitectureProfile(input = {}) {
 
   const source = compileSource(sourceInput, model);
 
-  const graph = compileModelGraph(model);
+  const graph = compileModelGraph(model, claimGateRouteIndex);
   compileChangeFacts(changeFacts, graph, source);
 
   for (const collection of Object.values(graph.entities)) sortFacts(collection);
@@ -522,7 +522,7 @@ function compileSource(value, model) {
   return source;
 }
 
-function compileModelGraph(model) {
+function compileModelGraph(model, claimGateRouteIndex) {
   const entities = {
     stages: [],
     outcomes: [],
@@ -730,22 +730,54 @@ function compileModelGraph(model) {
     }
   }
 
-  compileRoutes(model, graph);
+  compileRoutes(graph, claimGateRouteIndex);
   return graph;
 }
 
-function compileRoutes(model, graph) {
+function validateArchitectureProfileModel(model) {
+  const claimRefs = asArray(model.contracts)
+    .flatMap((contract) => asArray(contract?.claims))
+    .map((claim) => readString(claim?.id))
+    .filter(Boolean);
+  try {
+    return validateProjectModel(model, {
+      claimGateRouteIndexRequest: {
+        claimRefs,
+        limits: {
+          claimRefs: ARCHITECTURE_PROFILE_LIMITS.claims,
+          modules: ARCHITECTURE_PROFILE_LIMITS.modules,
+          gates: ARCHITECTURE_PROFILE_LIMITS.gates,
+          commands: ARCHITECTURE_PROFILE_LIMITS.routes,
+          refsPerCommand: ARCHITECTURE_PROFILE_LIMITS.refsPerFact,
+          routes: ARCHITECTURE_PROFILE_LIMITS.routes,
+          totalRouteBytes: ARCHITECTURE_PROFILE_LIMITS.profileBytes,
+          depth: ARCHITECTURE_PROFILE_LIMITS.depth,
+          textBytes: ARCHITECTURE_PROFILE_LIMITS.textBytes
+        }
+      }
+    });
+  } catch (error) {
+    if (error?.code === "CLAIM_GATE_ROUTE_INDEX_LIMIT_EXCEEDED") {
+      const dimension = readString(error?.details?.dimension) ?? "routes";
+      const limit = Number.isFinite(error?.details?.limit)
+        ? error.details.limit
+        : ARCHITECTURE_PROFILE_LIMITS.routes;
+      const observed = Number.isFinite(error?.details?.observed)
+        ? error.details.observed
+        : limit + 1;
+      throw boundsError(`claimGateRouteIndex.${dimension}`, limit, observed);
+    }
+    throw error;
+  }
+}
+
+function compileRoutes(graph, routesByClaim) {
   const { entities, relations, indices } = graph;
   for (const claim of entities.claims) {
-    for (const route of compileClaimGateRoutes(model, claim.id)) {
+    for (const route of routesByClaim.get(claim.id) ?? []) {
       const gateRef = requiredReference(route?.gateId, `route.${claim.id}.gateId`);
       const commandRef = requiredReference(route?.commandId, `route.${claim.id}.commandId`);
       assertReference(indices.gates, gateRef, "gate", `route.${claim.id}.gateId`);
-      const gate = indices.gates.get(gateRef);
-      const commands = Array.isArray(gate?.commands) ? gate.commands : gate?.command ? [gate] : [];
-      if (!commands.some((command) => readString(command?.id) === commandRef)) {
-        throw danglingError("command", commandRef, `route.${claim.id}.commandId`);
-      }
       const effectiveModuleRefs = asArray(route?.effectiveModuleRefs);
       assertRefsPerFact(effectiveModuleRefs.length, `route.${claim.id}.effectiveModuleRefs`);
       for (const moduleRef of effectiveModuleRefs) {

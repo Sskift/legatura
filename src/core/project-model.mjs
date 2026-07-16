@@ -1,7 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { INTEGRITY_CHANGE_KINDS } from "./change-compiler.mjs";
+import {
+  compileClaimGateRouteIndex,
+  INTEGRITY_CHANGE_KINDS,
+  reuseCompiledClaimGateRouteIndex
+} from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
   assertKnowledgeGapProofContractsPreserved,
@@ -9,7 +13,11 @@ import {
   validateOutcomeTransitionLedger
 } from "./outcome-transitions.mjs";
 
-export { assertKnowledgeGapProofContractsPreserved, compileClaimGateRoutes };
+export {
+  assertKnowledgeGapProofContractsPreserved,
+  compileClaimGateRouteIndex,
+  compileClaimGateRoutes
+};
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 
@@ -53,7 +61,10 @@ export function projectModelContentDigest(model) {
   return canonicalDigest(stripSourceMetadata(model));
 }
 
-export function validateProjectModel(model) {
+export function validateProjectModel(model, { claimGateRouteIndexRequest = null } = {}) {
+  const claimGateRouteIndex = claimGateRouteIndexRequest
+    ? compileClaimGateRouteIndex(model, claimGateRouteIndexRequest)
+    : null;
   const errors = [];
   const warnings = [];
   if (!model.project || typeof model.project !== "object") {
@@ -314,12 +325,11 @@ export function validateProjectModel(model) {
   validateOutcomePolicy(changePolicy, errors);
 
   validateKnowledgeGaps({
+    model,
     knowledgeGaps: model.knowledgeGaps,
     claimIndex,
-    modules: model.modules,
-    gates: model.gates,
-    projectDocument: model.projectDocument,
-    plan: model.plan
+    plan: model.plan,
+    suppliedClaimGateRouteIndex: claimGateRouteIndex
   }, errors);
 
   validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
@@ -336,14 +346,27 @@ export function validateProjectModel(model) {
       gates: model.gates.length,
       planOutcomes: asArray(model.plan?.outcomes).length,
       knowledgeGaps: model.knowledgeGaps.length
-    }
+    },
+    ...(claimGateRouteIndex ? { claimGateRouteIndex } : {})
   };
 }
 
-function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, projectDocument, plan }, errors) {
+function validateKnowledgeGaps({
+  model,
+  knowledgeGaps,
+  claimIndex,
+  plan,
+  suppliedClaimGateRouteIndex
+}, errors) {
   const seen = new Set();
   const gapIndex = new Map();
   const proofClaimOwners = new Map();
+  const proofClaimRouteIndex = compileKnowledgeGapProofClaimRouteIndex({
+    model,
+    knowledgeGaps,
+    claimIndex,
+    suppliedClaimGateRouteIndex
+  }, errors);
   for (const [index, gap] of asArray(knowledgeGaps).entries()) {
     const gapId = readId(gap);
     const location = `.legatura/knowledge-gaps.json#${gapId ?? index}`;
@@ -394,7 +417,8 @@ function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, proj
               location,
               `Knowledge Gap proofClaimRefs references unknown Contract Claim: ${reference}.`
             ));
-          } else if (!hasExecutableGateRoute({ modules, gates, projectDocument }, reference)) {
+          } else if (proofClaimRouteIndex
+            && !hasExecutableGateRoute(proofClaimRouteIndex, reference)) {
             errors.push(issue(
               "knowledge-gap.proof-claim.gate-route-missing",
               location,
@@ -478,8 +502,37 @@ function validateKnowledgeGaps({ knowledgeGaps, claimIndex, modules, gates, proj
   }
 }
 
-function hasExecutableGateRoute(model, claimRef) {
-  return compileClaimGateRoutes(model, claimRef).some((route) => (
+function compileKnowledgeGapProofClaimRouteIndex({
+  model,
+  knowledgeGaps,
+  claimIndex,
+  suppliedClaimGateRouteIndex
+}, errors) {
+  const claimRefs = [...new Set(asArray(knowledgeGaps).flatMap((gap) => (
+    asArray(gap?.proofClaimRefs)
+      .filter((claimRef) => (
+        typeof claimRef === "string"
+          && readString(claimRef) === claimRef
+          && claimIndex.has(claimRef)
+      ))
+  )))].sort();
+  if (claimRefs.length === 0) return new Map();
+  try {
+    return suppliedClaimGateRouteIndex
+      ? reuseCompiledClaimGateRouteIndex(suppliedClaimGateRouteIndex, { model, claimRefs })
+      : compileClaimGateRouteIndex(model, { claimRefs });
+  } catch (error) {
+    errors.push(issue(
+      "knowledge-gap.proof-claim.route-index-invalid",
+      ".legatura/knowledge-gaps.json",
+      `Knowledge Gap proof Claim routes could not be compiled safely: ${readString(error?.code) ?? "unknown-error"}.`
+    ));
+    return null;
+  }
+}
+
+function hasExecutableGateRoute(routeIndex, claimRef) {
+  return asArray(routeIndex.get(claimRef)).some((route) => (
     Boolean(normalizeGateCommand(route.command)) && route.effectiveModuleRefs.length > 0
   ));
 }
