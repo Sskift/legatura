@@ -134,6 +134,11 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
     secondSubjectDigest
   );
 
+  const exceptionRequests = [{
+    outcomeRef: "LGT-900",
+    reason: "The built-in model Claim has no honest Contract Criterion mapping.",
+    residualUncertainty: "This exception grants no Outcome progress."
+  }];
   const exceptionChange = await kernel.createChange({
     title: "Request a non-progress Outcome exception",
     primaryModule: "core",
@@ -142,11 +147,7 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
       id: "project-model-self-consistent",
       statement: "The versioned Project Model is internally self-consistent for this Change."
     }],
-    outcomeExceptions: [{
-      outcomeRef: "LGT-900",
-      reason: "The built-in model Claim has no honest Contract Criterion mapping.",
-      residualUncertainty: "This exception grants no Outcome progress."
-    }],
+    outcomeExceptions: exceptionRequests,
     knowledgeClosure: {
       status: "complete",
       noNewKnowledge: true,
@@ -181,6 +182,34 @@ test("Outcome alignment inputs are subject-bound and preserved in the Accepted P
   );
   const restoredException = await kernel.compileChange(exceptionChange.id);
   assert.equal(restoredException.outcomeAlignment.status, "pending-authority");
+  const coordinatedTamper = JSON.parse(await readFile(exceptionRecordPath, "utf8"));
+  coordinatedTamper.compilerInput.outcomeExceptions = [];
+  coordinatedTamper.outcomeAlignment = {
+    schemaVersion: 1,
+    mode: "declared",
+    status: "complete",
+    selectedOutcomeRefs: ["LGT-900"],
+    contributions: [],
+    exceptions: [],
+    unresolved: []
+  };
+  coordinatedTamper.contextCapsule.outcomeAlignment = coordinatedTamper.outcomeAlignment;
+  coordinatedTamper.compilation.outcomeAlignmentDigest = canonicalDigest(coordinatedTamper.outcomeAlignment);
+  await writeJson(exceptionRecordPath, coordinatedTamper);
+  const coordinatedTamperGate = await kernel.runGate(exceptionChange.id);
+  assert.equal(coordinatedTamperGate.change.state, "EvidenceReady");
+  await assert.rejects(
+    kernel.acceptChange(exceptionChange.id, {
+      authority: "module-maintainer",
+      decidedBy: "maintainer@example.test",
+      decisionType: "case-decision",
+      status: "approved",
+      rationale: "Coordinated input and output tampering must not fabricate complete alignment."
+    }),
+    (error) => error.code === "CHANGE_COMPILATION_STALE"
+      && error.details.changedFields.includes("outcomeAlignment")
+  );
+  await kernel.compileChange(exceptionChange.id, { outcomeExceptions: exceptionRequests });
   const exceptionGate = await kernel.runGate(exceptionChange.id);
   assert.equal(exceptionGate.change.state, "EvidenceReady");
   await assert.rejects(
@@ -440,10 +469,33 @@ test("Change follows Candidate to Integrated with Evidence, Knowledge Closure, A
   const submitted = await kernel.compileChange(candidate.id);
   assert.equal(submitted.state, "Submitted");
 
+  const candidateRecordPath = path.join(
+    fixture.repoPath,
+    ".legatura/runtime/changes",
+    `${candidate.id}.json`
+  );
+  const tamperedCompilation = JSON.parse(await readFile(candidateRecordPath, "utf8"));
+  delete tamperedCompilation.outcomeAlignmentSchemaVersion;
+  tamperedCompilation.impact = { schemaVersion: 1, directModule: "forged-module" };
+  await writeJson(candidateRecordPath, tamperedCompilation);
+
   const gate = await kernel.runGate(candidate.id);
   assert.equal(gate.status, "passed");
   assert.equal(gate.change.state, "EvidenceReady");
   assert.ok(gate.change.evidence.every((item) => EVIDENCE_FIELDS.every((field) => field in item)));
+  await assert.rejects(
+    kernel.acceptChange(candidate.id, {
+      authority: "project-maintainer",
+      decidedBy: "maintainer@example.test",
+      decisionType: "case-decision",
+      status: "approved",
+      rationale: "A fresh Gate cannot legitimize forged compiler-owned projections."
+    }),
+    (error) => error.code === "CHANGE_COMPILATION_STALE"
+      && error.details.changedFields.includes("impact")
+  );
+  await kernel.compileChange(candidate.id);
+  await kernel.runGate(candidate.id);
 
   const accepted = await kernel.acceptChange(candidate.id, {
     authority: "project-maintainer",

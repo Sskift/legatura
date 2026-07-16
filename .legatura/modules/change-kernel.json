@@ -13,6 +13,7 @@
       "Acceptance binds exact governance, repository content, Evidence, Closure, and authority.",
       "Outcome alignment inputs and compiler-produced alignment are bound into the Verification Subject and Accepted Change Package.",
       "Outcome exceptions require the frozen Development Plan authority and can never grant progress or transition proof.",
+      "Acceptance re-derives compiler-owned Change projections from the frozen Governance Baseline before sealing them.",
       "Plan amendments cannot remove or reinterpret stable Outcome Criteria or add Criteria during an Outcome status transition.",
       "Integration requires current full assurance when policy demands it."
     ]

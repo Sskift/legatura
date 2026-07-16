@@ -368,6 +368,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
     assertOutcomeExceptionBinding(change);
+    assertCompiledChangeCurrent(change);
     const expectedAuthorities = readExpectedAuthorities(readGovernanceBaseline(change), change);
     const authorityValidation = validateAuthorityDecision(
       change.authorityDecision,
@@ -1087,6 +1088,42 @@ function outcomeExceptionSemanticValue(exception) {
 function compareOutcomeExceptionValues(left, right) {
   return (left.outcomeRef ?? "").localeCompare(right.outcomeRef ?? "")
     || canonicalDigest(left).localeCompare(canonicalDigest(right));
+}
+
+function assertCompiledChangeCurrent(change) {
+  const governanceBaseline = readGovernanceBaseline(change);
+  const recompiled = compileChangeAgainstGovernance(change, governanceBaseline);
+  const expected = compiledChangeProjection(recompiled);
+  const observed = compiledChangeProjection(change);
+  const expectedDigest = canonicalDigest(expected);
+  const observedDigest = canonicalDigest(observed);
+  if (expectedDigest !== observedDigest) {
+    throw kernelError(
+      "CHANGE_COMPILATION_STALE",
+      "Compiler-owned Change projections must match a fresh compilation from the frozen Governance Baseline before acceptance.",
+      409,
+      {
+        expectedDigest,
+        observedDigest,
+        changedFields: Object.keys(expected).filter((field) => (
+          canonicalDigest(expected[field]) !== canonicalDigest(observed[field])
+        ))
+      }
+    );
+  }
+}
+
+function compiledChangeProjection(change) {
+  return {
+    integrityTarget: change.integrityTarget ?? null,
+    outcomeAlignmentSchemaVersion: change.outcomeAlignmentSchemaVersion ?? null,
+    outcomeAlignment: change.outcomeAlignment ?? null,
+    contextCapsule: change.contextCapsule ?? null,
+    impact: change.impact ?? null,
+    verificationObligations: change.verificationObligations ?? [],
+    verificationPlan: change.verificationPlan ?? null,
+    compilation: change.compilation ?? null
+  };
 }
 
 async function readObservedTouchedPaths(change, git, repoPath, commandRunner) {
