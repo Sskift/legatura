@@ -640,6 +640,8 @@ test("Change follows Candidate to Integrated with Evidence, Knowledge Closure, A
   assert.equal(gate.status, "passed");
   assert.equal(gate.change.state, "EvidenceReady");
   assert.ok(gate.change.evidence.every((item) => EVIDENCE_FIELDS.every((field) => field in item)));
+  const gateReadiness = await kernel.getChange(candidate.id);
+  assert.deepEqual(gateReadiness.readiness.coverage.mismatchedClaimEvidenceIds, []);
   await assert.rejects(
     kernel.acceptChange(candidate.id, {
       authority: "project-maintainer",
@@ -685,7 +687,7 @@ test("a passing Gate cannot support an unrelated Change Claim without an explici
   assert.equal(unmapped.status, "passed");
   assert.equal(unmapped.change.state, "Submitted");
 
-  await kernel.compileChange(change.id, {
+  const crossClaimCompiled = await kernel.compileChange(change.id, {
     verificationObligations: [{
       id: "verify-new-feature",
       claimId: "new-feature",
@@ -703,8 +705,53 @@ test("a passing Gate cannot support an unrelated Change Claim without an explici
       approvedObligationIds: ["verify-new-feature"]
     }
   });
+  assert.deepEqual(crossClaimCompiled.verificationObligations[0].mapping.sourceRoutes, [{
+    sourceClaimId: "behavior-correct",
+    gateId: "minimum",
+    commandId: "behavior"
+  }]);
   const mapped = await kernel.runGate(change.id);
   assert.equal(mapped.change.state, "EvidenceReady");
+
+  const routeFixture = await createFixture();
+  await configureCommandExactCoverageFixture(routeFixture.repoPath);
+  const routeKernel = createKernel({ repoPath: routeFixture.repoPath });
+  const routeChange = await routeKernel.createChange({
+    title: "Reject trusted Evidence from the wrong Gate command route",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
+  });
+  const routeCompiled = await routeKernel.compileChange(routeChange.id);
+  assert.deepEqual(routeCompiled.verificationObligations[0].mapping.routes, [{
+    gateId: "target-acceptance",
+    commandId: "target-acceptance-command"
+  }]);
+
+  const unrelatedMinimum = await routeKernel.runGate(routeChange.id, "minimum");
+  assert.equal(unrelatedMinimum.status, "passed");
+  assert.equal(unrelatedMinimum.change.state, "Submitted");
+  const integrationFull = await routeKernel.runGate(routeChange.id, "full");
+  const fullEvidence = integrationFull.change.evidence.find((item) => (
+    item.provenance?.gateId === "full" && item.provenance?.commandId === "full-target-command"
+  ));
+  assert.ok(fullEvidence);
+  assert.equal(integrationFull.status, "passed");
+  assert.equal(integrationFull.change.state, "Submitted");
+  const fullReadiness = await routeKernel.getChange(routeChange.id);
+  assert.ok(fullReadiness.readiness.coverage.uncoveredClaimIds.includes("behavior-correct"));
+  assert.ok(fullReadiness.readiness.coverage.ineligibleRouteEvidenceIds.includes(fullEvidence.id));
+
+  const targetAcceptance = await routeKernel.runGate(routeChange.id, "target-acceptance");
+  assert.equal(targetAcceptance.status, "passed");
+  assert.equal(targetAcceptance.change.state, "EvidenceReady");
+  const targetEvidence = targetAcceptance.change.evidence.find((item) => (
+    item.provenance?.gateId === "target-acceptance"
+      && item.provenance?.commandId === "target-acceptance-command"
+  ));
+  assert.ok(targetEvidence?.directSupportBindings?.some((binding) => (
+    binding.claimId === "behavior-correct"
+      && binding.claimStatement === "The governed behavior remains correct."
+  )));
 });
 
 test("failed Evidence never satisfies a Verification Obligation", async () => {
@@ -1216,6 +1263,64 @@ async function addAuxiliaryGateCommand(repoPath) {
 
   await git(repoPath, "add", ".");
   await git(repoPath, "commit", "-qm", "add selector fixture");
+}
+
+async function configureCommandExactCoverageFixture(repoPath) {
+  const projectPath = path.join(repoPath, ".legatura/project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  project.changePolicy.fullGate = "full";
+  project.changePolicy.fullGateBefore = ["integrated"];
+  await writeJson(projectPath, project);
+
+  const contractPath = path.join(repoPath, ".legatura/contracts/core-behavior.json");
+  const contract = JSON.parse(await readFile(contractPath, "utf8"));
+  contract.claims.push({
+    id: "minimum-observation",
+    statement: "The unrelated minimum observation remains correct."
+  });
+  await writeJson(contractPath, contract);
+
+  const minimumPath = path.join(repoPath, ".legatura/gates/minimum.json");
+  const minimum = JSON.parse(await readFile(minimumPath, "utf8"));
+  minimum.commands[0].claimRefs = ["minimum-observation"];
+  await writeJson(minimumPath, minimum);
+
+  const targetCommand = {
+    id: "target-acceptance-command",
+    command: [process.execPath, "-e", "process.exit(0)"],
+    timeoutMs: 30_000,
+    claimRefs: ["behavior-correct"],
+    oracle: {
+      kind: "target-acceptance-exit",
+      description: "The exact target acceptance command exits zero."
+    },
+    applicability: { phase: "acceptance" },
+    discriminatoryPower: {
+      rejects: ["a non-zero target acceptance exit"]
+    },
+    residualUncertainty: ["The target proof remains bounded to the fixture."]
+  };
+  await writeJson(path.join(repoPath, ".legatura/gates/target-acceptance.json"), {
+    schemaVersion: 1,
+    id: "target-acceptance",
+    name: "Target Acceptance Gate",
+    appliesTo: ["core"],
+    commands: [targetCommand]
+  });
+  await writeJson(path.join(repoPath, ".legatura/gates/full.json"), {
+    schemaVersion: 1,
+    id: "full",
+    name: "Full Integration Gate",
+    appliesTo: ["integration"],
+    commands: [{
+      ...targetCommand,
+      id: "full-target-command",
+      applicability: { phase: "integration" }
+    }]
+  });
+
+  await git(repoPath, "add", ".");
+  await git(repoPath, "commit", "-qm", "add command-exact coverage fixture");
 }
 
 async function git(cwd, ...args) {

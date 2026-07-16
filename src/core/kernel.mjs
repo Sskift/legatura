@@ -634,7 +634,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       }, command.timeoutMs);
       const obligationMappings = readObligationMappings(
         change.verificationObligations,
-        command.claimRefs
+        command.claimRefs,
+        gate.id,
+        command.id
       );
       const item = createGateEvidence({
         change,
@@ -859,7 +861,8 @@ function readReadiness(change, inspection) {
   const coverage = validateEvidenceCoverage(change.claims, change.evidence, {
     approvedObligationIds: mappingAuthorization.approvedObligationIds,
     verificationSubjectDigest: subjectDigest,
-    trustedEvidenceBindings: readTrustedEvidenceBindings(change, inspection, subjectDigest)
+    trustedEvidenceBindings: readTrustedEvidenceBindings(change, inspection, subjectDigest),
+    verificationObligations: change.verificationObligations
   });
   const builtin = change.gateRuns.find((run) => run.gateId === "project-model");
   const defaultGateId = governanceBaseline.projectDocument?.changePolicy?.defaultGate;
@@ -1806,15 +1809,23 @@ function commandAppliesToChange(command, change) {
   return appliesTo.length === 0 || appliesTo.includes(change.primaryModule);
 }
 
-function readObligationMappings(obligations, gateClaimRefs) {
-  const refs = new Set(gateClaimRefs);
+function readObligationMappings(obligations, gateClaimRefs, gateId, commandId) {
+  const refs = new Set(normalizeStringList(gateClaimRefs));
+  const exactGateId = readString(gateId);
+  const exactCommandId = readString(commandId);
   return obligations.flatMap((obligation) => {
-    const sources = [
-      ...normalizeStringList(obligation.evidenceSourceRefs),
-      ...normalizeStringList(obligation.gateClaimRefs),
-      ...normalizeStringList(obligation.supportedBy)
-    ];
-    const crossSourceMatched = sources.some((source) => source !== obligation.claimId && refs.has(source));
+    const crossSourceMatched = obligation.mapping?.kind === "cross-claim"
+      && exactGateId
+      && exactCommandId
+      && Array.isArray(obligation.mapping.sourceRoutes)
+      && obligation.mapping.sourceRoutes.some((route) => {
+        const sourceClaimId = readString(route?.sourceClaimId);
+        return Boolean(sourceClaimId)
+          && sourceClaimId !== readString(obligation.claimId)
+          && refs.has(sourceClaimId)
+          && readString(route?.gateId) === exactGateId
+          && readString(route?.commandId) === exactCommandId;
+      });
     if (!crossSourceMatched || !hasCrossMappingSemantics(obligation)) return [];
     return [{ obligationId: obligation.id, claimId: obligation.claimId }];
   });

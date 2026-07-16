@@ -10,6 +10,7 @@
     "entrypoints": ["createKernel(options)", "EVIDENCE_FIELDS"],
     "invariants": [
       "Workers and submitted Evidence cannot ratify their own output.",
+      "Builtin, direct Gate, and authority-approved cross-Claim Evidence cover Claims only through their frozen compiler-owned Verification Obligation mapping; Gate Evidence issuance and consumption both require the exact eligible Gate and command route, and cross-Claim coverage additionally binds the exact target and an envelope source Claim.",
       "Acceptance binds exact governance, repository content, Evidence, Closure, and authority.",
       "Outcome alignment inputs and compiler-produced alignment are bound into the Verification Subject and Accepted Change Package.",
       "Outcome exceptions require the frozen Development Plan authority and can never grant progress or transition proof.",

@@ -64,17 +64,24 @@ export function normalizeEvidence(value, index = 0) {
 export function validateEvidenceCoverage(
   claims,
   evidence,
-  { approvedObligationIds = [], verificationSubjectDigest, trustedEvidenceBindings = [] } = {}
+  {
+    approvedObligationIds = [],
+    verificationSubjectDigest,
+    trustedEvidenceBindings = [],
+    verificationObligations = []
+  } = {}
 ) {
   const covered = new Set();
   const approved = new Set(approvedObligationIds);
   const claimById = new Map(claims.map((claim) => [claim.id, claim]));
+  const obligationIndex = indexVerificationObligations(verificationObligations);
   const trustedDigests = new Map(trustedEvidenceBindings
     .filter((binding) => readString(binding?.id) && readString(binding?.digest))
     .map((binding) => [binding.id, binding.digest]));
   const untrustedEvidenceIds = [];
   const staleEvidenceIds = [];
   const mismatchedClaimEvidenceIds = [];
+  const ineligibleRouteEvidenceIds = new Set();
   for (const item of evidence) {
     if (!isPositiveObservation(item.observation)) {
       continue;
@@ -93,23 +100,65 @@ export function validateEvidenceCoverage(
       staleEvidenceIds.push(item.id);
       continue;
     }
-    const matchingClaim = claimById.get(item.claim?.id);
-    if (matchingClaim && item.claim?.statement === matchingClaim.statement) {
-      covered.add(item.claim.id);
-    } else if (matchingClaim) {
-      mismatchedClaimEvidenceIds.push(item.id);
+
+    if (provenanceKind === "builtin-oracle") {
+      const matchingClaim = claimById.get(item.claim?.id);
+      if (matchingClaim && item.claim?.statement === matchingClaim.statement) {
+        const obligation = obligationIndex.byClaimId.get(matchingClaim.id);
+        const sourceIds = new Set(Array.isArray(obligation?.mapping?.sourceIds)
+          ? obligation.mapping.sourceIds.map(readString).filter(Boolean)
+          : []);
+        if (obligation?.mapping?.kind === "builtin-oracle"
+          && sourceIds.has(readString(item.provenance?.sourceId))) {
+          covered.add(matchingClaim.id);
+        } else {
+          ineligibleRouteEvidenceIds.add(item.id);
+        }
+      } else if (matchingClaim) {
+        mismatchedClaimEvidenceIds.push(item.id);
+      }
+      continue;
     }
+
+    for (const claimId of readEvidenceEnvelopeClaimRefs(item)) {
+      if (!claimById.has(claimId)) continue;
+      const obligation = obligationIndex.byClaimId.get(claimId);
+      if (obligation?.mapping?.kind !== "exact-contract-claim"
+        || !routeMatchesProvenance(obligation.mapping.routes, item.provenance)) {
+        ineligibleRouteEvidenceIds.add(item.id);
+      }
+    }
+
     for (const binding of item.directSupportBindings ?? []) {
       const directClaim = claimById.get(binding?.claimId);
       if (directClaim && binding?.claimStatement === directClaim.statement) {
-        covered.add(binding.claimId);
+        const obligation = obligationIndex.byClaimId.get(directClaim.id);
+        if (obligation?.mapping?.kind === "exact-contract-claim"
+          && routeMatchesProvenance(obligation.mapping.routes, item.provenance)) {
+          covered.add(directClaim.id);
+        } else {
+          ineligibleRouteEvidenceIds.add(item.id);
+        }
       } else if (directClaim) {
         mismatchedClaimEvidenceIds.push(item.id);
       }
     }
     for (const binding of item.supportBindings ?? []) {
-      if (approved.has(binding?.obligationId) && claimById.has(binding?.claimId)) {
-        covered.add(binding.claimId);
+      const obligationId = readString(binding?.obligationId);
+      const targetClaimId = readString(binding?.claimId);
+      const targetClaim = claimById.get(targetClaimId);
+      const obligation = obligationIndex.byId.get(obligationId);
+      if (!targetClaim || !obligationId) continue;
+      if (!obligation || obligation.claimId !== targetClaim.id) {
+        ineligibleRouteEvidenceIds.add(item.id);
+        continue;
+      }
+      if (!approved.has(obligationId)) continue;
+      if (obligation.mapping?.kind === "cross-claim"
+        && sourceRouteMatchesEvidence(obligation.mapping, item)) {
+        covered.add(targetClaim.id);
+      } else {
+        ineligibleRouteEvidenceIds.add(item.id);
       }
     }
   }
@@ -120,7 +169,8 @@ export function validateEvidenceCoverage(
     uncoveredClaimIds,
     untrustedEvidenceIds,
     staleEvidenceIds,
-    mismatchedClaimEvidenceIds
+    mismatchedClaimEvidenceIds,
+    ineligibleRouteEvidenceIds: [...ineligibleRouteEvidenceIds]
   };
 }
 
@@ -145,6 +195,7 @@ export function createProjectModelEvidence({ change, git, model, validation, obs
     },
     provenance: {
       kind: "builtin-oracle",
+      sourceId: "project-model",
       implementation: "legatura-core/project-model-v1",
       observedAt,
       changeId: change.id,
@@ -191,7 +242,11 @@ export function createGateEvidence({
   const directlySupportedClaims = claimRefs.flatMap((id) => {
     const requested = change.claims.find((claim) => claim.id === id);
     const authoritative = contractClaims.get(id);
-    return requested && authoritative?.statement === requested.statement ? [requested] : [];
+    return requested
+      && authoritative?.statement === requested.statement
+      && claimHasExactGateRoute(change.verificationObligations, requested.id, gate.id, command.id)
+      ? [requested]
+      : [];
   });
   const directlySupported = directlySupportedClaims.map((claim) => claim.id);
   const explicitlySupported = [...new Set([
@@ -248,6 +303,66 @@ function gateEvidenceApplicability(configured, primaryModule) {
     ...conditions,
     module: primaryModule
   };
+}
+
+function indexVerificationObligations(value) {
+  const byId = new Map();
+  const byClaimId = new Map();
+  const duplicateIds = new Set();
+  const duplicateClaimIds = new Set();
+  for (const obligation of Array.isArray(value) ? value : []) {
+    const id = readString(obligation?.id);
+    const claimId = readString(obligation?.claimId);
+    if (id) {
+      if (byId.has(id)) duplicateIds.add(id);
+      else byId.set(id, obligation);
+    }
+    if (claimId) {
+      if (byClaimId.has(claimId)) duplicateClaimIds.add(claimId);
+      else byClaimId.set(claimId, obligation);
+    }
+  }
+  for (const id of duplicateIds) byId.delete(id);
+  for (const claimId of duplicateClaimIds) byClaimId.delete(claimId);
+  return { byId, byClaimId };
+}
+
+function claimHasExactGateRoute(obligations, claimId, gateId, commandId) {
+  const obligation = indexVerificationObligations(obligations).byClaimId.get(claimId);
+  return obligation?.mapping?.kind === "exact-contract-claim"
+    && routeMatchesPair(obligation.mapping.routes, gateId, commandId);
+}
+
+function routeMatchesProvenance(routes, provenance) {
+  return routeMatchesPair(routes, provenance?.gateId, provenance?.commandId);
+}
+
+function routeMatchesPair(routes, gateId, commandId) {
+  const exactGateId = readString(gateId);
+  const exactCommandId = readString(commandId);
+  return Boolean(exactGateId && exactCommandId && Array.isArray(routes)
+    && routes.some((route) => readString(route?.gateId) === exactGateId
+      && readString(route?.commandId) === exactCommandId));
+}
+
+function sourceRouteMatchesEvidence(mapping, evidence) {
+  const envelopeRefs = new Set(readEvidenceEnvelopeClaimRefs(evidence));
+  const declaredSourceClaimIds = new Set(Array.isArray(mapping?.sourceClaimIds)
+    ? mapping.sourceClaimIds.map(readString).filter(Boolean)
+    : []);
+  return Array.isArray(mapping?.sourceRoutes) && mapping.sourceRoutes.some((route) => {
+    const sourceClaimId = readString(route?.sourceClaimId);
+    return Boolean(sourceClaimId)
+      && declaredSourceClaimIds.has(sourceClaimId)
+      && envelopeRefs.has(sourceClaimId)
+      && routeMatchesPair([route], evidence?.provenance?.gateId, evidence?.provenance?.commandId);
+  });
+}
+
+function readEvidenceEnvelopeClaimRefs(evidence) {
+  return Array.isArray(evidence?.claim?.refs)
+    ? [...new Set(evidence.claim.refs.map(readString).filter(Boolean))]
+    : [];
 }
 
 export function isKnowledgeClosureComplete(value) {
