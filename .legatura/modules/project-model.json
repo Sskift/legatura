@@ -17,7 +17,8 @@
       "compileOutcomeTransitions(input)",
       "compileClaimGateRoutes(model, claimRef)",
       "compileClaimGateRouteIndex(model, options)",
-      "compileArchitectureProfile(input)",
+      "projectCompiledClaimGateRouteIndex(index, options)",
+      "compileArchitectureProfile(input, options)",
       "assertKnowledgeGapProofContractsPreserved(input)"
     ],
     "invariants": [
@@ -25,7 +26,10 @@
       "A supplied Context Capsule may narrow but never broaden generated scope.",
       "Unrelated Claims require an explicit authority-bound mapping.",
       "Acceptance Evidence eligibility is compiled from canonical Claim Gate routes at exact Gate and command identity, filtered to routes applicable to the primary Module through acceptance-eligible Gates; cross-Claim mappings expose exact source routes, and integration-only full Gate routes never enter acceptance mappings.",
-      "Claim Gate routes are compiled from one bounded index pass over normalized Gate commands; the scalar compileClaimGateRoutes Interface delegates to that index, and Architecture Profile projection consumes the same exact route objects without reinterpreting Gate applicability.",
+      "Claim Gate routes compile in one bounded pass for the complete canonical requested Claim set; compileClaimGateRoutes delegates to that compiler, while Profile validation, Knowledge Gap validation, and graph projection consume the same authoritative product without reinterpreting Gate applicability.",
+      "A compiled Claim Gate route product is an opaque process-local handle bound by Project Model to the exact preflighted Model identity, a compiler-derived content digest, and canonical Claim coverage. projectCompiledClaimGateRouteIndex rejects forged, wrong-Model, content-drifted, or incomplete products, ignores caller-visible handle mutation, and returns isolated routes plus an immutable compiler-owned observation containing at least workUnits, routes, and totalRouteBytes; workUnits includes requested Claim normalization.",
+      "A route-product consumer may only tighten hard usage limits; projection fails closed against compiler-recorded usage before returning routes, and resource observations are neither persisted nor interpreted as assurance.",
+      "Architecture Profile accepts a supplied Claim Gate route product only through a separate in-memory options seam; serializable Profile input, Change facts, persisted records, HTTP or CLI payloads, and worker-authored data cannot supply or forge that product.",
       "Change planRefs are a bounded strict value object: only absence, a non-empty string of at most 256 trimmed characters, or a dense list of at most 64 such strings is accepted, and every compiler projection uses the same trimmed, first-occurrence canonical Outcome references without discarding invalid entries.",
       "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome.",
       "Stable Outcome Criteria exactly mirror exit criteria and their declared Claim and Knowledge Gap sets.",
