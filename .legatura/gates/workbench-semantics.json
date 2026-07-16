@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "id": "workbench-semantics",
+  "name": "Workbench Semantic Projection Proof Gate",
+  "purpose": "Produce direct Module-owned Evidence that Kernel and Workbench projections preserve exact authoring and action semantics without adapter-side governance compilation.",
+  "appliesTo": ["change-kernel", "local-workbench"],
+  "commands": [
+    {
+      "id": "workbench-semantics-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/workbench-semantics.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-semantics-are-kernel-compiled"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel Workbench semantics test entrypoint must exist, prove the Kernel-owned projection, and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-semantic-projection-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "selectable Claims outside a primary Module's owned or dependency Contracts",
+          "omitted, duplicated, or invented authoring Claims or acceptance-eligible routes",
+          "authoring routes that differ from the current Architecture Profile route product",
+          "Change Gate actions derived from current browser Project facts instead of the frozen Governance Baseline, Kernel lifecycle selection, and compiler-owned Claim-route annotations",
+          "omitted, duplicated, or invented existing-Change Gate actions",
+          "unavailable actions with an empty, duplicate, unknown, or out-of-precedence disabled-reason code list"
+        ]
+      },
+      "residualUncertainty": [
+        "Local Workbench projection and real adapter adoption are proved by a separate Module-owned command.",
+        "Browser DOM interaction remains outside this Gate and belongs to LGT-014."
+      ]
+    },
+    {
+      "id": "workbench-semantics-local-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--test",
+        "test/local-workbench/architecture-profile.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-projects-kernel-semantics"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Local Workbench profile test entrypoint must prove pure projection of Kernel semantics and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-semantic-projection-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "loss or invention of selectable Claims, exact Gate and command routes, enabled state, or declared workbenchDisabledReasonCodes",
+          "omission or duplication of canonical Kernel authoring or action facts",
+          "CLI, HTTP, or browser adapter reconstruction of Contract visibility, Gate applicability, or lifecycle policy",
+          "aggregate score, percentage, confidence, health, readiness, or green-light conclusions",
+          "top-level view payloads containing source bodies, package bodies, Evidence bodies, stdout, or stderr instead of bounded references and digests"
+        ]
+      },
+      "residualUncertainty": [
+        "Browser DOM rendering and interaction remain outside this Gate and belong to LGT-014.",
+        "Cross-workspace Accepted history portability remains an explicit Knowledge Gap."
+      ]
+    }
+  ]
+}

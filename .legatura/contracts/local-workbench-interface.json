@@ -18,6 +18,10 @@
     {
       "id": "architecture-profile-preserves-assurance-dimensions",
       "statement": "The CLI output, loopback HTTP response, and browser view model preserve Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap as separate assurance dimensions; they expose no aggregate score, percentage, confidence, or green-light status."
+    },
+    {
+      "id": "workbench-projects-kernel-semantics",
+      "statement": "The pure bounded Architecture Profile view model preserves Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap through exact identifiers and digests without aggregate assurance. Separately, CLI, HTTP, and browser adapters preserve the Change Kernel's complete canonical authoring and action projections, including selectable Claims, exact Gate and command route identifiers and digests, enabled state, and ordered workbenchDisabledReasonCodes, without omission, duplication, invention, or governance recomputation."
     }
   ]
 }

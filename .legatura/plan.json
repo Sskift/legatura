@@ -19,12 +19,13 @@
     "Outcomes describe durable capabilities or closed uncertainty, never files, tickets, or implementation tasks.",
     "A plan amendment is accepted before an implementation Change may use the amended plan; a Change cannot authorize itself against newer governance.",
     "Stage exit is decided from exact Evidence against exit criteria, never from coverage percentages, task counts, or dates.",
+    "A later-discovered prerequisite never rewrites active Outcome Criteria; an append-only structured Knowledge Gap blocker must name and prevent the exact dependent Gap closures and Outcome Transitions until its own governed Closure Contract is satisfied.",
     "The master consumes structured state and content-addressed artifacts; full worker conversations are not coordination state.",
     "Batch semantic projections compile one compiler-authenticated Project Model Provider covering every Contract Claim for the stable current Model and pass that exact process-local Provider through validation and Profile compilation, then union the query's actually referenced non-builtin source Claims and compile at most one Provider for each unique verified frozen Governance Baseline content; scalar Interfaces and adapters project from those Providers instead of recompiling policy per Claim, record, or view.",
     "Compiler-owned resource observations expose requested-Claim normalization work, emitted route count, and total route bytes so a consuming query can charge each unique compilation once under one aggregate ceiling; cache reuse is not recharged, call-local limits cannot reset that ceiling, and these operational facts are never assurance scores, confidence, readiness, or Evidence of correctness.",
     "Workers execute bounded work and report observations; they do not define sufficiency, waive obligations, or accept their own output.",
     "Minimum Gates protect routine Change economics; Full Gates protect composition, integration, and release.",
-    "Architecture and Workbench projections compile from stable, pre-bounded source snapshots; adapters render typed orthogonal facts and never collapse assurance into scores, percentages, health, readiness, confidence, or green lights.",
+    "Architecture and Workbench projections compile from stable, pre-bounded source snapshots; Change Kernel owns the complete canonical selectable-Claim and Gate-action sets, exact Gate routes, lifecycle eligibility, and a closed disabled-reason vocabulary, while CLI, HTTP, and browser adapters preserve their identifiers and digests without omission, duplication, invention, semantic recompilation, or collapse into scores, percentages, health, readiness, confidence, or green lights.",
     "New architecture should deepen the Worker Execution and Coordinator Modules instead of multiplying shallow framework Modules."
   ],
   "referenceAcceptanceScenario": {

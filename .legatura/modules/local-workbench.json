@@ -10,6 +10,7 @@
     "entrypoints": [
       "legatura open <repo>",
       "legatura inspect <repo>",
+      "compileArchitectureProfileViewModel(input)",
       "createServer(options)",
       "startServer(options)",
       "loopback HTTP Change interface"
@@ -17,7 +18,8 @@
     "invariants": [
       "The server binds only to loopback.",
       "HTTP input and errors remain bounded and structured.",
-      "The UI does not invent normative project truth."
+      "compileArchitectureProfileViewModel is pure and bounded, preserves orthogonal Profile dimensions through exact identifiers and digests, and emits no aggregate assurance conclusion.",
+      "CLI, HTTP, and browser adapters preserve the Kernel's complete canonical authoring and action projections, including exact route identifiers and digests and closed disabled-reason codes, without omission, duplication, invention, or reinterpretation of Contract visibility, Gate applicability, or lifecycle eligibility."
     ]
   },
   "paths": {

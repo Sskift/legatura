@@ -51,8 +51,12 @@
       "status": "open",
       "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
-      "statement": "The Change Store supplies stable bounded zero-write Profile snapshots, and Project Model now supplies an accepted opaque exact-Model-bound Claim Gate route product with immutable operational observations and a pure in-memory Profile reuse seam. The remaining projection boundaries are not closed: Change Kernel has declared but not implemented one all-Contract-Claim current-Model product, one query-demand union product per unique verified frozen Governance Baseline, and one aggregate query budget; no Kernel-owned Workbench view model supplies selectable Claims, exact routes, and disabled reasons; and browser compatibility code can still express aggregate score, confidence, percentage, health, readiness, or green-light semantics.",
-      "expansionTrigger": "Implement the governed Change Kernel route-product consumption and aggregate budget before the Workbench slice; then compile the Workbench view model and remove aggregate assurance compatibility before browser projection or LGT-010 closure."
+      "statement": "The Change Store supplies stable bounded zero-write Profile snapshots; Project Model supplies the accepted opaque exact-Model-bound Claim Gate route product; and Change Kernel now consumes one current-Model product, at most one query-demand union product per verified frozen Governance Baseline, and one aggregate query budget. The remaining projection boundaries are declared but not implemented: Project Model must enforce an append-only blocker relation from this later-discovered prerequisite without rewriting frozen LGT-010 Criteria; Kernel must emit complete selectable owned or dependency Contract Claims, exact routes, and closed-code Change-action disabled reasons from the same stabilized query and current route product; Local Workbench must compile and adopt one pure bounded view model; and browser compatibility code can still express aggregate score, confidence, percentage, health, readiness, or green-light semantics.",
+      "proofClaimRefs": [
+        "workbench-semantics-are-kernel-compiled",
+        "workbench-projects-kernel-semantics"
+      ],
+      "expansionTrigger": "First implement structured Project Model enforcement that makes this open Gap block architecture-acceptance-profile-not-projected closure and the LGT-010 Transition without rewriting frozen Criteria; then implement both proof Claims, adopt the pure Local Workbench view model, and remove aggregate assurance compatibility."
     },
     {
       "id": "accepted-history-not-portable",
