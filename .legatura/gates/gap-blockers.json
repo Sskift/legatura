@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "gap-blockers",
+  "name": "Knowledge Gap Blocker Proof Gate",
+  "purpose": "Produce direct Project Model-owned Evidence that later-discovered prerequisites block exact Gap closures and Outcome Transitions without rewriting frozen acceptance semantics.",
+  "appliesTo": ["project-model"],
+  "commands": [
+    {
+      "id": "knowledge-gap-blocker-proof",
+      "appliesTo": ["project-model"],
+      "command": [
+        "node",
+        "--test",
+        "test/project-model/gap-blockers.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["knowledge-gap-blockers-are-enforced"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Knowledge Gap blocker proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-blocker-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a blocker source without an open governed Closure Contract, an unknown or already-closed Gap target, a duplicate, self-referential, or cyclic Gap edge, or a noncanonical exact Outcome route descriptor",
+          "retroactive removal, narrowing, or post-closure extension of a declared blocker set",
+          "a newly declared blocker paired with its matching target closure or Outcome Transition in the same amendment",
+          "a blocked Gap closure or exact Outcome route whose baseline-open direct or transitive blocker lacks an exact disposition",
+          "a blocker treated as cleared without its own atomic open-to-closed delta, governed Closure Contract proof, and prior target-Outcome implementation Contribution"
+        ]
+      },
+      "residualUncertainty": [
+        "Blockers preserve later-discovered prerequisites but cannot reinterpret frozen Outcome Criteria or prove the blocked capability themselves.",
+        "Cross-workspace Accepted history portability and authenticated multi-writer governance remain explicit Knowledge Gaps."
+      ]
+    }
+  ]
+}

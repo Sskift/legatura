@@ -56,7 +56,29 @@
         "workbench-semantics-are-kernel-compiled",
         "workbench-projects-kernel-semantics"
       ],
+      "blocksGapClosureRefs": [
+        "architecture-acceptance-profile-not-projected"
+      ],
+      "blocksOutcomeTransitionRoutes": [
+        {
+          "outcomeRef": "LGT-010",
+          "from": "active",
+          "to": "achieved"
+        }
+      ],
       "expansionTrigger": "First implement structured Project Model enforcement that makes this open Gap block architecture-acceptance-profile-not-projected closure and the LGT-010 Transition without rewriting frozen Criteria; then implement both proof Claims, adopt the pure Local Workbench view model, and remove aggregate assurance compatibility."
+    },
+    {
+      "id": "knowledge-gap-blockers-not-enforced",
+      "status": "open",
+      "affects": ["project-model", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "Later-discovered prerequisites cannot yet block exact Knowledge Gap closures or Outcome Transitions through an append-only structured relation, so prose sequencing can be bypassed without rewriting frozen Outcome Criteria.",
+      "proofClaimRefs": ["knowledge-gap-blockers-are-enforced"],
+      "blocksGapClosureRefs": [
+        "architecture-profile-projection-boundaries-not-closed"
+      ],
+      "expansionTrigger": "Implement and directly prove Project Model validation, append-only preservation, cycle rejection, transitive required-disposition derivation, atomic blocker closure, and exact route blocking before the Kernel Workbench semantics slice."
     },
     {
       "id": "accepted-history-not-portable",

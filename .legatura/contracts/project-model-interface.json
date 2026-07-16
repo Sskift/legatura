@@ -26,6 +26,10 @@
     {
       "id": "architecture-profile-relations-are-exact",
       "statement": "Given Project Model and Change record inputs, the Architecture Acceptance Profile compiler produces a deterministic bounded projection that preserves exact references and relations across Outcome, Criterion, Claim, Gate, Evidence, Residual Uncertainty, and Knowledge Gap; it never represents an Outcome Contribution as Criterion satisfaction."
+    },
+    {
+      "id": "knowledge-gap-blockers-are-enforced",
+      "statement": "The Project Model treats blocker relations as separate monotonic closure-consumption constraints, validates canonical append-only blocksGapClosureRefs and exact blocksOutcomeTransitionRoutes declared by open Knowledge Gaps that already own governed Closure Contracts, and rejects unknown or already-closed Gap targets, invalid Outcome routes, duplicates, self-edges, cycles, prior-relation removal or mutation, additions after source closure, and mixed declaration with a named closure or matching Transition. For each candidate Outcome status delta it derives the exact Gap disposition set from frozen Criterion Gaps, matching baseline-open Outcome-route blockers, and every required Gap's transitive baseline-open blockers; a blocker clears only when its own unchanged open-to-closed Closure Contract proof compiles atomically in that Transition, never from a status edit alone."
     }
   ]
 }
