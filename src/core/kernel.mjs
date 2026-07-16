@@ -4,6 +4,7 @@ import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   assertIntegrityFailureEvidenceCurrent,
   compileChangeAgainstGovernance,
+  parseChangePlanRefs,
   validateIntegrityFailureEvidence
 } from "./change-compiler.mjs";
 import { createChangeStore } from "./change-store.mjs";
@@ -214,6 +215,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw kernelError("CHANGE_INPUT_INVALID", "createChange input must be an object.", 400);
     }
+    const planRefsInput = adaptChangePlanRefsInput(input);
     const inspection = await inspectProject();
     assertValidProject(inspection);
     const id = readString(input.id) ?? await createUniqueChangeId(store, now());
@@ -253,7 +255,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       },
       ...(primaryModule ? { primaryModule } : {}),
       changeKind: readString(input.changeKind) ?? "implementation",
-      planRefs: normalizeStringList(input.planRefs ?? input.planRef),
+      planRefs: planRefsInput.planRefs,
       integrityTarget: cloneJson(input.integrityTarget ?? null),
       outcomeAlignmentSchemaVersion: OUTCOME_ALIGNMENT_SCHEMA_VERSION,
       outcomeAlignment: null,
@@ -306,6 +308,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
 
   async function compileChange(idOrInput, optionalPatch = {}) {
     const { changeId, patch } = readChangePatch(idOrInput, optionalPatch);
+    assertCompilePatchInput(patch);
+    const planRefsInput = adaptChangePlanRefsInput(patch);
     let change = await requireChange(changeId);
     change = await refreshChange(change);
     if (change.acceptance || change.state === "Accepted" || change.state === "Integrated") {
@@ -316,7 +320,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
     await assertGovernanceWatermarkCurrent(change);
-    change = applyCompilePatch(change, patch, now());
+    change = applyCompilePatch(change, patch, now(), planRefsInput);
     const inspection = await inspectProject();
     assertValidProject(inspection);
     change.projectModelDigest = inspection.digest;
@@ -778,10 +782,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   };
 }
 
-function applyCompilePatch(change, patch, observedAt) {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
-    throw kernelError("CHANGE_PATCH_INVALID", "compileChange patch must be an object.", 400);
-  }
+function applyCompilePatch(change, patch, observedAt, planRefsInput) {
+  assertCompilePatchInput(patch);
   const next = cloneJson(change);
   next.compilerInput ??= {
     verificationObligations: cloneJson(next.verificationObligations ?? []),
@@ -801,9 +803,7 @@ function applyCompilePatch(change, patch, observedAt) {
   if (patch.nonGoals !== undefined) next.intent.nonGoals = normalizeStringList(patch.nonGoals);
   if (patch.primaryModule !== undefined) next.primaryModule = readString(patch.primaryModule);
   if (patch.changeKind !== undefined) next.changeKind = readString(patch.changeKind);
-  if (patch.planRefs !== undefined || patch.planRef !== undefined) {
-    next.planRefs = normalizeStringList(patch.planRefs ?? patch.planRef);
-  }
+  if (planRefsInput.present) next.planRefs = planRefsInput.planRefs;
   if (patch.integrityTarget !== undefined) next.integrityTarget = cloneJson(patch.integrityTarget);
   if (patch.claims !== undefined || patch.claim !== undefined) {
     next.claims = normalizeClaims(patch.claims ?? patch.claim);
@@ -1983,6 +1983,29 @@ function normalizeStringList(value) {
   if (value === undefined || value === null) return [];
   const values = Array.isArray(value) ? value : [value];
   return [...new Set(values.filter(readString).map((item) => item.trim()))];
+}
+
+function adaptChangePlanRefsInput(input) {
+  const presentFields = ["planRefs", "planRef"].filter((field) => Object.hasOwn(input, field));
+  if (presentFields.length > 1) {
+    throw kernelError(
+      "CHANGE_PLAN_REF_INPUT_CONFLICT",
+      "Change input cannot contain both planRefs and legacy planRef.",
+      422,
+      { presentFields }
+    );
+  }
+  const present = presentFields.length === 1;
+  return {
+    present,
+    planRefs: parseChangePlanRefs(present ? input[presentFields[0]] : undefined)
+  };
+}
+
+function assertCompilePatchInput(patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw kernelError("CHANGE_PATCH_INVALID", "compileChange patch must be an object.", 400);
+  }
 }
 
 function normalizeReferenceList(value) {
