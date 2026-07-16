@@ -7,6 +7,7 @@ Legatura—Italian for *binding*—is a local-first control plane for trusted mu
 The MVP is deliberately narrow and runnable:
 
 - load and validate a repository's existing `.legatura` Project Model;
+- bind ordinary Changes to active Outcomes in a versioned Development Plan;
 - show a Project Atlas, assurance boundary, knowledge gaps, and gate health;
 - create and compile a Change into a Context Capsule, Impact Set, and Verification Obligations;
 - run declared minimum gates and preserve structured evidence;
@@ -50,7 +51,7 @@ Legatura models its own repository with the same mechanism:
 | Change Kernel | Change lifecycle, Evidence coverage, acceptance, and integration integrity | Governed |
 | Local Workbench | CLI, loopback HTTP interface, browser projection, and package delivery | Provisional |
 
-The versioned definitions live in [`.legatura/`](.legatura/). Provisional and opaque areas are intentional model states, not hidden completeness claims; their concrete expansion triggers live in [`.legatura/knowledge-gaps.json`](.legatura/knowledge-gaps.json).
+The versioned definitions live in [`.legatura/`](.legatura/). Development is governed by the machine-readable [Long-Term Plan](.legatura/plan.json): it defines the north star, permanent Outcome IDs, dependencies, exit criteria, non-goals, and the reference scenario that marks the trusted local 1+n core complete. Provisional and opaque areas are intentional model states, not hidden completeness claims; their concrete expansion triggers live in [`.legatura/knowledge-gaps.json`](.legatura/knowledge-gaps.json).
 
 Workers and agents are intended to be replaceable clients of this kernel. This MVP compiles the bounded Context Capsule and rejects undeclared or semantically altered Contract Claims, but it does not yet deliver that capsule to a worker or enforce filesystem capabilities. Worker execution is a later adapter, not a property claimed here. No submitted Evidence—including Evidence that merely labels itself as a Gate result—can ratify its own output.
 
@@ -61,6 +62,7 @@ A modeled repository owns its durable knowledge under `.legatura/`:
 ```text
 .legatura/
   project.json          project identity, policy, and authorities
+  plan.json             long-term Outcomes, dependencies, and exit criteria
   modules/*.json        ownership, paths, interfaces, and assurance status
   contracts/*.json      public behavior and falsifiable claims
   gates/*.json          executable verification with claim mappings
@@ -75,6 +77,10 @@ The assurance boundary has three honest states:
 - `opaque`: the framework will not infer safe write scope without an explicit decision.
 
 Project Model files are normative. Changing them is itself a Change and requires a `normative-amendment` decision naming every amended file.
+
+The Development Plan is not a task backlog. A normal Change must reference an already active Outcome from its frozen Governance Baseline; a planned Outcome is activated by an earlier `plan-amendment` Change that can modify only `.legatura/**`, references no Outcome, and cannot carry implementation. Existing Outcome ids and statements are permanent; achieved or retired state cannot be reopened, and achieved acceptance records cannot be rewritten. Other planned details evolve only through separately reviewed amendments. `LGT-099` is a standing integrity path, but the compiler accepts it only for a supported repair kind that binds a protected Claim to complete failed Evidence, and Plan authority must review it—it is not a feature escape hatch.
+
+The current bootstrap enforces referential alignment, active status, frozen-plan binding, amendment isolation, and exact integrity evidence. It does not yet prove that a Change substantively contributes to a particular Outcome exit criterion, nor bind post-bootstrap Outcome transitions to their exact exit Evidence. Those limits are explicit `LGT-010` Knowledge Gaps rather than inferred assurance.
 
 ## Evidence, not test volume
 

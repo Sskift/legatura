@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
+import { INTEGRITY_CHANGE_KINDS } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 
 export async function loadProjectModel(repoPath) {
@@ -9,6 +10,7 @@ export async function loadProjectModel(repoPath) {
   const modules = await readJsonCollection(path.join(root, "modules"), "modules");
   const contracts = await readJsonCollection(path.join(root, "contracts"), "contracts");
   const gates = await readJsonCollection(path.join(root, "gates"), "gates");
+  const plan = await readOptionalJson(path.join(root, "plan.json"));
   const knowledgeGapDocument = await readOptionalJson(path.join(root, "knowledge-gaps.json"));
   const knowledgeGaps = Array.isArray(knowledgeGapDocument)
     ? knowledgeGapDocument
@@ -20,12 +22,14 @@ export async function loadProjectModel(repoPath) {
     modules,
     contracts,
     gates,
+    plan: plan ?? null,
     knowledgeGaps,
     files: [
       ...(projectDocument ? [".legatura/project.json"] : []),
       ...modules.flatMap((entry) => entry.sourceFile ? [entry.sourceFile] : []),
       ...contracts.flatMap((entry) => entry.sourceFile ? [entry.sourceFile] : []),
       ...gates.flatMap((entry) => entry.sourceFile ? [entry.sourceFile] : []),
+      ...(plan !== undefined ? [".legatura/plan.json"] : []),
       ...(knowledgeGapDocument ? [".legatura/knowledge-gaps.json"] : [])
     ].sort()
   };
@@ -268,6 +272,8 @@ export function validateProjectModel(model) {
     ));
   }
 
+  validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors);
+
   validateAssuranceBoundary(model, moduleIndex, errors, warnings);
 
   return {
@@ -278,6 +284,7 @@ export function validateProjectModel(model) {
       modules: model.modules.length,
       contracts: model.contracts.length,
       gates: model.gates.length,
+      planOutcomes: asArray(model.plan?.outcomes).length,
       knowledgeGaps: model.knowledgeGaps.length
     }
   };
@@ -290,10 +297,330 @@ export function publicProjectModel(model) {
     modules: stripSources(model.modules),
     contracts: stripSources(model.contracts),
     gates: stripSources(model.gates),
+    plan: model.plan,
     knowledgeGaps: model.knowledgeGaps,
     files: model.files,
     digest: model.digest
   });
+}
+
+function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors) {
+  const location = ".legatura/plan.json";
+  const required = model.projectDocument?.changePolicy?.requirePlanRefs === true;
+  const plan = model.plan;
+
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    if (required) {
+      errors.push(issue("plan.missing", location, "changePolicy.requirePlanRefs requires a Development Plan."));
+    }
+    return;
+  }
+
+  if (!readId(plan)) {
+    errors.push(issue("plan.id.missing", location, "Development Plan requires a non-empty id."));
+  }
+  if (!readString(plan.northStar)) {
+    errors.push(issue("plan.north-star.missing", location, "Development Plan requires a substantive northStar."));
+  }
+  const planAuthority = readReference(plan.authority);
+  if (!planAuthority) {
+    errors.push(issue("plan.authority.missing", location, "Development Plan requires a decision authority."));
+  } else if (!decisionAuthorities.has(planAuthority)) {
+    errors.push(issue("plan.authority.unknown", location, `Unknown Development Plan authority: ${planAuthority}.`));
+  } else {
+    const declaration = asArray(model.projectDocument?.authorities?.decision)
+      .find((authority) => readReference(authority) === planAuthority);
+    const allowedDecisions = asArray(declaration?.may).map(readString).filter(Boolean);
+    if (!allowedDecisions.includes("normative-amendment")) {
+      errors.push(issue(
+        "plan.authority.amendment-forbidden",
+        location,
+        `Development Plan authority ${planAuthority} must be allowed to issue normative-amendment Decisions.`
+      ));
+    }
+  }
+
+  if (!Array.isArray(plan.outcomes) || plan.outcomes.length === 0) {
+    errors.push(issue("plan.outcomes.missing", location, "Development Plan requires at least one Outcome."));
+    return;
+  }
+
+  const allowedStatuses = new Set(["achieved", "active", "planned", "conditional", "retired"]);
+  const outcomeIndex = new Map();
+  for (const outcome of plan.outcomes) {
+    const outcomeId = readId(outcome);
+    const outcomeLocation = `${location}#${outcomeId ?? "outcome"}`;
+    if (!outcomeId) {
+      errors.push(issue("plan.outcome.id.missing", outcomeLocation, "Every Development Plan Outcome requires a stable id."));
+      continue;
+    }
+    if (!/^LGT-[0-9]{3,}$/u.test(outcomeId)) {
+      errors.push(issue("plan.outcome.id.unstable", outcomeLocation, `Outcome id must use the stable LGT-nnn form: ${outcomeId}.`));
+    }
+    if (outcomeIndex.has(outcomeId)) {
+      errors.push(issue("plan.outcome.id.duplicate", outcomeLocation, `Duplicate Development Plan Outcome id: ${outcomeId}.`));
+      continue;
+    }
+    outcomeIndex.set(outcomeId, outcome);
+  }
+
+  const stageIndex = validatePlanStages(plan, outcomeIndex, allowedStatuses, errors, location);
+  validatePlanOutcomeControl(plan, stageIndex, outcomeIndex, errors, location);
+  validatePlanDependencyCycles(outcomeIndex, errors, location);
+
+  const gapIds = new Set(asArray(model.knowledgeGaps).map(readId).filter(Boolean));
+  let activeOutcomes = 0;
+  for (const outcome of plan.outcomes) {
+    const outcomeId = readId(outcome);
+    const outcomeLocation = `${location}#${outcomeId ?? "outcome"}`;
+    if (outcome?.status === "active") {
+      activeOutcomes += 1;
+    }
+    if (!allowedStatuses.has(outcome?.status)) {
+      errors.push(issue(
+        "plan.outcome.status.invalid",
+        outcomeLocation,
+        "Outcome status must be achieved, active, planned, conditional, or retired."
+      ));
+    }
+    if (!readString(outcome?.outcome)) {
+      errors.push(issue("plan.outcome.statement.missing", outcomeLocation, "Every Outcome requires a substantive outcome statement."));
+    }
+    const stageId = readReference(outcome?.stage);
+    if (!stageId) {
+      errors.push(issue("plan.outcome.stage.missing", outcomeLocation, "Every Outcome requires a stage reference."));
+    } else if (!stageIndex.has(stageId)) {
+      errors.push(issue("plan.outcome.stage.unknown", outcomeLocation, `Unknown Development Plan stage: ${stageId}.`));
+    } else if (!asArray(stageIndex.get(stageId)?.outcomeRefs).map(readReference).includes(outcomeId)) {
+      errors.push(issue("plan.outcome.stage.unlisted", outcomeLocation, `Stage ${stageId} does not list Outcome ${outcomeId}.`));
+    }
+
+    if (outcome?.dependsOn !== undefined && !Array.isArray(outcome.dependsOn)) {
+      errors.push(issue("plan.outcome.dependencies.invalid", outcomeLocation, "Outcome dependsOn must be a list of Outcome ids."));
+    }
+    for (const dependency of asArray(outcome?.dependsOn)) {
+      const dependencyId = readReference(dependency);
+      if (!dependencyId) {
+        errors.push(issue("plan.outcome.dependency.invalid", outcomeLocation, "Outcome dependsOn entries must reference an Outcome id."));
+      } else if (dependencyId === outcomeId) {
+        errors.push(issue("plan.outcome.dependency.self", outcomeLocation, `Outcome ${outcomeId} cannot depend on itself.`));
+      } else if (!outcomeIndex.has(dependencyId)) {
+        errors.push(issue("plan.outcome.dependency.unknown", outcomeLocation, `Unknown dependency Outcome: ${dependencyId}.`));
+      } else if (["active", "achieved"].includes(outcome?.status)
+        && outcomeIndex.get(dependencyId)?.status !== "achieved") {
+        errors.push(issue(
+          "plan.outcome.dependency.unsatisfied",
+          outcomeLocation,
+          `${capitalize(outcome.status)} Outcome ${outcomeId} depends on ${dependencyId}, which is not achieved.`
+        ));
+      }
+    }
+
+    if (outcome?.kind === "integrity-maintenance") {
+      const allowedKinds = asArray(outcome.allowedChangeKinds).map(readString).filter(Boolean);
+      if (allowedKinds.length === 0 || allowedKinds.some((kind) => !INTEGRITY_CHANGE_KINDS.includes(kind))) {
+        errors.push(issue(
+          "plan.outcome.integrity-kinds.invalid",
+          outcomeLocation,
+          "An integrity-maintenance Outcome requires only the supported integrity repair Change kinds."
+        ));
+      }
+    }
+
+    const exitCriteria = outcome?.acceptance?.exitCriteria;
+    if (!Array.isArray(exitCriteria) || exitCriteria.length === 0 || !exitCriteria.every(readString)) {
+      errors.push(issue(
+        "plan.outcome.acceptance.exit-criteria.missing",
+        outcomeLocation,
+        "Every Outcome requires at least one substantive acceptance.exitCriteria entry."
+      ));
+    }
+
+    validatePlanReferences(outcome?.acceptance?.claimRefs, claimIndex, {
+      errors,
+      location: outcomeLocation,
+      invalidCode: "plan.outcome.claim.invalid",
+      unknownCode: "plan.outcome.claim.unknown",
+      kind: "Contract Claim"
+    });
+    validatePlanReferences(outcome?.acceptance?.gapRefs, gapIds, {
+      errors,
+      location: outcomeLocation,
+      invalidCode: "plan.outcome.gap.invalid",
+      unknownCode: "plan.outcome.gap.unknown",
+      kind: "Knowledge Gap"
+    });
+  }
+
+  if (activeOutcomes === 0) {
+    errors.push(issue("plan.active.missing", location, "Development Plan requires at least one active Outcome."));
+  }
+}
+
+function validatePlanOutcomeControl(plan, stageIndex, outcomeIndex, errors, location) {
+  if (plan.principles !== undefined
+    && (!Array.isArray(plan.principles) || plan.principles.length === 0 || !plan.principles.every(readString))) {
+    errors.push(issue("plan.principles.invalid", location, "Development Plan principles must be a non-empty list of substantive statements."));
+  }
+
+  if (plan.coreCompletion !== undefined) {
+    const completionStage = readReference(plan.coreCompletion?.stage);
+    if (!completionStage || !stageIndex.has(completionStage)) {
+      errors.push(issue(
+        "plan.core-completion.stage.unknown",
+        location,
+        `Development Plan coreCompletion must reference a declared stage: ${completionStage ?? "(missing)"}.`
+      ));
+    }
+    if (!readString(plan.coreCompletion?.definition)) {
+      errors.push(issue("plan.core-completion.definition.missing", location, "Development Plan coreCompletion requires a substantive definition."));
+    }
+  }
+
+  if (plan.referenceAcceptanceScenario !== undefined) {
+    const scenario = plan.referenceAcceptanceScenario;
+    if (!readId(scenario) || !readString(scenario?.topology)) {
+      errors.push(issue(
+        "plan.reference-scenario.identity.invalid",
+        location,
+        "A referenceAcceptanceScenario requires an id and substantive topology."
+      ));
+    }
+    if (!Array.isArray(scenario?.mustDemonstrate)
+      || scenario.mustDemonstrate.length === 0
+      || !scenario.mustDemonstrate.every(readString)) {
+      errors.push(issue(
+        "plan.reference-scenario.acceptance.missing",
+        location,
+        "A referenceAcceptanceScenario requires a non-empty mustDemonstrate list."
+      ));
+    }
+  }
+
+  if (plan.bootstrapBaseline !== undefined) {
+    const bootstrap = plan.bootstrapBaseline;
+    const outcomeRefs = asArray(bootstrap?.outcomeRefs).map(readReference).filter(Boolean);
+    const unknownOutcomeRefs = outcomeRefs.filter((outcomeId) => !outcomeIndex.has(outcomeId));
+    if (!/^[a-f0-9]{40}$/u.test(readString(bootstrap?.head) ?? "")
+      || outcomeRefs.length === 0
+      || unknownOutcomeRefs.length > 0
+      || !readString(bootstrap?.rationale)
+      || !readString(bootstrap?.residualUncertainty)) {
+      errors.push(issue(
+        "plan.bootstrap.invalid",
+        location,
+        "A bootstrapBaseline requires an exact Git head, known Outcome refs, rationale, and residual uncertainty."
+      ));
+    }
+  }
+}
+
+function validatePlanStages(plan, outcomeIndex, allowedStatuses, errors, location) {
+  const stageIndex = new Map();
+  if (!Array.isArray(plan.stages) || plan.stages.length === 0) {
+    errors.push(issue("plan.stages.missing", location, "Development Plan requires at least one stage."));
+    return stageIndex;
+  }
+  const listedOutcomes = new Set();
+  for (const stage of plan.stages) {
+    const stageId = readId(stage);
+    const stageLocation = `${location}#stage:${stageId ?? "unknown"}`;
+    if (!stageId) {
+      errors.push(issue("plan.stage.id.missing", stageLocation, "Every Development Plan stage requires an id."));
+      continue;
+    }
+    if (stageIndex.has(stageId)) {
+      errors.push(issue("plan.stage.id.duplicate", stageLocation, `Duplicate Development Plan stage id: ${stageId}.`));
+      continue;
+    }
+    stageIndex.set(stageId, stage);
+    if (!allowedStatuses.has(stage.status)) {
+      errors.push(issue("plan.stage.status.invalid", stageLocation, "Stage status must use a Development Plan Outcome status."));
+    }
+    if (!Array.isArray(stage.outcomeRefs) || stage.outcomeRefs.length === 0) {
+      errors.push(issue("plan.stage.outcome-refs.missing", stageLocation, "Every stage requires at least one Outcome reference."));
+      continue;
+    }
+    for (const reference of stage.outcomeRefs) {
+      const outcomeId = readReference(reference);
+      if (!outcomeId || !outcomeIndex.has(outcomeId)) {
+        errors.push(issue("plan.stage.outcome.unknown", stageLocation, `Unknown stage Outcome: ${outcomeId ?? "(missing)"}.`));
+        continue;
+      }
+      if (listedOutcomes.has(outcomeId)) {
+        errors.push(issue("plan.stage.outcome.duplicate", stageLocation, `Outcome ${outcomeId} is listed by more than one stage.`));
+      }
+      listedOutcomes.add(outcomeId);
+      if (readReference(outcomeIndex.get(outcomeId)?.stage) !== stageId) {
+        errors.push(issue("plan.stage.outcome.mismatch", stageLocation, `Outcome ${outcomeId} does not declare stage ${stageId}.`));
+      }
+    }
+    const outcomeStatuses = stage.outcomeRefs
+      .map(readReference)
+      .map((outcomeId) => outcomeIndex.get(outcomeId)?.status)
+      .filter(Boolean);
+    const statusMatches = stage.status === "active"
+      ? outcomeStatuses.includes("active")
+      : outcomeStatuses.length > 0 && outcomeStatuses.every((status) => status === stage.status);
+    if (!statusMatches) {
+      errors.push(issue(
+        "plan.stage.status.mismatch",
+        stageLocation,
+        `Stage ${stageId} status ${stage.status} does not match its Outcome statuses.`
+      ));
+    }
+  }
+  return stageIndex;
+}
+
+function validatePlanDependencyCycles(outcomeIndex, errors, location) {
+  const visiting = new Set();
+  const visited = new Set();
+  const path = [];
+  let reported = false;
+
+  function visit(outcomeId) {
+    if (reported || visited.has(outcomeId)) return;
+    if (visiting.has(outcomeId)) {
+      const start = path.indexOf(outcomeId);
+      const cycle = [...path.slice(start), outcomeId];
+      errors.push(issue(
+        "plan.outcome.dependency.cycle",
+        `${location}#${outcomeId}`,
+        `Development Plan Outcome dependencies must be acyclic: ${cycle.join(" -> ")}.`
+      ));
+      reported = true;
+      return;
+    }
+    visiting.add(outcomeId);
+    path.push(outcomeId);
+    for (const dependency of asArray(outcomeIndex.get(outcomeId)?.dependsOn).map(readReference).filter(Boolean)) {
+      if (outcomeIndex.has(dependency)) visit(dependency);
+    }
+    path.pop();
+    visiting.delete(outcomeId);
+    visited.add(outcomeId);
+  }
+
+  for (const outcomeId of outcomeIndex.keys()) visit(outcomeId);
+}
+
+function validatePlanReferences(references, index, options) {
+  if (references === undefined) {
+    return;
+  }
+  if (!Array.isArray(references)) {
+    options.errors.push(issue(options.invalidCode, options.location, `${options.kind} references must be a list.`));
+    return;
+  }
+  for (const reference of references) {
+    const id = readReference(reference);
+    if (!id) {
+      options.errors.push(issue(options.invalidCode, options.location, `${options.kind} reference requires an id.`));
+    } else if (!index.has(id)) {
+      options.errors.push(issue(options.unknownCode, options.location, `Unknown ${options.kind}: ${id}.`));
+    }
+  }
 }
 
 function validateAssuranceBoundary(model, moduleIndex, errors, warnings) {
@@ -403,6 +730,7 @@ function stripSourceMetadata(model) {
     modules: stripSources(model.modules),
     contracts: stripSources(model.contracts),
     gates: stripSources(model.gates),
+    plan: model.plan,
     knowledgeGaps: model.knowledgeGaps
   };
 }

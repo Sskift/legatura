@@ -16,6 +16,7 @@
         "project-model-references-are-consistent",
         "context-capsule-cannot-broaden-scope",
         "unrelated-claims-require-explicit-mapping",
+        "change-aligns-with-active-plan",
         "change-lifecycle-requires-preconditions",
         "evidence-cannot-self-ratify",
         "accepted-package-binds-exact-content",
@@ -44,7 +45,8 @@
       "residualUncertainty": [
         "Local tests do not establish authenticated provenance.",
         "They do not provide OS sandboxing or production deployment assurance.",
-        "The local npm install does not exercise every supported platform or package manager."
+        "The local npm install does not exercise every supported platform or package manager.",
+        "Active Outcome references do not yet prove substantive exit-criterion contribution or evidence-bound Outcome transitions."
       ]
     }
   ]

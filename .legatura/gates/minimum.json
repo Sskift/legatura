@@ -56,7 +56,8 @@
       "claimRefs": [
         "project-model-references-are-consistent",
         "context-capsule-cannot-broaden-scope",
-        "unrelated-claims-require-explicit-mapping"
+        "unrelated-claims-require-explicit-mapping",
+        "change-aligns-with-active-plan"
       ],
       "oracle": {
         "kind": "node-test-runner-exit",
@@ -69,11 +70,13 @@
         "rejects": [
           "dangling governance references",
           "read or write scope broadening",
-          "implicit cross-Claim Evidence mapping"
+          "implicit cross-Claim Evidence mapping",
+          "missing, unknown, or non-active Development Outcome references"
         ]
       },
       "residualUncertainty": [
-        "The current suite groups several tightly coupled compiler invariants in two Change Kernel scenarios."
+        "The current suite groups several tightly coupled compiler invariants in two Change Kernel scenarios.",
+        "Active Outcome references do not yet prove substantive exit-criterion contribution or evidence-bound Outcome transitions; both remain explicit LGT-010 Knowledge Gaps."
       ]
     },
     {

@@ -12,6 +12,11 @@
       "kind": "product-intent"
     },
     {
+      "id": "long-term-plan",
+      "path": ".legatura/plan.json",
+      "kind": "development-plan"
+    },
+    {
       "id": "domain-language",
       "path": "CONTEXT.md",
       "kind": "ubiquitous-language"
@@ -37,7 +42,7 @@
       {
         "id": "project-model-facts",
         "module": "project-model",
-        "owns": "Project Model interpretation, validation, Context Capsules, impact, and verification planning."
+        "owns": "Project Model and Development Plan interpretation, validation, Context Capsules, impact, and verification planning."
       },
       {
         "id": "change-kernel-facts",
@@ -97,6 +102,7 @@
     "defaultGate": "minimum",
     "fullGate": "full",
     "fullGateBefore": ["integrated"],
-    "contextExpansion": "recorded"
+    "contextExpansion": "recorded",
+    "requirePlanRefs": true
   }
 }

@@ -1,0 +1,614 @@
+{
+  "schemaVersion": 1,
+  "id": "legatura-long-term-plan",
+  "title": "Legatura Long-Term Plan",
+  "authority": "governance-maintainer",
+  "northStar": "Make local 1+n agent software delivery trustworthy by compiling bounded work from durable project truth, keeping execution replaceable, and accepting only exact changes supported by discriminating evidence and explicit authority.",
+  "coreCompletion": {
+    "stage": "S4",
+    "definition": "Legatura's core is complete only when the reference 1+3 scenario proves bounded context, capability isolation, deterministic recovery, conflict-aware integration, and exact acceptance without relying on worker transcripts or worker self-ratification."
+  },
+  "bootstrapBaseline": {
+    "head": "6413924bb66fe3cc1aeb460b2592f481e1a53f02",
+    "outcomeRefs": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"],
+    "status": "historical-bootstrap",
+    "rationale": "These capabilities existed and passed the repository's exact-binding and lifecycle suites before the Development Plan became machine authority.",
+    "residualUncertainty": "The bootstrap predates evidence-bound Outcome Transition records and must not be used as precedent for completing post-bootstrap Outcomes."
+  },
+  "principles": [
+    "Outcomes describe durable capabilities or closed uncertainty, never files, tickets, or implementation tasks.",
+    "A plan amendment is accepted before an implementation Change may use the amended plan; a Change cannot authorize itself against newer governance.",
+    "Stage exit is decided from exact Evidence against exit criteria, never from coverage percentages, task counts, or dates.",
+    "The master consumes structured state and content-addressed artifacts; full worker conversations are not coordination state.",
+    "Workers execute bounded work and report observations; they do not define sufficiency, waive obligations, or accept their own output.",
+    "Minimum Gates protect routine Change economics; Full Gates protect composition, integration, and release.",
+    "New architecture should deepen the Worker Execution and Coordinator Modules instead of multiplying shallow framework Modules."
+  ],
+  "referenceAcceptanceScenario": {
+    "id": "local-1-plus-3",
+    "topology": "One persistent master coordinates three replaceable local workers across two independent Modules and one Contract-dependent Module.",
+    "faults": [
+      "One worker terminates after producing a partial report.",
+      "Two workers attempt conflicting writes or incompatible Contract changes."
+    ],
+    "mustDemonstrate": [
+      "Each Work Unit has one primary Module, a bounded Context Capsule, and a capability-bound workspace lease.",
+      "The master recovers from durable structured state without replaying worker transcripts.",
+      "Independent work proceeds concurrently while path and Contract conflicts are stopped before composition.",
+      "A worker loss cannot produce Accepted state and retry does not duplicate acceptance.",
+      "The composed Accepted Change Packages pass one Full Gate against the exact integration content."
+    ]
+  },
+  "stages": [
+    {
+      "id": "S0",
+      "name": "Trusted Change Baseline",
+      "status": "achieved",
+      "outcomeRefs": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"]
+    },
+    {
+      "id": "S1",
+      "name": "Self-Proving Project Model",
+      "status": "active",
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015"]
+    },
+    {
+      "id": "S2",
+      "name": "Controlled Single-Worker Execution",
+      "status": "planned",
+      "outcomeRefs": ["LGT-020", "LGT-021", "LGT-022", "LGT-023", "LGT-024"]
+    },
+    {
+      "id": "S3",
+      "name": "Persistent Bounded-Context Coordination",
+      "status": "planned",
+      "outcomeRefs": ["LGT-030", "LGT-031", "LGT-032", "LGT-033", "LGT-034"]
+    },
+    {
+      "id": "S4",
+      "name": "Safe Local Multi-Agent Collaboration",
+      "status": "planned",
+      "outcomeRefs": ["LGT-040", "LGT-041", "LGT-042", "LGT-043", "LGT-044"]
+    },
+    {
+      "id": "S5",
+      "name": "Conditional Trust Extension",
+      "status": "conditional",
+      "outcomeRefs": ["LGT-050", "LGT-051", "LGT-052", "LGT-053"]
+    },
+    {
+      "id": "SC",
+      "name": "Continuous Core Integrity",
+      "status": "active",
+      "outcomeRefs": ["LGT-099"]
+    }
+  ],
+  "outcomes": [
+    {
+      "id": "LGT-001",
+      "stage": "S0",
+      "status": "achieved",
+      "outcome": "A repository can declare and validate its Project Model, Modules, Contracts, Gates, authorities, Assurance Boundary, and Knowledge Gaps.",
+      "dependsOn": [],
+      "acceptance": {
+        "claimRefs": ["project-model-references-are-consistent"],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Dangling Module, Contract, Claim, Gate, authority, and assurance references fail closed.",
+          "The validated model and its source files have a canonical digest."
+        ]
+      },
+      "nonGoals": ["Automatic worker execution", "A general-purpose architecture graph database"]
+    },
+    {
+      "id": "LGT-002",
+      "stage": "S0",
+      "status": "achieved",
+      "outcome": "A Change has a governed lifecycle whose Accepted Change Package binds intent, baseline, ChangeSet, Evidence, closure, authority, and exact repository content.",
+      "dependsOn": ["LGT-001"],
+      "acceptance": {
+        "claimRefs": ["change-lifecycle-requires-preconditions", "evidence-cannot-self-ratify", "accepted-package-binds-exact-content"],
+        "gapRefs": [],
+        "exitCriteria": [
+          "A worker observation cannot accept its own Change.",
+          "Stale or altered repository content invalidates acceptance.",
+          "Model amendments require durable Knowledge Closure."
+        ]
+      },
+      "nonGoals": ["Authenticated human identity", "Remote attestation"]
+    },
+    {
+      "id": "LGT-003",
+      "stage": "S0",
+      "status": "achieved",
+      "outcome": "Routine Changes use Module-focused Minimum Gates while integration uses a Full Gate against the sealed acceptance subject.",
+      "dependsOn": ["LGT-001", "LGT-002"],
+      "acceptance": {
+        "claimRefs": ["integration-requires-current-full-assurance"],
+        "gapRefs": ["minimum-selection-is-not-claim-sensitive"],
+        "exitCriteria": [
+          "A Minimum Gate selects only commands declared for the primary Module.",
+          "Integration requires current Full-Gate assurance when policy declares it.",
+          "Test count and coverage percentage are not used as trust claims."
+        ]
+      },
+      "nonGoals": ["Running every test for every edit", "Claim-level test pruning before it proves necessary"]
+    },
+    {
+      "id": "LGT-004",
+      "stage": "S0",
+      "status": "achieved",
+      "outcome": "Users can inspect the Project Model and govern Changes through an installed CLI and a bounded local Workbench.",
+      "dependsOn": ["LGT-001", "LGT-002"],
+      "acceptance": {
+        "claimRefs": ["workbench-is-loopback-and-bounded", "installed-cli-is-executable"],
+        "gapRefs": ["browser-projection-not-e2e-tested"],
+        "exitCriteria": [
+          "The packaged CLI entrypoint executes after local installation.",
+          "The HTTP interface is loopback-bound and delegates lifecycle facts to the Kernel.",
+          "Browser semantics remain explicitly provisional until independently exercised."
+        ]
+      },
+      "nonGoals": ["Hosted collaboration service", "Replacing an IDE"]
+    },
+    {
+      "id": "LGT-010",
+      "stage": "S1",
+      "status": "active",
+      "outcome": "Every ordinary Change is compiled against an active Development Outcome through an explicit, reviewable contribution, and humans can inspect how architecture Claims map to Gates, Evidence, and open Gaps.",
+      "dependsOn": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"],
+      "acceptance": {
+        "claimRefs": ["change-aligns-with-active-plan"],
+        "gapRefs": [
+          "architecture-acceptance-profile-not-projected",
+          "outcome-contribution-not-machine-validated",
+          "outcome-transition-evidence-not-machine-bound"
+        ],
+        "exitCriteria": [
+          "The Development Plan is validated, included in the frozen Governance Baseline, and exposed by Project Model inspection.",
+          "Compilation rejects missing, unknown, or non-active Outcome references when plan alignment is required.",
+          "Only selected Outcomes enter the Context Capsule and acceptance subject.",
+          "Each ordinary Change binds its primary Module and Claims to a reviewable contribution toward the selected Outcome, with any exception decided by Plan authority.",
+          "Outcome activation and achievement transitions bind exact Evidence and authority to their declared transition and exit criteria.",
+          "Project Atlas projects Outcome to Claim, Gate, current Evidence, Residual Uncertainty, and Knowledge Gap from the same fact authorities."
+        ]
+      },
+      "nonGoals": ["Issue tracker synchronization", "Automatic Outcome completion", "A generic portfolio planning tool"]
+    },
+    {
+      "id": "LGT-011",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Every governed tracked path has one explicit Module owner or an explicit ungoverned disposition, and overlapping write ownership is rejected.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["module-path-ownership-not-machine-audited"],
+        "exitCriteria": [
+          "Unknown ownership and overlapping writable ownership fail model validation.",
+          "Generated Context Capsules cannot silently inherit ambiguous paths."
+        ]
+      },
+      "nonGoals": ["Inferring ownership from commit history"]
+    },
+    {
+      "id": "LGT-012",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Project Model schemas have explicit compatibility, migration, and refusal semantics across Legatura upgrades.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Unknown incompatible schema versions fail closed.",
+          "Supported migrations preserve normative meaning and produce reviewable amendments."
+        ]
+      },
+      "nonGoals": ["Supporting every historical prerelease schema forever"]
+    },
+    {
+      "id": "LGT-013",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Assurance Runtime support boundaries for timeout, encoding, truncation, cancellation, and platforms are explicit and fail closed.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": ["command-observation-is-explicit"],
+        "gapRefs": ["subprocess-boundary-not-characterized"],
+        "exitCriteria": [
+          "Every supported process outcome is represented without losing exit, signal, timeout, stream, or truncation state.",
+          "Unsupported environments are reported as unsupported rather than treated as assured."
+        ]
+      },
+      "nonGoals": ["A distributed job runner"]
+    },
+    {
+      "id": "LGT-014",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Human-facing projections preserve Kernel and Project Model semantics through one independently exercised high-value workflow.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": ["workbench-is-loopback-and-bounded"],
+        "gapRefs": ["browser-projection-not-e2e-tested", "architecture-acceptance-profile-not-projected"],
+        "exitCriteria": [
+          "A real DOM workflow proves the displayed architecture and Change facts match the underlying APIs.",
+          "No snapshot-test wall is introduced."
+        ]
+      },
+      "nonGoals": ["Pixel-perfect visual regression testing"]
+    },
+    {
+      "id": "LGT-015",
+      "stage": "S1",
+      "status": "conditional",
+      "outcome": "Minimum verification is pruned by exact Claim obligations only when Module-focused selection is no longer the smallest high-confidence route.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["minimum-selection-is-not-claim-sensitive"],
+        "exitCriteria": [
+          "A measured workload demonstrates material avoidable cost in the Module-focused route.",
+          "Claim-sensitive selection cannot omit an Oracle required by the affected Contract delta."
+        ]
+      },
+      "nonGoals": ["Reducing command count as an end in itself"]
+    },
+    {
+      "id": "LGT-020",
+      "stage": "S2",
+      "status": "planned",
+      "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
+      "dependsOn": ["LGT-011", "LGT-012", "LGT-013", "LGT-014"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "exitCriteria": [
+          "Worker inputs, capabilities, expansions, observations, and outputs are durably represented.",
+          "The interface has at least two independent adapters before being called stable."
+        ]
+      },
+      "nonGoals": ["Worker scheduling", "Provider-specific transcript storage"]
+    },
+    {
+      "id": "LGT-021",
+      "stage": "S2",
+      "status": "planned",
+      "outcome": "A real worker consumes a materialized Context Capsule and every extra read becomes a recorded Context Expansion with recomputed impact.",
+      "dependsOn": ["LGT-020"],
+      "acceptance": {
+        "claimRefs": ["context-capsule-cannot-broaden-scope"],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Initial context is bounded and independently reproducible.",
+          "Out-of-capsule reads cannot become silent coordination knowledge."
+        ]
+      },
+      "nonGoals": ["Sending the whole repository to every worker"]
+    },
+    {
+      "id": "LGT-022",
+      "stage": "S2",
+      "status": "planned",
+      "outcome": "Each worker receives an isolated workspace lease and an explicit capability profile that blocks out-of-scope writes and distinguishes observed from enforced controls.",
+      "dependsOn": ["LGT-011", "LGT-013", "LGT-020"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "exitCriteria": [
+          "Out-of-scope writes are prevented at the execution boundary.",
+          "The system never describes same-user process conventions as an OS sandbox."
+        ]
+      },
+      "nonGoals": ["Universal container orchestration"]
+    },
+    {
+      "id": "LGT-023",
+      "stage": "S2",
+      "status": "planned",
+      "outcome": "The Worker Execution Interface has one deterministic scripted adapter and one real agent adapter with identical trust semantics.",
+      "dependsOn": ["LGT-021", "LGT-022"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Adapter failure, timeout, truncation, or disappearance fails closed.",
+          "Provider-specific details do not leak into the Kernel acceptance model."
+        ]
+      },
+      "nonGoals": ["An agent marketplace", "Supporting many providers before the seam is proven"]
+    },
+    {
+      "id": "LGT-024",
+      "stage": "S2",
+      "status": "planned",
+      "outcome": "One real bounded worker can complete intent-to-acceptance locally through the existing Kernel without acquiring decision authority.",
+      "dependsOn": ["LGT-023"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "exitCriteria": [
+          "A worker crash cannot create Accepted state.",
+          "The Execution Record explains supplied context and capabilities plus produced artifacts.",
+          "Human authority accepts the exact Kernel package, not an agent summary."
+        ]
+      },
+      "nonGoals": ["Master coordination", "Parallel execution"]
+    },
+    {
+      "id": "LGT-030",
+      "stage": "S3",
+      "status": "planned",
+      "outcome": "A multi-Module intent deterministically compiles into a dependency-aware Work Graph whose Work Units each have one primary Module.",
+      "dependsOn": ["LGT-024"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Equivalent governed inputs produce the same Work Graph semantics.",
+          "Contract dependencies and blocked prerequisites are explicit before execution."
+        ]
+      },
+      "nonGoals": ["LLM-authored decomposition as an unreviewed fact authority"]
+    },
+    {
+      "id": "LGT-031",
+      "stage": "S3",
+      "status": "planned",
+      "outcome": "An Artifact Ledger stores content-addressed worker detail while structured Worker Reports expose only decisions, deltas, blockers, risks, and drill-down references.",
+      "dependsOn": ["LGT-020", "LGT-030"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Coordinator state remains bounded as worker transcript size grows.",
+          "Every summarized fact can be traced to an immutable detailed artifact."
+        ]
+      },
+      "nonGoals": ["Using chat transcripts as the durable event model"]
+    },
+    {
+      "id": "LGT-032",
+      "stage": "S3",
+      "status": "planned",
+      "outcome": "A persistent Coordinator state machine dispatches ready Work Units from governed dependencies, capabilities, Evidence state, and Knowledge Gaps without becoming an Oracle or Decision Authority.",
+      "dependsOn": ["LGT-030", "LGT-031"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Scheduling reasons are reconstructed from durable structured facts.",
+          "Coordinator policy cannot waive Evidence or accept worker output."
+        ]
+      },
+      "nonGoals": ["Autonomous product prioritization"]
+    },
+    {
+      "id": "LGT-033",
+      "stage": "S3",
+      "status": "planned",
+      "outcome": "A bounded Coordination Snapshot gives humans and the master the same view of goals, graph state, Contract deltas, Evidence gaps, conflicts, and pending decisions.",
+      "dependsOn": ["LGT-031", "LGT-032"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "The top-level snapshot is sufficient to choose the next dispatch or escalation.",
+          "Detailed source, logs, and conversations are loaded only by referenced drill-down."
+        ]
+      },
+      "nonGoals": ["A general observability dashboard"]
+    },
+    {
+      "id": "LGT-034",
+      "stage": "S3",
+      "status": "planned",
+      "outcome": "Coordinator replay is deterministic and idempotent enough to recover after restart without transcript replay, duplicate dispatch, or duplicate acceptance.",
+      "dependsOn": ["LGT-032", "LGT-033"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Restart resumes the same ready, running, blocked, and done semantics.",
+          "Repeated reports and commands do not fork accepted state."
+        ]
+      },
+      "nonGoals": ["Geo-replicated consensus"]
+    },
+    {
+      "id": "LGT-040",
+      "stage": "S4",
+      "status": "planned",
+      "outcome": "Independent Work Units run concurrently in isolated local workspaces with capability-bound leases.",
+      "dependsOn": ["LGT-022", "LGT-034"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Disjoint Module work proceeds concurrently without sharing mutable workspaces.",
+          "Lease cancellation and expiry stop further authorized mutation."
+        ]
+      },
+      "nonGoals": ["Remote worker fleets"]
+    },
+    {
+      "id": "LGT-041",
+      "stage": "S4",
+      "status": "planned",
+      "outcome": "Composition detects path overlap, Contract incompatibility, and downstream baseline invalidation before merge.",
+      "dependsOn": ["LGT-030", "LGT-040"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Conflicting writes cannot silently compose.",
+          "Accepted Contract amendments force dependent work to recompile against the new baseline."
+        ]
+      },
+      "nonGoals": ["Automatically resolving semantic conflicts"]
+    },
+    {
+      "id": "LGT-042",
+      "stage": "S4",
+      "status": "planned",
+      "outcome": "An integration queue composes compatible Accepted Change Packages and binds the result to one exact Full-Gate subject.",
+      "dependsOn": ["LGT-041"],
+      "acceptance": {
+        "claimRefs": ["integration-requires-current-full-assurance"],
+        "gapRefs": [],
+        "exitCriteria": [
+          "Only compatible sealed packages enter composition.",
+          "The final Full Gate runs once against the exact composed content before integration."
+        ]
+      },
+      "nonGoals": ["Replacing Git hosting pull requests"]
+    },
+    {
+      "id": "LGT-043",
+      "stage": "S4",
+      "status": "planned",
+      "outcome": "Cancellation, retry, idempotency, and worker-loss semantics prevent duplicate effects or ambiguous terminal states.",
+      "dependsOn": ["LGT-032", "LGT-040"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "A lost worker leaves explicit recoverable state.",
+          "Duplicate reports, retries, and late arrivals cannot duplicate acceptance or integration."
+        ]
+      },
+      "nonGoals": ["Infinite automatic retry"]
+    },
+    {
+      "id": "LGT-044",
+      "stage": "S4",
+      "status": "planned",
+      "outcome": "The local 1+3 reference scenario proves the complete trusted collaboration architecture and defines core product completion.",
+      "dependsOn": ["LGT-042", "LGT-043"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": [
+          "All reference scenario mustDemonstrate statements are supported by exact Evidence.",
+          "Removing worker transcripts does not prevent recovery, coordination explanation, or acceptance audit.",
+          "No worker or Coordinator can self-ratify."
+        ]
+      },
+      "nonGoals": ["Cloud multi-tenancy", "Crashbench as a core dependency"]
+    },
+    {
+      "id": "LGT-050",
+      "stage": "S5",
+      "status": "conditional",
+      "outcome": "Authority identities and decisions can be authenticated and cryptographically bound when multi-user trust becomes a real requirement.",
+      "dependsOn": ["LGT-044"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "exitCriteria": ["A concrete multi-user threat model exists before activation.", "Forged local identity assertions are rejected."]
+      },
+      "nonGoals": ["Building identity infrastructure before a consumer exists"]
+    },
+    {
+      "id": "LGT-051",
+      "stage": "S5",
+      "status": "conditional",
+      "outcome": "Remote execution has authenticated transport, result attestation, and explicit trust boundaries.",
+      "dependsOn": ["LGT-050"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "exitCriteria": ["A concrete remote-worker use case and threat model exist before activation.", "Unattested remote observations cannot become trusted Evidence."]
+      },
+      "nonGoals": ["Generic cloud compute orchestration"]
+    },
+    {
+      "id": "LGT-052",
+      "stage": "S5",
+      "status": "conditional",
+      "outcome": "Network, secret, and external-tool capabilities are policy-bound and auditable for remote or privileged workers.",
+      "dependsOn": ["LGT-051"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": ["Capabilities default closed and are lease-scoped.", "Secret and network use is visible in the Execution Record without exposing secret values."]
+      },
+      "nonGoals": ["A universal secrets manager"]
+    },
+    {
+      "id": "LGT-053",
+      "stage": "S5",
+      "status": "conditional",
+      "outcome": "A durable multi-user daemon enforces project authority and coordination policy across authenticated users.",
+      "dependsOn": ["LGT-050", "LGT-051", "LGT-052"],
+      "acceptance": {
+        "claimRefs": [],
+        "gapRefs": [],
+        "exitCriteria": ["A concrete concurrent multi-user workflow exists before activation.", "Restart and concurrent decisions preserve one authoritative state history."]
+      },
+      "nonGoals": ["General SaaS project management"]
+    },
+    {
+      "id": "LGT-099",
+      "stage": "SC",
+      "status": "active",
+      "kind": "integrity-maintenance",
+      "outcome": "The achieved trusted core remains usable and its security, data, acceptance, exact-binding, and fail-closed invariants do not regress while the roadmap advances.",
+      "dependsOn": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"],
+      "allowedChangeKinds": [
+        "regression-repair",
+        "security-containment",
+        "data-integrity-repair",
+        "acceptance-integrity-repair",
+        "entrypoint-restoration"
+      ],
+      "acceptance": {
+        "claimRefs": [
+          "repository-binding-is-content-exact",
+          "repository-binding-fails-closed",
+          "command-observation-is-explicit",
+          "change-lifecycle-requires-preconditions",
+          "evidence-cannot-self-ratify",
+          "accepted-package-binds-exact-content",
+          "integration-requires-current-full-assurance",
+          "workbench-is-loopback-and-bounded",
+          "installed-cli-is-executable",
+          "project-model-references-are-consistent",
+          "context-capsule-cannot-broaden-scope",
+          "unrelated-claims-require-explicit-mapping",
+          "change-aligns-with-active-plan"
+        ],
+        "gapRefs": [],
+        "exitCriteria": [
+          "The Change binds the violated achieved Claim to complete failed Evidence and contains the smallest durable repair.",
+          "Existing Evidence and authority requirements remain in force; urgency grants no waiver.",
+          "Any structural follow-up becomes a normal planned Outcome before feature work resumes."
+        ]
+      },
+      "nonGoals": ["Feature delivery", "Convenience refactoring", "Deadline-driven reprioritization"]
+    }
+  ],
+  "changeRules": {
+    "planBeforeImplementation": "A new or materially changed Outcome uses a plan-amendment Change that can touch only .legatura/** and cannot reference the plan it edits; implementation follows in a later Change against the accepted baseline.",
+    "stableIds": "Outcome ids are never reused or renamed; retired Outcomes remain as historical records with reasons and replacements.",
+    "activation": "Only Outcomes with satisfied dependencies may become active. Conditional Outcomes also require the activation condition in their acceptance criteria to be evidenced.",
+    "completion": "Normative rule: an active Outcome becomes achieved only through authority review of Evidence against every exit criterion and disposition of referenced Knowledge Gaps. Machine binding of that transition is an open LGT-010 gap.",
+    "frozenBaseline": "A Change is compiled and accepted against its frozen Governance Baseline; editing the plan during that Change cannot authorize it.",
+    "implementationTracking": "Issues, pull requests, files, task plans, and agent conversations reference Outcomes but never become the Development Plan."
+  },
+  "excluded": [
+    {
+      "capability": "Crashbench",
+      "reason": "Operational fault collection and attack replay are separate adapters. Reconsider only after Execution Record, Artifact Ledger, and replay semantics are stable; it is not a core S4 dependency."
+    },
+    {
+      "capability": "Agent marketplace and broad provider matrix",
+      "reason": "Adapters prove a stable Worker Execution seam; adapter count is not a product outcome."
+    },
+    {
+      "capability": "Generic CI, cloud hosting, and model ranking",
+      "reason": "These do not establish the local trusted-change architecture and remain external integrations."
+    }
+  ]
+}

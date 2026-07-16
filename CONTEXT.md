@@ -8,6 +8,14 @@ Legatura governs software changes made by replaceable workers while preserving p
 The governed unit that binds an intent, a baseline, a ChangeSet, verification obligations, evidence, decisions, and residual uncertainty.
 _Avoid_: Task, agent run, chat
 
+**Change Kind**:
+The governance class that distinguishes ordinary implementation, an isolated Development Plan amendment, and a repair of a named existing integrity Claim.
+_Avoid_: Priority, ticket type
+
+**Integrity Target**:
+The existing protected Claim and content-bound failed Evidence that justify using the continuous core-integrity Outcome instead of a capability Outcome.
+_Avoid_: Bug label, maintenance bucket
+
 **ChangeSet**:
 The exact repository content difference observed for a Change, including both committed and uncommitted paths.
 _Avoid_: Agent output, claimed patch
@@ -15,6 +23,14 @@ _Avoid_: Agent output, claimed patch
 **Project Model**:
 The versioned, machine-consumed account of a repository's Modules, Contracts, Gates, authorities, assurance coverage, and known gaps.
 _Avoid_: Documentation bundle, prompt
+
+**Development Plan**:
+The normative sequence of durable Outcomes that constrains which new capabilities the repository may pursue and what Evidence exits each stage.
+_Avoid_: Roadmap, backlog, wishlist
+
+**Development Outcome**:
+A stable, dependency-aware capability or uncertainty closure whose active status can authorize a Change and whose exit criteria require Evidence.
+_Avoid_: Task, issue, milestone, implementation step
 
 **Project Atlas**:
 The human-readable projection of the Project Model and scanned repository facts.
@@ -29,7 +45,7 @@ The declared limit of what the Project Model can currently govern, classified as
 _Avoid_: Coverage percentage
 
 **Context Capsule**:
-The smallest authorized initial view that gives a worker the target Module, public Contracts, relevant decisions, and verification obligations.
+The smallest authorized initial view that gives a worker the selected Development Outcomes, target Module, public Contracts, relevant durable knowledge, and read/write scope. The Change carries Verification Obligations separately.
 _Avoid_: Prompt dump, complete context
 
 **Context Expansion**:

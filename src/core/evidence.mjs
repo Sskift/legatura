@@ -376,6 +376,15 @@ export function readExpectedAuthorities(model, change) {
     const id = typeof authority === "string" ? authority : readString(authority?.id);
     if (id) declared.add(id);
   }
+  const selectedOutcomeIds = new Set(Array.isArray(change.planRefs) ? change.planRefs : []);
+  const usesIntegrityOutcome = Array.isArray(model.plan?.outcomes)
+    && model.plan.outcomes.some((outcome) => (
+      selectedOutcomeIds.has(outcome?.id) && outcome?.kind === "integrity-maintenance"
+    ));
+  if (change.changeKind === "plan-amendment" || usesIntegrityOutcome) {
+    const planAuthority = readString(model.plan?.authority);
+    return planAuthority ? [planAuthority] : [];
+  }
   const primaryModule = model.modules.find((module) => module.id === change.primaryModule);
   const moduleAuthority = readString(primaryModule?.decisionAuthority)
     ?? readString(primaryModule?.authority);

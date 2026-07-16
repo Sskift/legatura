@@ -34,6 +34,30 @@
       "expansionTrigger": "Before Local Workbench becomes governed."
     },
     {
+      "id": "architecture-acceptance-profile-not-projected",
+      "status": "open",
+      "affects": ["project-model", "local-workbench"],
+      "owner": "governance-maintainer",
+      "statement": "The Development Plan and Change alignment are machine-readable, but Project Atlas does not yet project Outcome to Claim, Gate, Evidence, Residual Uncertainty, and Knowledge Gap as one architecture acceptance profile.",
+      "expansionTrigger": "Before LGT-010 can become achieved."
+    },
+    {
+      "id": "outcome-contribution-not-machine-validated",
+      "status": "open",
+      "affects": ["project-model", "change-kernel", "local-workbench"],
+      "owner": "governance-maintainer",
+      "statement": "A Change must reference an active Outcome, but it does not yet bind its Module and Claims to a specific Outcome exit contribution or require Plan authority for an explicit exception.",
+      "expansionTrigger": "Before LGT-010 can become achieved or plan alignment is described as substantive contribution proof."
+    },
+    {
+      "id": "outcome-transition-evidence-not-machine-bound",
+      "status": "open",
+      "affects": ["project-model", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "Development Outcome activation, achievement, and conditional activation are normative plan edits but are not yet machine-bound to exact Evidence for their transition criteria.",
+      "expansionTrigger": "Before any post-bootstrap Outcome can become achieved or a conditional Outcome can become active."
+    },
+    {
       "id": "worker-and-identity-trust-opaque",
       "status": "open",
       "affects": ["change-kernel", "worker-execution", "identity-provider"],

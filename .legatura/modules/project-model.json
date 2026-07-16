@@ -3,7 +3,7 @@
   "id": "project-model",
   "name": "Project Model Compiler",
   "status": "governed",
-  "summary": "Validates durable project truth and compiles it into bounded worker context and verification obligations.",
+  "summary": "Validates durable project truth and its Development Plan, then compiles them into bounded worker context and verification obligations.",
   "factAuthority": "project-model-facts",
   "decisionAuthority": "governance-maintainer",
   "interface": {
@@ -16,7 +16,8 @@
     "invariants": [
       "Dependencies are visible only through owned Contracts.",
       "A supplied Context Capsule may narrow but never broaden generated scope.",
-      "Unrelated Claims require an explicit authority-bound mapping."
+      "Unrelated Claims require an explicit authority-bound mapping.",
+      "An ordinary Change cannot compile against a missing, unknown, or non-active Development Outcome."
     ]
   },
   "paths": {
@@ -27,6 +28,7 @@
       "CONTEXT.md",
       "TESTING.md",
       ".legatura/project.json",
+      ".legatura/plan.json",
       ".legatura/knowledge-gaps.json",
       ".legatura/.gitignore",
       ".legatura/gates/minimum.json",

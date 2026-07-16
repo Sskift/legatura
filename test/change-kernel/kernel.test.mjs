@@ -6,6 +6,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createKernel, EVIDENCE_FIELDS } from "../../src/core/index.mjs";
+import { canonicalDigest } from "../../src/core/canonical.mjs";
+import { readExpectedAuthorities } from "../../src/core/evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,8 +25,9 @@ test("inspectProject exposes validated Project Model and repository state", asyn
   assert.equal(inspection.modules[0].status, "governed");
 });
 
-test("a Context Capsule can read focused tests without granting write access to them", async () => {
+test("plan alignment injects only an active Outcome into bounded Context", async () => {
   const fixture = await createFixture();
+  await enablePlanPolicy(fixture.repoPath);
   const kernel = createKernel({ repoPath: fixture.repoPath });
   const change = await kernel.createChange({
     title: "Expose verification context without broadening capability",
@@ -32,14 +35,156 @@ test("a Context Capsule can read focused tests without granting write access to 
     claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
   });
 
-  const compiled = await kernel.compileChange(change.id);
+  await assert.rejects(
+    kernel.compileChange(change.id),
+    (error) => error.code === "CHANGE_PLAN_REF_REQUIRED"
+      && error.details.activeOutcomeIds.includes("LGT-900")
+  );
+  await assert.rejects(
+    kernel.compileChange(change.id, { planRefs: ["LGT-missing"] }),
+    (error) => error.code === "CHANGE_PLAN_REF_UNKNOWN"
+  );
+  await assert.rejects(
+    kernel.compileChange(change.id, { planRefs: ["LGT-901"] }),
+    (error) => error.code === "CHANGE_PLAN_REF_NOT_ACTIVE"
+      && error.details.inactive[0].status === "planned"
+  );
 
+  const compiled = await kernel.compileChange(change.id, {
+    planRefs: ["LGT-900"]
+  });
+
+  assert.deepEqual(compiled.planRefs, ["LGT-900"]);
+  assert.deepEqual(compiled.contextCapsule.planOutcomes.map((outcome) => outcome.id), ["LGT-900"]);
+  assert.deepEqual(readExpectedAuthorities(compiled.governanceBaseline, compiled), ["module-maintainer"]);
   assert.ok(compiled.contextCapsule.scope.read.include.includes("test/core/**"));
   assert.ok(!compiled.contextCapsule.scope.write.include.includes("test/core/**"));
   assert.deepEqual(compiled.contextCapsule.module.focusedTests, [{
     path: "test/core/**",
     command: "node --test test/core"
   }]);
+});
+
+test("integrity maintenance requires content-exact failed Evidence and Plan authority", async () => {
+  const fixture = await createFixture();
+  await enablePlanPolicy(fixture.repoPath);
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const change = await kernel.createChange({
+    title: "Repair an observed governed regression",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
+  });
+  await assert.rejects(
+    kernel.compileChange(change.id, { planRefs: ["LGT-999"] }),
+    (error) => error.code === "CHANGE_INTEGRITY_CHANNEL_MISUSED"
+  );
+  await assert.rejects(
+    kernel.compileChange(change.id, { changeKind: "regression-repair", planRefs: ["LGT-999"] }),
+    (error) => error.code === "CHANGE_INTEGRITY_TARGET_REQUIRED"
+  );
+
+  const integrityTarget = {
+    claimRef: "behavior-correct",
+    failureEvidenceRef: "integrity-failure-observation"
+  };
+  await assert.rejects(
+    kernel.compileChange(change.id, {
+      changeKind: "regression-repair",
+      planRefs: ["LGT-999"],
+      integrityTarget,
+      evidence: [createIntegrityFailureEvidence({ status: "passed" })]
+    }),
+    (error) => error.code === "CHANGE_INTEGRITY_FAILURE_EVIDENCE_INVALID"
+      && error.details.problems.includes("observation-not-failed")
+  );
+  const repair = await kernel.compileChange(change.id, {
+    changeKind: "regression-repair",
+    planRefs: ["LGT-999"],
+    integrityTarget,
+    evidence: [createIntegrityFailureEvidence()]
+  });
+  assert.match(repair.integrityTarget.failureEvidenceDigest, /^sha256:[a-f0-9]{64}$/u);
+  assert.deepEqual(readExpectedAuthorities(repair.governanceBaseline, repair), ["project-maintainer"]);
+
+  const inspection = await kernel.inspectProject();
+  const builtinEvidenceId = `evidence-project-model-${canonicalDigest({
+    model: inspection.digest,
+    git: inspection.git.contentDigest
+  }).slice("sha256:".length, "sha256:".length + 16)}`;
+  await kernel.compileChange(change.id, {
+    changeKind: "regression-repair",
+    planRefs: ["LGT-999"],
+    integrityTarget: { claimRef: "behavior-correct", failureEvidenceRef: builtinEvidenceId },
+    evidence: [createIntegrityFailureEvidence({ id: builtinEvidenceId })]
+  });
+  await assert.rejects(
+    kernel.runGate(change.id, "minimum"),
+    (error) => error.code === "CHANGE_INTEGRITY_FAILURE_EVIDENCE_INVALID"
+      && error.details.problems.includes("failure-evidence-digest-mismatch")
+  );
+});
+
+test("plan amendments preserve history, isolate implementation, and use Plan authority", async () => {
+  const fixture = await createFixture();
+  await enablePlanPolicy(fixture.repoPath);
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+
+  const planPath = path.join(fixture.repoPath, ".legatura/plan.json");
+  const plan = JSON.parse(await readFile(planPath, "utf8"));
+  const historyChange = await kernel.createChange({
+    title: "Preserve permanent Outcome identity across amendments",
+    changeKind: "plan-amendment",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
+  });
+  assert.deepEqual(readExpectedAuthorities(historyChange.governanceBaseline, historyChange), ["project-maintainer"]);
+  const renamedPlan = JSON.parse(JSON.stringify(plan));
+  renamedPlan.outcomes.find((outcome) => outcome.id === "LGT-901").id = "LGT-902";
+  renamedPlan.stages[0].outcomeRefs = renamedPlan.stages[0].outcomeRefs
+    .map((outcomeId) => outcomeId === "LGT-901" ? "LGT-902" : outcomeId);
+  await writeJson(planPath, renamedPlan);
+  await assert.rejects(
+    kernel.compileChange(historyChange.id),
+    (error) => error.code === "PLAN_HISTORY_REWRITE_FORBIDDEN"
+      && error.details.removedOutcomeIds.includes("LGT-901")
+  );
+  await writeJson(planPath, plan);
+
+  const amendedPlan = JSON.parse(JSON.stringify(plan));
+  amendedPlan.northStar = `${amendedPlan.northStar} Plan amendment under review.`;
+  await writeJson(planPath, amendedPlan);
+  const planCompiled = await kernel.compileChange(historyChange.id, {
+    knowledgeClosure: {
+      status: "complete",
+      entries: [{
+        kind: "model-amendment",
+        refs: [".legatura/plan.json"],
+        statement: "The fixture Development Plan records an independently reviewed clarification.",
+        rationale: "Future Changes must inherit the clarified North Star from durable project truth."
+      }]
+    },
+    authorityDecision: {
+      status: "approved",
+      authority: "project-maintainer",
+      decidedBy: "maintainer@example.test",
+      decisionType: "normative-amendment",
+      rationale: "Approve the isolated Development Plan clarification.",
+      amendmentRefs: [".legatura/plan.json"]
+    }
+  });
+  assert.equal(planCompiled.state, "Submitted");
+  const planGate = await kernel.runGate(historyChange.id, "minimum");
+  assert.equal(planGate.change.state, "EvidenceReady");
+
+  await writeFile(path.join(fixture.repoPath, "src/index.mjs"), "export const value = false;\n");
+  await assert.rejects(
+    kernel.acceptChange(historyChange.id),
+    (error) => error.code === "PLAN_AMENDMENT_IMPLEMENTATION_MIXED"
+      && error.details.implementationPaths.includes("src/index.mjs")
+  );
+  await writeFile(path.join(fixture.repoPath, "src/index.mjs"), "export const value = true;\n");
+  const acceptedPlan = await kernel.acceptChange(historyChange.id);
+  assert.equal(acceptedPlan.state, "Accepted");
 });
 
 test("minimum Gate execution selects only commands for the primary Module", async () => {
@@ -330,6 +475,99 @@ async function createFixture() {
   await git(repoPath, "add", ".");
   await git(repoPath, "commit", "-qm", "fixture");
   return { repoPath };
+}
+
+async function enablePlanPolicy(repoPath) {
+  const projectPath = path.join(repoPath, ".legatura/project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  const planAuthority = project.authorities.decision.find((authority) => authority.id === "project-maintainer");
+  planAuthority.may = [...new Set([...(planAuthority.may ?? []), "normative-amendment"])];
+  project.authorities.decision.push({ id: "module-maintainer", may: ["case-decision", "normative-amendment"] });
+  project.changePolicy.requirePlanRefs = true;
+  await writeJson(projectPath, project);
+  const modulePath = path.join(repoPath, ".legatura/modules/core.json");
+  const module = JSON.parse(await readFile(modulePath, "utf8"));
+  module.decisionAuthority = "module-maintainer";
+  await writeJson(modulePath, module);
+  await writeJson(path.join(repoPath, ".legatura/plan.json"), {
+    schemaVersion: 1,
+    id: "fixture-plan",
+    authority: "project-maintainer",
+    northStar: "Every Change advances an explicit trusted Outcome.",
+    stages: [{
+      id: "S1",
+      name: "Fixture Stage",
+      status: "active",
+      outcomeRefs: ["LGT-900", "LGT-901", "LGT-999"]
+    }],
+    outcomes: [
+      {
+        id: "LGT-900",
+        stage: "S1",
+        status: "active",
+        outcome: "The fixture Change receives only its active capability Outcome.",
+        dependsOn: [],
+        acceptance: {
+          claimRefs: ["behavior-correct"],
+          gapRefs: [],
+          exitCriteria: ["The active fixture Outcome is injected into the Context Capsule."]
+        }
+      },
+      {
+        id: "LGT-901",
+        stage: "S1",
+        status: "planned",
+        outcome: "A planned fixture capability cannot authorize implementation.",
+        dependsOn: ["LGT-900"],
+        acceptance: {
+          claimRefs: ["behavior-correct"],
+          gapRefs: [],
+          exitCriteria: ["The planned fixture Outcome must be activated before use."]
+        }
+      },
+      {
+        id: "LGT-999",
+        stage: "S1",
+        status: "active",
+        kind: "integrity-maintenance",
+        outcome: "Existing fixture trust Claims remain intact.",
+        dependsOn: [],
+        allowedChangeKinds: ["regression-repair"],
+        acceptance: {
+          claimRefs: ["behavior-correct"],
+          gapRefs: [],
+          exitCriteria: ["A repair names the protected Claim and its concrete observed failure."]
+        }
+      }
+    ]
+  });
+  await git(repoPath, "add", ".legatura/project.json", ".legatura/plan.json", ".legatura/modules/core.json");
+  await git(repoPath, "commit", "-qm", "enable plan policy");
+}
+
+function createIntegrityFailureEvidence({ id = "integrity-failure-observation", status = "failed" } = {}) {
+  return {
+    id,
+    claim: { id: "behavior-correct", statement: "The governed behavior remains correct." },
+    oracle: {
+      kind: "reported-fixture-regression",
+      description: "A concrete pre-repair fixture observation distinguishes the regression from expected behavior."
+    },
+    observation: {
+      status,
+      detail: "The governed fixture behavior returned an incorrect result."
+    },
+    provenance: {
+      kind: "reported-incident",
+      source: "fixture-incident",
+      observedAt: "2026-07-16T00:00:00.000Z"
+    },
+    applicability: { module: "core", phase: "pre-repair" },
+    discriminatoryPower: {
+      rejects: ["Classifying an unobserved feature request as a regression repair."]
+    },
+    residualUncertainty: ["The fixture incident report is not itself proof that the repair succeeds."]
+  };
 }
 
 async function writeJson(filePath, value) {

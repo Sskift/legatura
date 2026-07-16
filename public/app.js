@@ -14,6 +14,14 @@ const state = {
 
 const $ = (selector) => document.querySelector(selector);
 
+const integrityChangeKinds = new Set([
+  "regression-repair",
+  "security-containment",
+  "data-integrity-repair",
+  "acceptance-integrity-repair",
+  "entrypoint-restoration",
+]);
+
 const elements = {
   connection: $("#connection-state"),
   globalMessage: $("#global-message"),
@@ -256,6 +264,11 @@ function statusLabel(status) {
     passed: "已通过",
     failed: "未通过",
     pending: "待处理",
+    active: "进行中",
+    achieved: "已达成",
+    planned: "计划中",
+    conditional: "条件式",
+    retired: "已退役",
     ready: "就绪",
     configured: "已配置",
     healthy: "健康",
@@ -611,6 +624,40 @@ function projectContracts(project = state.project) {
   return Array.isArray(contracts) ? contracts : [];
 }
 
+function projectPlan(project = state.project) {
+  return firstPresent(project?.plan, project?.projectModel?.plan);
+}
+
+function activePlanOutcomes(project = state.project) {
+  return asArray(projectPlan(project)?.outcomes).filter(
+    (outcome) => normalizeStatus(outcome?.status) === "active",
+  );
+}
+
+function planRefsRequired(project = state.project) {
+  return project?.projectDocument?.changePolicy?.requirePlanRefs === true;
+}
+
+function selectedChangeKind() {
+  return $("#new-change-kind")?.value || "implementation";
+}
+
+function selectablePlanOutcomes(project = state.project, changeKind = selectedChangeKind()) {
+  if (changeKind === "plan-amendment") return [];
+  return activePlanOutcomes(project).filter((outcome) => {
+    if (integrityChangeKinds.has(changeKind)) {
+      return outcome.kind === "integrity-maintenance"
+        && asArray(outcome.allowedChangeKinds).includes(changeKind);
+    }
+    return outcome.kind !== "integrity-maintenance";
+  });
+}
+
+function outcomeRequired(project = state.project, changeKind = selectedChangeKind()) {
+  return changeKind !== "plan-amendment"
+    && (planRefsRequired(project) || integrityChangeKinds.has(changeKind));
+}
+
 function renderProjectState() {
   elements.projectLoading.hidden = !state.projectLoading;
   elements.projectError.hidden = !state.projectError;
@@ -651,10 +698,12 @@ function renderProject(project) {
 
   renderBoundary(project);
   renderProjectGateHealth(project);
+  renderDevelopmentPlan(project);
   renderModules(project);
   renderKnowledgeGaps(project);
   renderProjectGates(project);
   renderCreateModuleOptions(project);
+  renderCreatePlanOptions(project);
 }
 
 function governedModules(project = state.project) {
@@ -692,6 +741,51 @@ function renderCreateModuleOptions(project = state.project) {
     ? "一个 Change 只选择一个主要职责边界；跨模块影响会在编译后显式展开。"
     : "项目模型中没有 Governed 模块，暂时无法创建受治理的变更。";
   renderCreateClaimOptions(select.value, project);
+}
+
+function renderCreatePlanOptions(project = state.project) {
+  const select = $("#new-change-plan-ref");
+  if (!select) return;
+  const previous = select.value;
+  const changeKind = selectedChangeKind();
+  const integrityRepair = integrityChangeKinds.has(changeKind);
+  const outcomes = selectablePlanOutcomes(project, changeKind);
+  const required = outcomeRequired(project, changeKind);
+  const failureField = $("#integrity-failure-field");
+  const failureInput = $("#new-change-observed-failure");
+  failureField.hidden = !integrityRepair;
+  failureInput.required = integrityRepair;
+  if (!integrityRepair) failureInput.value = "";
+  clear(select);
+  if (changeKind === "plan-amendment") {
+    select.append(createElement("option", { value: "", text: "计划修订不引用 Outcome" }));
+    select.disabled = true;
+    $("#new-change-plan-ref-help").textContent = "计划修订由治理 Authority 授权，不能使用正在编辑的计划自我授权。";
+    return;
+  }
+  select.append(createElement("option", {
+    value: "",
+    text: outcomes.length
+      ? required ? "请选择本次 Change 推进的 Outcome" : "不绑定长期 Outcome"
+      : "没有 active Outcome",
+  }));
+  for (const outcome of outcomes) {
+    const id = String(outcome.id);
+    const detail = String(firstPresent(outcome.outcome, outcome.summary, outcome.title, ""));
+    select.append(createElement("option", {
+      value: id,
+      text: detail ? `${id} · ${detail}` : id,
+    }));
+  }
+  if (outcomes.some((outcome) => String(outcome.id) === previous)) select.value = previous;
+  select.disabled = outcomes.length === 0;
+  $("#new-change-plan-ref-help").textContent = outcomes.length
+    ? required
+      ? "必须选择冻结 Governance Baseline 中的 active Outcome；planned Outcome 需先独立激活。"
+      : "项目未强制对齐，但可以显式记录这次 Change 推进的 active Outcome。"
+    : required
+      ? "计划策略要求对齐，但当前没有 active Outcome；Project Model 应停止变更创建。"
+      : "项目尚未声明可选的 active Outcome。";
 }
 
 function renderCreateClaimOptions(moduleId, project = state.project) {
@@ -911,6 +1005,23 @@ function renderProjectGates(project) {
   renderItemList($("#project-gates"), gates, { fallbackTitle: "未命名门禁" });
 }
 
+function renderDevelopmentPlan(project) {
+  const plan = projectPlan(project);
+  const outcomes = activePlanOutcomes(project);
+  $("#plan-active-count").textContent = `${outcomes.length} active`;
+  $("#plan-north-star").textContent = toDisplayText(plan?.northStar) || "尚未声明长期 North Star。";
+  $("#active-plan-outcomes-empty").hidden = outcomes.length > 0;
+  renderItemList(
+    $("#active-plan-outcomes"),
+    outcomes.map((outcome) => ({
+      title: outcome.id,
+      description: outcome.outcome,
+      status: outcome.status,
+    })),
+    { fallbackTitle: "未命名 Outcome" },
+  );
+}
+
 function renderChangesState() {
   elements.changesLoading.hidden = !state.changesLoading;
   elements.changesError.hidden = !state.changesError;
@@ -986,6 +1097,10 @@ function renderSelectedChange(change) {
   $("#change-id").textContent = id ? `CHANGE · ${shortIdentifier(id, 18)}` : "";
   setPill($("#change-status"), firstPresent(change.status, change.state, change.phase));
   $("#change-title").textContent = changeTitle(change);
+  const planRefs = asArray(firstPresent(change.planRefs, change.planRef)).map(toDisplayText).filter(Boolean);
+  const planRef = $("#change-plan-ref");
+  planRef.hidden = planRefs.length === 0;
+  planRef.textContent = planRefs.length ? `OUTCOME · ${planRefs.join("、")}` : "";
   const summary = firstPresent(change.summary, change.intent?.detail);
   $("#change-summary").hidden = !summary;
   $("#change-summary").textContent = toDisplayText(summary);
@@ -1555,15 +1670,24 @@ function knowledgeClosureComplete(change = state.selectedChange) {
 }
 
 function decisionAuthorities(project = state.project, change = state.selectedChange) {
-  const module = projectModules(project || {}).find(
+  const governance = change?.governanceBaseline ?? project ?? {};
+  const selectedOutcomeIds = new Set(asArray(change?.planRefs).map((ref) => String(ref)));
+  const usesIntegrityOutcome = asArray(projectPlan(governance)?.outcomes).some((outcome) => (
+    selectedOutcomeIds.has(String(outcome?.id)) && outcome?.kind === "integrity-maintenance"
+  ));
+  if (change?.changeKind === "plan-amendment" || usesIntegrityOutcome) {
+    const planAuthority = toDisplayText(projectPlan(governance)?.authority);
+    return planAuthority ? [planAuthority] : [];
+  }
+  const module = projectModules(governance).find(
     (item) => String(firstPresent(item.id, item.name)) === String(change?.primaryModule),
   );
   const moduleAuthority = firstPresent(module?.decisionAuthority, module?.authority);
   if (moduleAuthority) return [toDisplayText(moduleAuthority)];
   const declared = firstPresent(
-    project?.projectDocument?.authorities?.decision,
-    project?.project?.authorities?.decision,
-    project?.authorities?.decision,
+    governance?.projectDocument?.authorities?.decision,
+    governance?.project?.authorities?.decision,
+    governance?.authorities?.decision,
   );
   return [...new Set(asArray(declared).map((authority) => toDisplayText(authority, ["id", "name"])).filter(Boolean))];
 }
@@ -1738,11 +1862,16 @@ function openCreateDialog() {
   elements.createError.hidden = true;
   elements.createError.textContent = "";
   renderCreateModuleOptions();
+  renderCreatePlanOptions();
   const modulesAvailable = governedModules().length > 0;
-  elements.submitCreate.disabled = !modulesAvailable;
+  const planAvailable = !outcomeRequired() || selectablePlanOutcomes().length > 0;
+  elements.submitCreate.disabled = !modulesAvailable || !planAvailable;
   if (!modulesAvailable) {
     elements.createError.hidden = false;
     elements.createError.textContent = "当前项目没有可用于变更的 Governed 模块。请先完善 Project Model。";
+  } else if (!planAvailable) {
+    elements.createError.hidden = false;
+    elements.createError.textContent = "当前计划策略要求对齐，但没有 active Outcome。请先修订 Development Plan。";
   }
   if (typeof elements.createDialog.showModal === "function") elements.createDialog.showModal();
   else elements.createDialog.setAttribute("open", "");
@@ -1759,6 +1888,9 @@ async function createChange(event) {
   const title = $("#new-change-title").value.trim();
   const intent = $("#new-change-intent").value.trim();
   const primaryModule = $("#new-change-module").value;
+  const changeKind = selectedChangeKind();
+  const planRef = $("#new-change-plan-ref").value;
+  const observedFailure = $("#new-change-observed-failure").value.trim();
   const knownClaims = [...document.querySelectorAll('#new-change-known-claims input[name="knownClaim"]:checked')]
     .map((input) => ({ id: input.value, statement: input.dataset.statement }));
   const claims = knownClaims;
@@ -1778,6 +1910,18 @@ async function createChange(event) {
     $("#new-change-module").focus();
     return;
   }
+  if (outcomeRequired() && !planRef) {
+    elements.createError.hidden = false;
+    elements.createError.textContent = "请选择一个 active Development Outcome。";
+    $("#new-change-plan-ref").focus();
+    return;
+  }
+  if (integrityChangeKinds.has(changeKind) && !observedFailure) {
+    elements.createError.hidden = false;
+    elements.createError.textContent = "完整性修复必须记录一条具体、可审查的失败 Observation。";
+    $("#new-change-observed-failure").focus();
+    return;
+  }
   if (claims.length === 0) {
     elements.createError.hidden = false;
     elements.createError.textContent = "请选择一个已有门禁支持的契约主张；新语义需要先修订 Project Model。";
@@ -1795,6 +1939,32 @@ async function createChange(event) {
         request: intent,
         description: intent,
         primaryModule,
+        changeKind,
+        planRefs: planRef ? [planRef] : [],
+        integrityTarget: integrityChangeKinds.has(changeKind)
+          ? { claimRef: claims[0].id, failureEvidenceRef: "integrity-failure-observation" }
+          : null,
+        evidence: integrityChangeKinds.has(changeKind) ? [{
+          id: "integrity-failure-observation",
+          claim: claims[0],
+          oracle: {
+            kind: "reported-incident",
+            description: "A concrete pre-repair incident is reviewed against an existing protected Claim.",
+          },
+          observation: { status: "failed", detail: observedFailure },
+          provenance: {
+            kind: "reported-incident",
+            source: "local-workbench",
+            observedAt: new Date().toISOString(),
+          },
+          applicability: { module: primaryModule, phase: "pre-repair" },
+          discriminatoryPower: {
+            rejects: ["Using the integrity channel without naming an observed violation of an existing Claim."],
+          },
+          residualUncertainty: [
+            "The incident report establishes repair intent but is not trusted proof that the repair succeeds.",
+          ],
+        }] : [],
         claims,
         nonGoals,
       }),
@@ -1803,6 +1973,7 @@ async function createChange(event) {
     const createdId = firstPresent(created?.id, created?.changeId, payload?.id);
     closeCreateDialog();
     elements.createForm.reset();
+    renderCreatePlanOptions();
     await loadChanges({ preserveSelection: false });
     if (createdId) await selectChange(createdId);
     document.querySelector("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1812,7 +1983,9 @@ async function createChange(event) {
     elements.createError.textContent = errorMessage(error);
   } finally {
     setBusy(elements.submitCreate, false);
-    if (governedModules().length === 0) elements.submitCreate.disabled = true;
+    if (governedModules().length === 0 || (outcomeRequired() && selectablePlanOutcomes().length === 0)) {
+      elements.submitCreate.disabled = true;
+    }
   }
 }
 
@@ -1831,6 +2004,11 @@ function wireEvents() {
   $("#accept-decision-type").addEventListener("change", updateAmendmentField);
   $("#new-change-module").addEventListener("change", (event) => {
     renderCreateClaimOptions(event.target.value);
+  });
+  $("#new-change-kind").addEventListener("change", () => {
+    renderCreatePlanOptions();
+    elements.submitCreate.disabled = governedModules().length === 0
+      || (outcomeRequired() && selectablePlanOutcomes().length === 0);
   });
   elements.acceptForm.addEventListener("submit", acceptSelectedChange);
   elements.acceptDialog.addEventListener("click", (event) => {

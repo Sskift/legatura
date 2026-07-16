@@ -148,6 +148,21 @@
                 <article class="panel compact-panel">
                   <div class="panel-heading">
                     <div>
+                      <p class="panel-kicker">长期约束</p>
+                      <h3>Development Plan</h3>
+                    </div>
+                    <span class="count-badge" id="plan-active-count">0 active</span>
+                  </div>
+                  <p class="muted" id="plan-north-star"></p>
+                  <div class="item-list" id="active-plan-outcomes"></div>
+                  <div id="active-plan-outcomes-empty" class="inline-empty" hidden>
+                    当前没有可授权 Change 的 active Outcome。
+                  </div>
+                </article>
+
+                <article class="panel compact-panel">
+                  <div class="panel-heading">
+                    <div>
                       <p class="panel-kicker">已知未知</p>
                       <h3>Knowledge Gaps</h3>
                     </div>
@@ -246,6 +261,7 @@
                     <div class="change-meta-line">
                       <span class="change-id" id="change-id"></span>
                       <span class="status-pill" id="change-status"></span>
+                      <span class="mini-chip" id="change-plan-ref" hidden></span>
                     </div>
                     <h3 id="change-title"></h3>
                     <p id="change-summary" class="change-summary" hidden></p>
@@ -462,8 +478,33 @@
           <small class="field-help" id="new-change-module-help">一个 Change 只选择一个主要职责边界；跨模块影响会在编译后显式展开。</small>
         </label>
         <label class="field">
+          <span>变更类型 <small>治理分类</small></span>
+          <select id="new-change-kind" name="changeKind">
+            <option value="implementation">能力实现</option>
+            <option value="regression-repair">回归修复</option>
+            <option value="security-containment">安全遏制</option>
+            <option value="data-integrity-repair">数据完整性修复</option>
+            <option value="acceptance-integrity-repair">验收不变量修复</option>
+            <option value="entrypoint-restoration">已发布入口恢复</option>
+            <option value="plan-amendment">Development Plan 修订</option>
+          </select>
+          <small class="field-help">修复类型必须指出已有受损 Claim；计划修订只能修改 .legatura/** 且不能携带实现。</small>
+        </label>
+        <label class="field">
+          <span>长期目标 <small>active Outcome</small></span>
+          <select id="new-change-plan-ref" name="planRef">
+            <option value="">正在读取 Development Plan…</option>
+          </select>
+          <small class="field-help" id="new-change-plan-ref-help">普通 Change 必须推进一个已激活且存在于冻结基线中的 Outcome。</small>
+        </label>
+        <label class="field">
           <span>变更意图 <small>必填</small></span>
           <textarea id="new-change-intent" name="intent" rows="6" required placeholder="谁在什么情况下需要什么结果？什么现象表示它已经正确完成？"></textarea>
+        </label>
+        <label class="field" id="integrity-failure-field" hidden>
+          <span>已观察到的失败 <small>完整性修复必填</small></span>
+          <textarea id="new-change-observed-failure" name="observedFailure" rows="4" placeholder="具体发生了什么？它如何违反上面选择的已有 Claim？"></textarea>
+          <small class="field-help">这会成为一条失败的 incident Evidence，只证明修复通道适用，不会被当作修复成功的证据。</small>
         </label>
         <fieldset class="field claim-fieldset">
           <legend>已有契约主张 <small>优先复用项目已有的判断标准</small></legend>

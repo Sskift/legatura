@@ -5,7 +5,7 @@
   "owner": "project-model",
   "consumers": ["change-kernel"],
   "maturity": "governed",
-  "normativeSources": ["product-intent", "domain-language", "assurance-policy"],
+  "normativeSources": ["product-intent", "long-term-plan", "domain-language", "assurance-policy"],
   "claims": [
     {
       "id": "project-model-references-are-consistent",
@@ -18,6 +18,10 @@
     {
       "id": "unrelated-claims-require-explicit-mapping",
       "statement": "Gate Evidence for one Claim cannot cover another Claim without explicit semantics and an authority-bound Verification Obligation."
+    },
+    {
+      "id": "change-aligns-with-active-plan",
+      "statement": "When plan alignment is required, an ordinary Change can compile only against active Development Outcomes in its frozen Governance Baseline; plan amendments are authority-bound and isolated from implementation."
     }
   ]
 }

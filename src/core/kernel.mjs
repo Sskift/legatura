@@ -1,7 +1,11 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { compileChangeAgainstGovernance } from "./change-compiler.mjs";
+import {
+  assertIntegrityFailureEvidenceCurrent,
+  compileChangeAgainstGovernance,
+  validateIntegrityFailureEvidence
+} from "./change-compiler.mjs";
 import { createChangeStore } from "./change-store.mjs";
 import { executeCommand, normalizeGateCommand } from "./command-runner.mjs";
 import {
@@ -72,6 +76,14 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return refreshed.map(cloneJson);
   }
 
+  async function observeCurrentChangeScope(change, git, currentPlan) {
+    const touchedPaths = await readObservedTouchedPaths(change, git, resolvedRepoPath, commandRunner);
+    change.changeSet = compileObservedChangeSet(change, git, touchedPaths);
+    change.scopeAnalysis = analyzeChangeScope(change, git, touchedPaths);
+    assertPlanChangeSeparation(change, touchedPaths);
+    assertPlanHistoryPreserved(change, currentPlan);
+  }
+
   async function createChange(input = {}) {
     if (!input || typeof input !== "object" || Array.isArray(input)) {
       throw kernelError("CHANGE_INPUT_INVALID", "createChange input must be an object.", 400);
@@ -108,6 +120,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         nonGoals: normalizeStringList(input.nonGoals)
       },
       ...(primaryModule ? { primaryModule } : {}),
+      changeKind: readString(input.changeKind) ?? "implementation",
+      planRefs: normalizeStringList(input.planRefs ?? input.planRef),
+      integrityTarget: cloneJson(input.integrityTarget ?? null),
       claims,
       verificationObligations: normalizeVerificationObligations(input.verificationObligations, claims),
       verificationPlan: null,
@@ -170,9 +185,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       throw kernelError("CHANGE_CLAIM_REQUIRED", "A Change must declare at least one falsifiable Claim before submission.", 422);
     }
     change = compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
-    const touchedPaths = await readObservedTouchedPaths(change, inspection.git, resolvedRepoPath, commandRunner);
-    change.changeSet = compileObservedChangeSet(change, inspection.git, touchedPaths);
-    change.scopeAnalysis = analyzeChangeScope(change, inspection.git, touchedPaths);
+    await observeCurrentChangeScope(change, inspection.git, inspection.plan);
     if (patch.authorityDecision !== undefined) bindAuthorityDecision(change);
     transition(change, "Submitted", now(), "Change compiled with explicit Claims.");
     deriveEvidenceReady(change, inspection, now());
@@ -199,6 +212,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (change.state === "Integrated") {
       throw kernelError("CHANGE_SEALED", `Change ${change.id} is Integrated and cannot run more Gates.`, 409);
     }
+    await observeCurrentChangeScope(change, inspection.git, model.plan);
+    assertIntegrityFailureEvidenceCurrent(change);
     if (change.state === "Accepted") {
       if (!validation.valid) {
         throw kernelError("PROJECT_MODEL_INVALID", "The current Project Model is invalid.", 422, validation);
@@ -214,9 +229,6 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     change.projectModelDigest = model.digest;
     change.currentGit = inspection.git;
-    const touchedPaths = await readObservedTouchedPaths(change, inspection.git, resolvedRepoPath, commandRunner);
-    change.changeSet = compileObservedChangeSet(change, inspection.git, touchedPaths);
-    change.scopeAnalysis = analyzeChangeScope(change, inspection.git, touchedPaths);
     const subjectDigest = verificationSubjectDigest(change);
     const builtinEvidence = createProjectModelEvidence({
       change,
@@ -240,6 +252,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       errors: validation.errors,
       warnings: validation.warnings
     });
+    assertIntegrityFailureEvidenceCurrent(change);
     if (!validation.valid) {
       transition(change, "Submitted", now(), "Project Model Oracle failed; external Gates were not run.");
       change.updatedAt = now();
@@ -269,6 +282,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       }
       executedRuns.push({ ...run, evidence: undefined });
     }
+    assertIntegrityFailureEvidenceCurrent(change);
 
     const gitAfter = await readGitBinding(resolvedRepoPath, commandRunner);
     change.currentGit = gitAfter;
@@ -298,6 +312,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     change = await refreshChange(change);
     const inspection = await inspectProject();
     assertValidProject(inspection);
+    if (change.compilation) {
+      await observeCurrentChangeScope(change, inspection.git, inspection.plan);
+      assertIntegrityFailureEvidenceCurrent(change);
+    }
 
     if (request.integrate === true && change.acceptance && change.acceptance.valid !== true) {
       throw kernelError(
@@ -610,6 +628,11 @@ function applyCompilePatch(change, patch, observedAt) {
   }
   if (patch.nonGoals !== undefined) next.intent.nonGoals = normalizeStringList(patch.nonGoals);
   if (patch.primaryModule !== undefined) next.primaryModule = readString(patch.primaryModule);
+  if (patch.changeKind !== undefined) next.changeKind = readString(patch.changeKind);
+  if (patch.planRefs !== undefined || patch.planRef !== undefined) {
+    next.planRefs = normalizeStringList(patch.planRefs ?? patch.planRef);
+  }
+  if (patch.integrityTarget !== undefined) next.integrityTarget = cloneJson(patch.integrityTarget);
   if (patch.claims !== undefined || patch.claim !== undefined) {
     next.claims = normalizeClaims(patch.claims ?? patch.claim);
   }
@@ -648,6 +671,7 @@ function deriveEvidenceReady(change, inspection, observedAt) {
 
 function readReadiness(change, inspection) {
   const governanceBaseline = readGovernanceBaseline(change);
+  const integrityFailureEvidence = validateIntegrityFailureEvidence(change, { requireDigest: true });
   const mappingAuthorization = readMappingAuthorization(change, governanceBaseline);
   const subjectDigest = verificationSubjectDigest(change);
   const coverage = validateEvidenceCoverage(change.claims, change.evidence, {
@@ -671,10 +695,12 @@ function readReadiness(change, inspection) {
   return {
     evidenceReady: inspection.validation.valid
       && Boolean(builtin)
+      && integrityFailureEvidence.valid
       && coverage.satisfied
       && mappingAuthorization.valid
       && missingOrStaleGateIds.length === 0,
     coverage,
+    integrityFailureEvidence,
     mappingAuthorization,
     verificationSubjectDigest: subjectDigest,
     requiredGateIds: ["project-model", ...requiredGateIds],
@@ -802,6 +828,97 @@ function analyzeChangeScope(change, git, touchedPaths = readTouchedPaths(git)) {
       ...(preExistingPaths.length > 0 ? ["explicit-adoption"] : [])
     ])
   };
+}
+
+function assertPlanChangeSeparation(change, touchedPaths) {
+  const changeKind = readString(change.changeKind) ?? "implementation";
+  const planChanged = touchedPaths.includes(".legatura/plan.json");
+  if (changeKind === "plan-amendment") {
+    if (!planChanged) {
+      throw kernelError(
+        "PLAN_AMENDMENT_CHANGESET_REQUIRED",
+        "A plan-amendment Change must actually modify .legatura/plan.json.",
+        422
+      );
+    }
+    const implementationPaths = touchedPaths.filter((filePath) => !filePath.startsWith(".legatura/"));
+    if (implementationPaths.length > 0) {
+      throw kernelError(
+        "PLAN_AMENDMENT_IMPLEMENTATION_MIXED",
+        "A Development Plan amendment and implementation must be separate Changes.",
+        422,
+        { implementationPaths }
+      );
+    }
+    const preExistingPlanChange = readTouchedPaths(change.baseline?.git).includes(".legatura/plan.json");
+    if (preExistingPlanChange) {
+      throw kernelError(
+        "PLAN_AMENDMENT_BASELINE_DIRTY",
+        "Create a plan-amendment Change before editing .legatura/plan.json so its frozen baseline can prove history preservation.",
+        422
+      );
+    }
+    return;
+  }
+  if (planChanged) {
+    throw kernelError(
+      "PLAN_AMENDMENT_KIND_REQUIRED",
+      "A Change that modifies .legatura/plan.json must use changeKind plan-amendment and cannot carry implementation.",
+      422
+    );
+  }
+}
+
+function assertPlanHistoryPreserved(change, currentPlan) {
+  if ((readString(change.changeKind) ?? "implementation") !== "plan-amendment") return;
+  const baselinePlan = readGovernanceBaseline(change).plan;
+  if (!baselinePlan) return;
+  if (readString(currentPlan?.id) !== readString(baselinePlan.id)) {
+    throw kernelError(
+      "PLAN_HISTORY_REWRITE_FORBIDDEN",
+      "A Development Plan amendment cannot replace the identity of the existing plan.",
+      422,
+      { baselinePlanId: baselinePlan.id ?? null, currentPlanId: currentPlan?.id ?? null }
+    );
+  }
+  const currentById = new Map((Array.isArray(currentPlan?.outcomes) ? currentPlan.outcomes : [])
+    .map((outcome) => [readString(outcome?.id), outcome])
+    .filter(([id]) => Boolean(id)));
+  const removedOutcomeIds = [];
+  const rewrittenOutcomeIds = [];
+  const reopenedOutcomeIds = [];
+  for (const baselineOutcome of Array.isArray(baselinePlan.outcomes) ? baselinePlan.outcomes : []) {
+    const outcomeId = readString(baselineOutcome?.id);
+    if (!outcomeId) continue;
+    const currentOutcome = currentById.get(outcomeId);
+    if (!currentOutcome) {
+      removedOutcomeIds.push(outcomeId);
+      continue;
+    }
+    if (readString(currentOutcome.outcome) !== readString(baselineOutcome.outcome)) {
+      rewrittenOutcomeIds.push(outcomeId);
+    }
+    if (["achieved", "retired"].includes(baselineOutcome.status)
+      && currentOutcome.status !== baselineOutcome.status) {
+      reopenedOutcomeIds.push(outcomeId);
+    }
+    if (baselineOutcome.status === "achieved"
+      && canonicalDigest(currentOutcome.acceptance ?? null) !== canonicalDigest(baselineOutcome.acceptance ?? null)) {
+      rewrittenOutcomeIds.push(outcomeId);
+    }
+  }
+  if (removedOutcomeIds.length > 0 || rewrittenOutcomeIds.length > 0 || reopenedOutcomeIds.length > 0) {
+    throw kernelError(
+      "PLAN_HISTORY_REWRITE_FORBIDDEN",
+      "Existing Outcome identities and achieved records are durable history; retire or supersede them instead of deleting, renaming, reopening, or rewriting them.",
+      422,
+      {
+        removedOutcomeIds,
+        rewrittenOutcomeIds: uniqueStrings(rewrittenOutcomeIds),
+        reopenedOutcomeIds
+      }
+    );
+  }
 }
 
 async function readObservedTouchedPaths(change, git, repoPath, commandRunner) {
@@ -1026,6 +1143,9 @@ function createAcceptedPackageContent(change) {
     repoPath: change.repoPath,
     intent: change.intent,
     primaryModule: change.primaryModule ?? null,
+    changeKind: change.changeKind ?? "implementation",
+    planRefs: change.planRefs ?? [],
+    integrityTarget: change.integrityTarget ?? null,
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1052,6 +1172,9 @@ function createVerificationSubject(change) {
     schemaVersion: 1,
     intent: change.intent,
     primaryModule: change.primaryModule ?? null,
+    changeKind: change.changeKind ?? "implementation",
+    planRefs: change.planRefs ?? [],
+    integrityTarget: change.integrityTarget ?? null,
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -1081,6 +1204,7 @@ function freezeGovernanceBaseline(inspection) {
     modules: inspection.modules,
     contracts: inspection.contracts,
     gates: inspection.gates,
+    plan: inspection.plan,
     knowledgeGaps: inspection.knowledgeGaps,
     files: inspection.files
   };

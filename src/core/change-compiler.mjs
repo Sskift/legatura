@@ -1,4 +1,35 @@
-import { cloneJson } from "./canonical.mjs";
+import { canonicalDigest, cloneJson } from "./canonical.mjs";
+
+export const INTEGRITY_CHANGE_KINDS = Object.freeze([
+  "regression-repair",
+  "security-containment",
+  "data-integrity-repair",
+  "acceptance-integrity-repair",
+  "entrypoint-restoration"
+]);
+
+export const CHANGE_KINDS = Object.freeze([
+  "implementation",
+  "plan-amendment",
+  ...INTEGRITY_CHANGE_KINDS
+]);
+
+const INTEGRITY_FAILURE_PROVENANCE_KINDS = new Set([
+  "builtin-oracle",
+  "gate-command",
+  "reported-incident",
+  "external-incident"
+]);
+
+const INTEGRITY_EVIDENCE_FIELDS = [
+  "claim",
+  "oracle",
+  "observation",
+  "provenance",
+  "applicability",
+  "discriminatoryPower",
+  "residualUncertainty"
+];
 
 const COMPILED_CONTEXT_KEYS = new Set([
   "schemaVersion",
@@ -8,6 +39,7 @@ const COMPILED_CONTEXT_KEYS = new Set([
   "publicContracts",
   "dependencyContracts",
   "dependencies",
+  "planOutcomes",
   "normativeSources",
   "knowledgeGaps",
   "scope",
@@ -19,6 +51,65 @@ const PROJECT_MODEL_CLAIM = {
   id: "project-model-self-consistent",
   statement: "The versioned Project Model is internally self-consistent for this Change."
 };
+
+export function validateIntegrityFailureEvidence(change, { requireDigest = false } = {}) {
+  const changeKind = readString(change?.changeKind) ?? "implementation";
+  if (!INTEGRITY_CHANGE_KINDS.includes(changeKind)) {
+    return { required: false, valid: true, problems: [] };
+  }
+  const claimRef = readString(change.integrityTarget?.claimRef);
+  const failureEvidenceRef = readString(change.integrityTarget?.failureEvidenceRef);
+  const failureEvidence = asArray(change.evidence).find((item) => item?.id === failureEvidenceRef);
+  const expectedClaim = asArray(change.claims).find((claim) => claim?.id === claimRef);
+  const observedStatus = readString(failureEvidence?.observation?.status)?.toLowerCase() ?? null;
+  const observedProvenanceKind = readString(failureEvidence?.provenance?.kind) ?? null;
+  const missingFields = failureEvidence
+    ? INTEGRITY_EVIDENCE_FIELDS.filter((field) => !isSubstantive(failureEvidence[field]))
+    : [...INTEGRITY_EVIDENCE_FIELDS];
+  const observedDigest = failureEvidence ? canonicalDigest(failureEvidence) : null;
+  const expectedDigest = readString(change.integrityTarget?.failureEvidenceDigest) ?? null;
+  const problems = [];
+  if (!claimRef || !failureEvidenceRef) problems.push("target-reference-missing");
+  if (!failureEvidence) problems.push("failure-evidence-missing");
+  if (missingFields.length > 0) problems.push("failure-evidence-incomplete");
+  if (!expectedClaim
+    || failureEvidence?.claim?.id !== claimRef
+    || failureEvidence?.claim?.statement !== expectedClaim?.statement) {
+    problems.push("claim-mismatch");
+  }
+  if (observedStatus !== "failed") problems.push("observation-not-failed");
+  if (!INTEGRITY_FAILURE_PROVENANCE_KINDS.has(observedProvenanceKind)) {
+    problems.push("provenance-not-allowed");
+  }
+  if (requireDigest && (!expectedDigest || expectedDigest !== observedDigest)) {
+    problems.push("failure-evidence-digest-mismatch");
+  }
+  return {
+    required: true,
+    valid: problems.length === 0,
+    problems,
+    claimRef: claimRef ?? null,
+    failureEvidenceRef: failureEvidenceRef ?? null,
+    expectedDigest,
+    observedDigest,
+    observedClaimRef: failureEvidence?.claim?.id ?? null,
+    observedStatus,
+    observedProvenanceKind,
+    missingFields
+  };
+}
+
+export function assertIntegrityFailureEvidenceCurrent(change) {
+  const validation = validateIntegrityFailureEvidence(change, { requireDigest: true });
+  if (!validation.valid) {
+    throw compilerError(
+      "CHANGE_INTEGRITY_FAILURE_EVIDENCE_INVALID",
+      "The integrity channel requires the original complete failed Evidence for the protected Claim to remain present and content-exact.",
+      validation
+    );
+  }
+  return validation;
+}
 
 export function compileChangeAgainstGovernance(change, governanceBaseline) {
   const primaryModuleId = readString(change.primaryModule);
@@ -38,11 +129,14 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
     );
   }
 
+  const planOutcomes = selectDevelopmentOutcomes(change, governanceBaseline);
+  const integrityTarget = compileIntegrityTarget(change);
   const assurance = assertAssuranceAllowsCompilation(change, primaryModule, governanceBaseline);
   const compilerInput = change.compilerInput ?? {};
   const contextCapsule = compileContextCapsule({
     governanceBaseline,
     primaryModule,
+    planOutcomes,
     assurance,
     supplied: compilerInput.contextCapsule
   });
@@ -65,6 +159,7 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
 
   return {
     ...change,
+    integrityTarget,
     contextCapsule,
     impact,
     verificationObligations,
@@ -73,12 +168,25 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
       compiler: "legatura-core/change-compiler-v1",
       governanceBaselineDigest: governanceBaseline.digest,
       primaryModule: primaryModule.id,
+      changeKind: change.changeKind,
+      planRefs: planOutcomes.map((outcome) => outcome.id),
       assuranceStatus: primaryModule.status
     }
   };
 }
 
-function compileContextCapsule({ governanceBaseline, primaryModule, assurance, supplied }) {
+function compileIntegrityTarget(change) {
+  const changeKind = readString(change.changeKind) ?? "implementation";
+  if (!INTEGRITY_CHANGE_KINDS.includes(changeKind)) return null;
+  const failureEvidenceRef = readString(change.integrityTarget?.failureEvidenceRef);
+  const failureEvidence = asArray(change.evidence).find((item) => item?.id === failureEvidenceRef);
+  return {
+    ...cloneJson(change.integrityTarget),
+    failureEvidenceDigest: canonicalDigest(failureEvidence)
+  };
+}
+
+function compileContextCapsule({ governanceBaseline, primaryModule, planOutcomes, assurance, supplied }) {
   validateContextSupplement(supplied);
   const contractsById = new Map(governanceBaseline.contracts.map((contract) => [contract.id, contract]));
   const modulesById = new Map(governanceBaseline.modules.map((module) => [module.id, module]));
@@ -165,6 +273,7 @@ function compileContextCapsule({ governanceBaseline, primaryModule, assurance, s
     },
     primaryModule: primaryModule.id,
     module: pickModuleContext(primaryModule),
+    planOutcomes: planOutcomes.map(cloneJson),
     publicContracts: publicContracts.map(pickContractContext),
     dependencyContracts: dependencyContracts.map(pickContractContext),
     dependencies,
@@ -179,6 +288,131 @@ function compileContextCapsule({ governanceBaseline, primaryModule, assurance, s
     assurance,
     ...copySupplementalContext(supplied)
   };
+}
+
+function selectDevelopmentOutcomes(change, governanceBaseline) {
+  const policy = governanceBaseline.projectDocument?.changePolicy ?? {};
+  const changeKind = readString(change.changeKind) ?? "implementation";
+  const planRefs = normalizeStringList(change.planRefs);
+  if (!CHANGE_KINDS.includes(changeKind)) {
+    throw compilerError(
+      "CHANGE_KIND_INVALID",
+      `Unsupported Change kind: ${changeKind}.`,
+      { changeKind, allowedChangeKinds: CHANGE_KINDS }
+    );
+  }
+  if (changeKind === "plan-amendment") {
+    if (planRefs.length > 0) {
+      throw compilerError(
+        "PLAN_AMENDMENT_PLAN_REF_FORBIDDEN",
+        "A plan-amendment is authorized by governance authority and must not use the plan state it edits to authorize itself.",
+        { planRefs }
+      );
+    }
+    return [];
+  }
+  if (policy.requirePlanRefs === true && planRefs.length === 0) {
+    throw compilerError(
+      "CHANGE_PLAN_REF_REQUIRED",
+      "This Governance Baseline requires at least one active Development Outcome before a Change can compile.",
+      {
+        planId: readString(governanceBaseline.plan?.id) ?? null,
+        activeOutcomeIds: asArray(governanceBaseline.plan?.outcomes)
+          .filter((outcome) => outcome?.status === "active")
+          .map((outcome) => readString(outcome?.id))
+          .filter(Boolean)
+      }
+    );
+  }
+  if (planRefs.length === 0) {
+    if (INTEGRITY_CHANGE_KINDS.includes(changeKind)) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_OUTCOME_REQUIRED",
+        "An integrity repair must reference exactly one active integrity-maintenance Outcome.",
+        { planRefs }
+      );
+    }
+    return [];
+  }
+
+  const outcomesById = new Map(asArray(governanceBaseline.plan?.outcomes)
+    .map((outcome) => [readString(outcome?.id), outcome])
+    .filter(([id]) => Boolean(id)));
+  const unknown = planRefs.filter((id) => !outcomesById.has(id));
+  if (unknown.length > 0) {
+    throw compilerError(
+      "CHANGE_PLAN_REF_UNKNOWN",
+      `Development Outcome references are not present in the frozen Governance Baseline: ${unknown.join(", ")}.`,
+      { unknown, planId: readString(governanceBaseline.plan?.id) ?? null }
+    );
+  }
+
+  const inactive = planRefs
+    .map((id) => outcomesById.get(id))
+    .filter((outcome) => outcome.status !== "active")
+    .map((outcome) => ({ id: outcome.id, status: outcome.status }));
+  if (inactive.length > 0) {
+    throw compilerError(
+      "CHANGE_PLAN_REF_NOT_ACTIVE",
+      "A planned, conditional, achieved, or retired Outcome cannot authorize implementation; activate it through an earlier normative amendment.",
+      { inactive }
+    );
+  }
+
+  const selected = planRefs.map((id) => outcomesById.get(id));
+  const integrityOutcomes = selected.filter((outcome) => outcome.kind === "integrity-maintenance");
+  if (changeKind === "implementation" && integrityOutcomes.length > 0) {
+    throw compilerError(
+      "CHANGE_INTEGRITY_CHANNEL_MISUSED",
+      "An implementation Change cannot use an integrity-maintenance Outcome as a feature path.",
+      { planRefs: integrityOutcomes.map((outcome) => outcome.id) }
+    );
+  }
+  if (INTEGRITY_CHANGE_KINDS.includes(changeKind)) {
+    if (integrityOutcomes.length !== selected.length || selected.length !== 1) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_OUTCOME_REQUIRED",
+        "An integrity repair must reference exactly one active integrity-maintenance Outcome.",
+        { planRefs }
+      );
+    }
+    const outcome = integrityOutcomes[0];
+    if (!normalizeStringList(outcome.allowedChangeKinds).includes(changeKind)) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_KIND_NOT_ALLOWED",
+        `Outcome ${outcome.id} does not allow Change kind ${changeKind}.`,
+        { outcomeId: outcome.id, changeKind, allowedChangeKinds: outcome.allowedChangeKinds ?? [] }
+      );
+    }
+    const claimRef = readString(change.integrityTarget?.claimRef);
+    const failureEvidenceRef = readString(change.integrityTarget?.failureEvidenceRef);
+    if (!claimRef || !failureEvidenceRef) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_TARGET_REQUIRED",
+        "An integrity repair requires integrityTarget.claimRef and failureEvidenceRef.",
+        { outcomeId: outcome.id }
+      );
+    }
+    const protectedClaims = normalizeStringList(outcome.acceptance?.claimRefs);
+    const changeClaims = new Set(asArray(change.claims).map((claim) => readString(claim?.id)).filter(Boolean));
+    if (!protectedClaims.includes(claimRef) || !changeClaims.has(claimRef)) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_CLAIM_INVALID",
+        "The integrity target must be both protected by the maintenance Outcome and declared as a Claim on this Change.",
+        { claimRef, protectedClaims }
+      );
+    }
+    const failureValidation = validateIntegrityFailureEvidence(change);
+    if (!failureValidation.valid) {
+      throw compilerError(
+        "CHANGE_INTEGRITY_FAILURE_EVIDENCE_INVALID",
+        "The integrity channel requires complete failed Evidence for the protected Claim from an independent Oracle, Gate, or incident report.",
+        failureValidation
+      );
+    }
+  }
+
+  return selected.map(cloneJson);
 }
 
 function compileImpact({ governanceBaseline, primaryModule, supplied }) {
