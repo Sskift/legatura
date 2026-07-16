@@ -105,19 +105,18 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   }
 
   async function observeChangeQueryOnce() {
-    const [project, records] = await Promise.all([
+    const [project, changeStore] = await Promise.all([
       observeProjectOnce(),
-      store.list()
+      store.snapshot()
     ]);
-    const changeStoreDigest = compileChangeStoreDigest(records);
     return {
       digest: canonicalDigest({
         projectModelGitDigest: project.digest,
-        changeStoreDigest
+        changeStoreDigest: changeStore.digest
       }),
-      changeStoreDigest,
+      changeStoreDigest: changeStore.digest,
       inspection: project.inspection,
-      records
+      records: changeStore.records
     };
   }
 
@@ -911,34 +910,6 @@ function summarizeChangeForRead(change, snapshot) {
     };
   }
   return cloneJson(summary);
-}
-
-function compileChangeStoreDigest(records) {
-  const entries = [];
-  const seen = new Set();
-  const problems = [];
-  for (const [index, record] of records.entries()) {
-    const changeId = readString(record?.id);
-    if (!changeId) {
-      problems.push({ index, problem: "change-id-missing" });
-      continue;
-    }
-    if (seen.has(changeId)) {
-      problems.push({ changeId, problem: "change-id-duplicate" });
-      continue;
-    }
-    seen.add(changeId);
-    entries.push({ changeId, recordDigest: canonicalDigest(record) });
-  }
-  if (problems.length > 0) {
-    throw kernelError(
-      "CHANGE_STORE_SNAPSHOT_INVALID",
-      "Change Store records require unique non-empty ids before they can form a source snapshot.",
-      500,
-      { problems: problems.slice(0, 20), problemCount: problems.length }
-    );
-  }
-  return canonicalDigest(entries.sort((left, right) => left.changeId.localeCompare(right.changeId)));
 }
 
 function compileArchitectureProfileFromSnapshot(snapshot) {

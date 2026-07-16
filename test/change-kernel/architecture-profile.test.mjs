@@ -1,12 +1,26 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  symlink,
+  truncate,
+  writeFile
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { createKernel } from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
+import {
+  CHANGE_STORE_LIMITS,
+  createChangeStore
+} from "../../src/core/change-store.mjs";
 import { validateEvidenceCoverage } from "../../src/core/evidence.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -478,6 +492,129 @@ test("bounded stabilization accepts A/B/B and fails closed on A/B/C", async (t) 
       && Object.keys(error.details).sort().join(",") === "observationCount,observedDigests"
   );
   assert.equal(unstable.observations(), 3);
+});
+
+test("Change Store bounds and anchors sources before query parsing", async (t) => {
+  const fixture = await createFixture();
+  const anchorRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-store-anchor-"));
+  t.after(() => Promise.all([
+    rm(fixture.repoPath, { recursive: true, force: true }),
+    rm(anchorRoot, { recursive: true, force: true })
+  ]));
+  const store = createChangeStore(fixture.repoPath);
+  const directory = path.join(fixture.repoPath, ".legatura/runtime/changes");
+
+  await store.save({ id: "roundtrip", state: "Candidate", value: "bounded" });
+  assert.deepEqual(await store.get("roundtrip"), {
+    id: "roundtrip",
+    state: "Candidate",
+    value: "bounded"
+  });
+  const ordinary = await store.snapshot();
+  assert.equal(ordinary.records.length, 1);
+  assert.equal(ordinary.observed.recordCount, 1);
+  assert.match(ordinary.digest, /^sha256:[a-f0-9]{64}$/u);
+  await rm(path.join(directory, "roundtrip.json"));
+
+  for (const invalid of [
+    { id: "omitted-value", omitted: undefined },
+    { id: "nonfinite-value", value: Number.POSITIVE_INFINITY }
+  ]) {
+    await assert.rejects(
+      store.save(invalid),
+      (error) => error?.code === "CHANGE_RECORD_INVALID" && error?.statusCode === 422
+    );
+  }
+  await assert.rejects(
+    store.get("x".repeat(CHANGE_STORE_LIMITS.changeIdBytes + 1)),
+    (error) => error?.code === "CHANGE_ID_INVALID" && error?.statusCode === 400
+  );
+  assert.deepEqual(await readdir(directory), []);
+
+  const oversizedPath = path.join(directory, "oversized.json");
+  await writeFile(oversizedPath, "");
+  await truncate(oversizedPath, CHANGE_STORE_LIMITS.fileBytes + 1);
+  await assert.rejects(
+    createKernel({ repoPath: fixture.repoPath }).inspectArchitectureProfile(),
+    (error) => error?.code === "CHANGE_STORE_LIMIT_EXCEEDED"
+      && error?.statusCode === 413
+      && error.details.location === "fileBytes:oversized.json"
+  );
+  await rm(oversizedPath);
+
+  const aggregatePaths = Array.from({ length: 5 }, (_, index) => (
+    path.join(directory, `aggregate-${index + 1}.json`)
+  ));
+  for (const filePath of aggregatePaths) {
+    await writeFile(filePath, "");
+    await truncate(filePath, CHANGE_STORE_LIMITS.fileBytes);
+  }
+  await assert.rejects(
+    store.snapshot(),
+    (error) => error?.code === "CHANGE_STORE_LIMIT_EXCEEDED"
+      && error?.statusCode === 413
+      && error.details.location === "totalBytes"
+  );
+  await Promise.all(aggregatePaths.map((filePath) => rm(filePath)));
+
+  let nested = "leaf";
+  for (let depth = 0; depth <= CHANGE_STORE_LIMITS.depth; depth += 1) nested = { nested };
+  await writeJson(path.join(directory, "depth-bomb.json"), { id: "depth-bomb", nested });
+  await assert.rejects(
+    store.snapshot(),
+    (error) => error?.code === "CHANGE_STORE_LIMIT_EXCEEDED"
+      && error?.statusCode === 413
+      && error.details.location === "depth:depth-bomb.json"
+  );
+  await rm(path.join(directory, "depth-bomb.json"));
+
+  await writeFile(
+    path.join(directory, "negative-zero.json"),
+    '{"id":"negative-zero","value":-0}\n',
+    "utf8"
+  );
+  await assert.rejects(
+    store.snapshot(),
+    (error) => error?.code === "CHANGE_RECORD_INVALID"
+      && error.details.file === "negative-zero.json"
+  );
+  await rm(path.join(directory, "negative-zero.json"));
+
+  await writeJson(path.join(fixture.repoPath, "linked-source.json"), { id: "linked" });
+  await symlink(
+    path.join(fixture.repoPath, "linked-source.json"),
+    path.join(directory, "linked.json")
+  );
+  await assert.rejects(
+    store.snapshot(),
+    (error) => error?.code === "CHANGE_STORE_ENTRY_INVALID" && error?.statusCode === 422
+  );
+  await rm(path.join(directory, "linked.json"));
+
+  await writeJson(path.join(directory, "filename.json"), { id: "different-id" });
+  await assert.rejects(
+    store.snapshot(),
+    (error) => error?.code === "CHANGE_RECORD_INVALID"
+      && error.details.file === "filename.json"
+  );
+
+  const escapedRepo = path.join(anchorRoot, "repo");
+  const outsideRuntime = path.join(anchorRoot, "outside-runtime");
+  await mkdir(path.join(escapedRepo, ".legatura"), { recursive: true });
+  await mkdir(path.join(outsideRuntime, "changes"), { recursive: true });
+  await symlink(outsideRuntime, path.join(escapedRepo, ".legatura/runtime"));
+  const escapedStore = createChangeStore(escapedRepo);
+  for (const operation of [
+    () => escapedStore.snapshot(),
+    () => escapedStore.save({ id: "escaped" })
+  ]) {
+    await assert.rejects(
+      operation(),
+      (error) => error?.code === "CHANGE_STORE_DIRECTORY_INVALID"
+        && error?.statusCode === 422
+        && error.details.location === "runtime"
+    );
+  }
 });
 
 function findProfileEvidence(profile, changeRef, evidenceRef, origin) {
