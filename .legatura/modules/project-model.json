@@ -21,7 +21,7 @@
       "projectCompiledClaimGateRouteIndex(index, options)",
       "projectCompiledModuleClaimGateIndex(index, { model, moduleRefs, routeSelections, limits })",
       "compileModulePathOwnershipIndex(model, repositoryPathFacts, { limits })",
-      "projectCompiledModulePathOwnershipIndex(product, { model, moduleRefs, pathRefs, limits })",
+      "projectCompiledModulePathOwnershipIndex(product, { model, moduleRefs, pathRefs, scopeSelections, limits })",
       "compileArchitectureProfile(input, options)",
       "assertKnowledgeGapProofContractsPreserved(input)"
     ],
@@ -29,6 +29,7 @@
       "Dependencies are visible only through owned Contracts.",
       "A supplied Context Capsule may narrow but never broaden generated scope.",
       "Project Model alone compiles one opaque bounded Module path ownership product bound to the exact Model and exact tracked-path facts: Module and disposition selectors use only canonical exact paths or literal recursive prefixes with include-minus-exclude matching; every disposition has a stable id, kind ungoverned, canonical include and exclude lists, and substantive rationale; every latent or concrete owner-owner, owner-disposition, or disposition-disposition overlap fails without precedence; every tracked path has exactly one Module write owner or one disposition; and a disposition never grants write authority.",
+      "For an exact compiled Context write scope, the same ownership product validates one bounded digest-bound scope selection as a narrowing of the authoritative Module scope and projects closed concrete path decisions that distinguish ownership authority, selected-scope membership, and final write allowance; forged, broadened, malformed, stale, duplicate, or over-limit selections fail closed, and consumers never interpret selectors or dispositions.",
       "Generated Context Capsule write scope is projected only from the exact ownership product for its primary Module; absent, forged, stale, ambiguous, disposition-only, or over-limit inputs fail closed, and callers may narrow but never widen that scope.",
       "The ownership product enters Change compilation only through a process-local options seam and is never serialized into worker, HTTP, Store, or browser input.",
       "Unrelated Claims require an explicit authority-bound mapping.",
