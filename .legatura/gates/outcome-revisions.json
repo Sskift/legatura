@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "outcome-revisions",
   "name": "Outcome Revision Proof Gate",
-  "purpose": "Produce direct Project Model-owned Evidence that pre-activation Outcome revisions are append-only, authority-bound, and frozen before activation.",
-  "appliesTo": ["project-model"],
+  "purpose": "Produce direct Project Model and Change Kernel Evidence that pre-activation Outcome revisions are append-only, authority-bound, rederived, and frozen before activation.",
+  "appliesTo": ["project-model", "change-kernel"],
   "commands": [
     {
       "id": "outcome-revision-proof",
@@ -37,6 +37,37 @@
       "residualUncertainty": [
         "The proof covers the bounded in-process Project Model compiler and local Kernel rederivation; Accepted history portability across workspaces remains an explicit Knowledge Gap.",
         "Human-facing Outcome revision authoring is outside this Gate and belongs to a later Workbench Outcome."
+      ]
+    },
+    {
+      "id": "outcome-plan-amendment-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--test",
+        "test/change-kernel/outcome-plan-amendment.test.mjs"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["outcome-revisions-cannot-self-authorize"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel scenario must prove compile-, Gate-, and acceptance-time rederivation plus frozen-baseline isolation and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "outcome-plan-amendment-kernel-adoption-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a stored Outcome Plan Amendment compilation that differs from Gate-time rederivation",
+          "a stored Outcome Plan Amendment compilation that differs from acceptance-time rederivation",
+          "a Revision that authorizes an ordinary Change created against an older frozen Governance Baseline",
+          "a current-schema Candidate that falls back to a legacy Transition-only compilation"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof covers the local single-writer Change Store and current-host Git observations; authenticated multi-writer history remains outside the current boundary.",
+        "Remote execution and human-facing Revision authoring belong to later Outcomes."
       ]
     }
   ]

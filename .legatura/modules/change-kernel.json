@@ -46,6 +46,7 @@
       "test/change-kernel/architecture-profile.test.mjs",
       "test/change-kernel/workbench-semantics.test.mjs",
       "test/change-kernel/project-model-projection-adoption.test.mjs",
+      "test/change-kernel/outcome-plan-amendment.test.mjs",
       ".legatura/modules/change-kernel.json",
       ".legatura/contracts/change-kernel-interface.json"
     ],
@@ -71,6 +72,10 @@
     {
       "path": "test/change-kernel/plan-refs-adapter.test.mjs",
       "command": "node --test test/change-kernel/plan-refs-adapter.test.mjs"
+    },
+    {
+      "path": "test/change-kernel/outcome-plan-amendment.test.mjs",
+      "command": "node --test test/change-kernel/outcome-plan-amendment.test.mjs"
     }
   ],
   "publicContracts": ["change-kernel-interface"],
