@@ -10,6 +10,10 @@ import {
 } from "./change-compiler.mjs";
 import { normalizeGateCommand } from "./command-runner.mjs";
 import {
+  compileOutcomePlanAmendment,
+  validateOutcomeRevisionLedger
+} from "./outcome-evolution.mjs";
+import {
   assertKnowledgeGapProofContractsPreserved,
   compileAllowedOutcomeTransitionRoutes,
   compileClaimGateRoutes,
@@ -21,6 +25,7 @@ export {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
   compileClaimGateRoutes,
+  compileOutcomePlanAmendment,
   projectCompiledClaimGateRouteIndex,
   projectCompiledModuleClaimGateIndex
 };
@@ -973,6 +978,9 @@ function validateDevelopmentPlan(model, claimIndex, decisionAuthorities, errors)
       errors
     });
   }
+
+  const revisionValidation = validateOutcomeRevisionLedger(plan, decisionAuthorities);
+  errors.push(...revisionValidation.errors);
 
   const transitionValidation = validateOutcomeTransitionLedger(plan, model.knowledgeGaps);
   errors.push(...transitionValidation.errors);
