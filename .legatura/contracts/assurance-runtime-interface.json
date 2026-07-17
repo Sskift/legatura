@@ -16,6 +16,10 @@
       "statement": "A failed or truncated Git observation is reported as unavailable and cannot become exact repository Evidence."
     },
     {
+      "id": "tracked-path-observation-is-exact",
+      "statement": "One bounded Git observation returns the complete canonical set of tracked repository-relative paths and its exact digest, or reports unavailable on failure, truncation, malformed paths, duplicates, or resource-limit exhaustion."
+    },
+    {
       "id": "command-observation-is-explicit",
       "statement": "A declared command returns explicit exit status, stdout, stderr, signal, and truncation state without deciding acceptance."
     }

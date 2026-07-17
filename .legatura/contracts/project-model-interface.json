@@ -16,6 +16,18 @@
       "statement": "A compiled Context Capsule cannot grant read or write scope broader than its primary Module, declared Contracts, and focused verification context."
     },
     {
+      "id": "module-path-ownership-is-total-and-exclusive",
+      "statement": "Given an exact Project Model and tracked-path observation, the ownership compiler validates canonical exact-or-recursive-prefix Module and ungoverned disposition selectors, rejects every latent or concrete owner-owner, owner-disposition, or disposition-disposition overlap without precedence, deterministically assigns every tracked path to exactly one Module write owner or one explicit ungoverned disposition, and fails closed on a missing assignment."
+    },
+    {
+      "id": "context-capsule-binds-validated-path-ownership",
+      "statement": "Generated Context Capsule write scope is projected only from an opaque, exact-Model-and-path-facts-bound ownership product for the primary Module; absent, forged, stale, ambiguous, disposition-only, or over-limit input fails closed."
+    },
+    {
+      "id": "module-path-ownership-proof-rejects-coverage-and-binding-attacks",
+      "statement": "The fixed ownership proof rejects unowned tracked paths, overlapping Module write owners, owner/disposition conflicts, malformed disposition rules, forged or stale ownership products, and Context Capsule scope derivation that bypasses the product."
+    },
+    {
       "id": "unrelated-claims-require-explicit-mapping",
       "statement": "Gate Evidence for one Claim cannot cover another Claim without explicit semantics and an authority-bound Verification Obligation."
     },

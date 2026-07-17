@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "path-ownership",
+  "name": "Module Path Ownership Proof Gate",
+  "purpose": "Produce direct Evidence that tracked-path facts are exact, Module write ownership is total and exclusive, and Context Capsules consume the same opaque ownership product.",
+  "appliesTo": ["assurance-runtime", "project-model", "change-kernel"],
+  "commands": [
+    {
+      "id": "tracked-path-observation-proof",
+      "appliesTo": ["assurance-runtime"],
+      "command": ["node", "--test", "test/assurance-runtime/tracked-path-observation.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": ["tracked-path-observation-is-exact"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Assurance Runtime tracked-path observation proof must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "path-fact-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a partial, failed, truncated, duplicated, malformed, or over-limit tracked-path observation treated as exact",
+          "tracked paths emitted without canonical repository-relative normalization or an exact digest"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof characterizes the current-host Git adapter; cross-platform command and encoding boundaries remain an explicit Assurance Runtime Gap."
+      ]
+    },
+    {
+      "id": "module-path-ownership-proof",
+      "appliesTo": ["project-model"],
+      "command": ["node", "--test", "test/project-model/path-ownership.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "module-path-ownership-is-total-and-exclusive",
+        "context-capsule-binds-validated-path-ownership",
+        "module-path-ownership-proof-rejects-coverage-and-binding-attacks"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Project Model ownership and Context Capsule attack scenario must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "an unowned tracked path or a path matched by multiple Module owners",
+          "latent overlap between effective write or disposition selector domains without a currently tracked witness",
+          "an owner/disposition or disposition/disposition conflict",
+          "an absolute, parent-relative, NUL-bearing, or unsupported selector",
+          "a forged, serialized, wrong-Model, stale-path-facts, or over-limit ownership product",
+          "Context Capsule write scope derived directly from Module declarations or an ungoverned disposition"
+        ]
+      },
+      "residualUncertainty": [
+        "Read context may intentionally overlap; this Gate proves exclusive write ownership and does not infer architectural coupling from imports or file contents.",
+        "The selector grammar is deliberately restricted to exact paths and literal recursive prefixes rather than general glob intersection."
+      ]
+    },
+    {
+      "id": "path-ownership-kernel-adoption-proof",
+      "appliesTo": ["change-kernel"],
+      "command": ["node", "--test", "test/change-kernel/path-ownership.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": ["change-kernel-consumes-validated-path-ownership"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Kernel scenario must prove one stable ownership product is reused for Context Capsule and touched-path enforcement and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "path-ownership-kernel-adoption-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "Kernel reinterpreting ownership selectors or dispositions instead of consuming the Project Model product",
+          "Context Capsule and touched-path checks consuming different Model or tracked-path observations",
+          "a frozen Candidate retaining write authority after ownership policy or path facts drift"
+        ]
+      },
+      "residualUncertainty": [
+        "Filesystem capability enforcement and worker execution remain later Outcomes; this Gate proves the compiled authorization input and Kernel adoption seam."
+      ]
+    }
+  ]
+}

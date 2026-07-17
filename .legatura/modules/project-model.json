@@ -12,7 +12,7 @@
       "projectModelContentDigest(model)",
       "validateProjectModel(model)",
       "publicProjectModel(model)",
-      "compileChangeAgainstGovernance(change, baseline)",
+      "compileChangeAgainstGovernance(change, baseline, { modulePathOwnershipProduct })",
       "parseChangePlanRefs(value)",
       "compileOutcomePlanAmendment(input)",
       "compileOutcomeTransitions(input)",
@@ -20,12 +20,17 @@
       "compileClaimGateRouteIndex(model, options)",
       "projectCompiledClaimGateRouteIndex(index, options)",
       "projectCompiledModuleClaimGateIndex(index, { model, moduleRefs, routeSelections, limits })",
+      "compileModulePathOwnershipIndex(model, repositoryPathFacts, { limits })",
+      "projectCompiledModulePathOwnershipIndex(product, { model, moduleRefs, pathRefs, limits })",
       "compileArchitectureProfile(input, options)",
       "assertKnowledgeGapProofContractsPreserved(input)"
     ],
     "invariants": [
       "Dependencies are visible only through owned Contracts.",
       "A supplied Context Capsule may narrow but never broaden generated scope.",
+      "Project Model alone compiles one opaque bounded Module path ownership product bound to the exact Model and exact tracked-path facts: Module and disposition selectors use only canonical exact paths or literal recursive prefixes with include-minus-exclude matching; every disposition has a stable id, kind ungoverned, canonical include and exclude lists, and substantive rationale; every latent or concrete owner-owner, owner-disposition, or disposition-disposition overlap fails without precedence; every tracked path has exactly one Module write owner or one disposition; and a disposition never grants write authority.",
+      "Generated Context Capsule write scope is projected only from the exact ownership product for its primary Module; absent, forged, stale, ambiguous, disposition-only, or over-limit inputs fail closed, and callers may narrow but never widen that scope.",
+      "The ownership product enters Change compilation only through a process-local options seam and is never serialized into worker, HTTP, Store, or browser input.",
       "Unrelated Claims require an explicit authority-bound mapping.",
       "Acceptance Evidence eligibility is compiled from canonical Claim Gate routes at exact Gate and command identity, filtered to routes applicable to the primary Module through acceptance-eligible Gates; cross-Claim mappings expose exact source routes, and integration-only full Gate routes never enter acceptance mappings.",
       "Claim Gate routes compile in one bounded pass for the complete canonical requested Claim set; compileClaimGateRoutes delegates to that compiler, while Profile validation, Knowledge Gap validation, and graph projection consume the same authoritative product without reinterpreting Gate applicability.",
@@ -56,11 +61,13 @@
       "src/core/outcome-evolution.mjs",
       "src/core/outcome-transitions.mjs",
       "src/core/architecture-profile.mjs",
+      "src/core/path-ownership.mjs",
       "test/project-model/project-model.test.mjs",
       "test/project-model/architecture-profile.test.mjs",
       "test/project-model/module-claim-gate-projection.test.mjs",
       "test/project-model/gap-blockers.test.mjs",
       "test/project-model/outcome-revisions.test.mjs",
+      "test/project-model/path-ownership.test.mjs",
       "CONTEXT.md",
       "TESTING.md",
       ".legatura/project.json",
@@ -70,6 +77,7 @@
       ".legatura/gates/architecture-profile.json",
       ".legatura/gates/gap-blockers.json",
       ".legatura/gates/outcome-revisions.json",
+      ".legatura/gates/path-ownership.json",
       ".legatura/gates/plan-refs-adapter.json",
       ".legatura/gates/workbench-semantics.json",
       ".legatura/gates/minimum.json",
@@ -95,6 +103,10 @@
     {
       "path": "test/project-model/outcome-revisions.test.mjs",
       "command": "node --test test/project-model/outcome-revisions.test.mjs"
+    },
+    {
+      "path": "test/project-model/path-ownership.test.mjs",
+      "command": "node --test test/project-model/path-ownership.test.mjs"
     }
   ],
   "publicContracts": ["project-model-interface"],

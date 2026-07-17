@@ -16,7 +16,8 @@
     ],
     "invariants": [
       "Observations never decide whether a Change is acceptable.",
-      "Failed or truncated Git observations fail closed."
+      "Failed or truncated Git observations fail closed.",
+      "One repository observation emits a bounded complete canonical tracked-path set and exact digest, or reports the binding unavailable on command failure, truncation, malformed paths, duplicates, or resource-limit exhaustion."
     ]
   },
   "paths": {
@@ -26,6 +27,7 @@
       "src/core/git-binding.mjs",
       "test/assurance-runtime/command-runner.test.mjs",
       "test/assurance-runtime/git-binding.test.mjs",
+      "test/assurance-runtime/tracked-path-observation.test.mjs",
       ".legatura/modules/assurance-runtime.json",
       ".legatura/contracts/assurance-runtime-interface.json"
     ],
@@ -35,6 +37,10 @@
     {
       "path": "test/assurance-runtime/**",
       "command": "node --test test/assurance-runtime/command-runner.test.mjs test/assurance-runtime/git-binding.test.mjs"
+    },
+    {
+      "path": "test/assurance-runtime/tracked-path-observation.test.mjs",
+      "command": "node --test test/assurance-runtime/tracked-path-observation.test.mjs"
     }
   ],
   "publicContracts": ["assurance-runtime-interface"],

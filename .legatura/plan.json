@@ -238,17 +238,47 @@
       "id": "LGT-011",
       "stage": "S1",
       "status": "planned",
-      "outcome": "Every governed tracked path has one explicit Module owner or an explicit ungoverned disposition, and overlapping write ownership is rejected.",
+      "outcome": "Project Model compiles every tracked repository path to exactly one Module write owner or one explicit ungoverned disposition, rejects latent and concrete ambiguous ownership, and Change Kernel binds Context Capsule plus touched or prospective path enforcement to that exact result.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
-        "claimRefs": [],
+        "activationCriterionRefs": [],
+        "claimRefs": [
+          "change-kernel-consumes-validated-path-ownership",
+          "context-capsule-binds-validated-path-ownership",
+          "module-path-ownership-is-total-and-exclusive",
+          "tracked-path-observation-is-exact"
+        ],
         "gapRefs": ["module-path-ownership-not-machine-audited"],
         "exitCriteria": [
-          "Unknown ownership and overlapping writable ownership fail model validation.",
-          "Generated Context Capsules cannot silently inherit ambiguous paths."
+          "Given one bounded exact tracked-path observation and the frozen exact-or-recursive-prefix policy, Project Model rejects every tracked path with no Module write owner or explicit ungoverned disposition and every latent or concrete owner-owner, owner-disposition, or disposition-disposition overlap without precedence.",
+          "Context Capsule write scope and Change Kernel touched or prospective path enforcement consume the same opaque ownership product from one stabilized exact Model and tracked-path observation, and fail closed when that product is absent, forged, stale, disposition-only, over limit, or drifts from the Candidate's frozen ownership."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-011-C1",
+            "statement": "Given one bounded exact tracked-path observation and the frozen exact-or-recursive-prefix policy, Project Model rejects every tracked path with no Module write owner or explicit ungoverned disposition and every latent or concrete owner-owner, owner-disposition, or disposition-disposition overlap without precedence.",
+            "claimRefs": [
+              "module-path-ownership-is-total-and-exclusive",
+              "tracked-path-observation-is-exact"
+            ],
+            "gapRefs": ["module-path-ownership-not-machine-audited"]
+          },
+          {
+            "id": "LGT-011-C2",
+            "statement": "Context Capsule write scope and Change Kernel touched or prospective path enforcement consume the same opaque ownership product from one stabilized exact Model and tracked-path observation, and fail closed when that product is absent, forged, stale, disposition-only, over limit, or drifts from the Candidate's frozen ownership.",
+            "claimRefs": [
+              "change-kernel-consumes-validated-path-ownership",
+              "context-capsule-binds-validated-path-ownership"
+            ],
+            "gapRefs": []
+          }
         ]
       },
-      "nonGoals": ["Inferring ownership from commit history"]
+      "nonGoals": [
+        "Inferring ownership from commit history, file contents, imports, or naming conventions.",
+        "Automatically repairing ownership conflicts or rewriting Module path declarations.",
+        "Making read context exclusive or treating ungoverned dispositions as write authority or assurance."
+      ]
     },
     {
       "id": "LGT-012",
@@ -818,6 +848,42 @@
       "currentDefinitionDigest": "sha256:d5a80d94c75a62449aa449aa7a836fda62666886427339e31cb1113cf3450794",
       "changedFields": ["dependsOn"],
       "rationale": "Replace retired incomplete predecessor LGT-017 with its achieved append-only revision successor LGT-018 before Worker Execution planning begins.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-011-R1",
+      "outcomeRef": "LGT-011",
+      "amendmentChangeId": "lgt011-declare-path-ownership-contracts",
+      "governanceBaselineDigest": "sha256:fdd8619b5372d39472ce5bd5718f4ea2957e4cb9fd5719a3a7b14ba51f193ba2",
+      "previousDefinition": {
+        "id": "LGT-011",
+        "stage": "S1",
+        "outcome": "Every governed tracked path has one explicit Module owner or an explicit ungoverned disposition, and overlapping write ownership is rejected.",
+        "dependsOn": ["LGT-010"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "Generated Context Capsules cannot silently inherit ambiguous paths.",
+            "Unknown ownership and overlapping writable ownership fail model validation."
+          ],
+          "claimRefs": [],
+          "gapRefs": ["module-path-ownership-not-machine-audited"]
+        },
+        "nonGoals": ["Inferring ownership from commit history"]
+      },
+      "previousDefinitionDigest": "sha256:f7f18d73bcde9684b6a1bb88d55be9852af58fe4359cac13ccda4ca4594efcbe",
+      "currentDefinitionDigest": "sha256:3239e87b91e352dab81db8d925b00eeda30e5d3963f2e5108881222a82648c50",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Replace the speculative path-ownership statement with stable exact Criteria, direct Fact and Module Claims, a fixed attack proof, and an explicit Context Capsule binding before the Outcome is activated.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],

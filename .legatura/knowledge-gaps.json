@@ -6,7 +6,8 @@
       "status": "open",
       "affects": ["project-model"],
       "owner": "governance-maintainer",
-      "statement": "Validation does not yet reject overlapping Module paths or tracked files owned by no Module.",
+      "statement": "Project Model does not yet reject latent and concrete Module owner or ungoverned disposition conflicts, prove total tracked-path classification, or bind Context Capsule write scope to the resulting opaque ownership product.",
+      "proofClaimRefs": ["module-path-ownership-proof-rejects-coverage-and-binding-attacks"],
       "expansionTrigger": "Before automatic worker write capabilities are enabled."
     },
     {

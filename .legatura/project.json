@@ -107,5 +107,19 @@
     "outcomeAlignmentMode": "enforced",
     "outcomeTransitionMode": "enforced",
     "outcomeCriterionSelection": "unique-claim-match-or-explicit-hint"
+  },
+  "pathGovernance": {
+    "schemaVersion": 1,
+    "selectorGrammar": "exact-or-recursive-prefix",
+    "effectiveMatch": "include-minus-exclude",
+    "overlapPolicy": "reject-latent-and-concrete",
+    "conflictResolution": "none",
+    "dispositionPolicy": {
+      "allowedKinds": ["ungoverned"],
+      "requiredFields": ["id", "kind", "paths.include", "paths.exclude", "rationale"],
+      "minimumRationaleCharacters": 12,
+      "grantsWriteAuthority": false
+    },
+    "dispositions": []
   }
 }
