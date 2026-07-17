@@ -42,6 +42,11 @@ test("Git binding captures exact content and fails closed on incomplete observat
   assert.equal(exact.dirty, true);
   assert.ok(exact.status.includes(" M tracked.txt"));
   assert.equal(exact.trackedDiffDigest, canonicalDigest(diff));
+  assert.deepEqual(exact.trackedPathFacts, {
+    schemaVersion: 1,
+    paths: ["tracked.txt"],
+    digest: canonicalDigest({ schemaVersion: 1, paths: ["tracked.txt"] })
+  });
   assert.deepEqual(exact.untracked, [{
     path: "untracked.txt",
     kind: "file",
