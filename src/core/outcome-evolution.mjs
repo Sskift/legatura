@@ -404,8 +404,16 @@ function collectDefinitionDeltas(baselinePlan, currentPlan) {
   let aggregateDefinitionBytes = 0;
   return [...baselineOutcomes].flatMap(([outcomeRef, baselineOutcome]) => {
     const currentOutcome = currentOutcomes.get(outcomeRef);
-    const previousDefinition = normalizeOutcomeDefinition(baselineOutcome, `frozen Outcome ${outcomeRef}`);
-    const currentDefinition = normalizeOutcomeDefinition(currentOutcome, `current Outcome ${outcomeRef}`);
+    const previousDefinition = normalizeOutcomeDefinition(
+      baselineOutcome,
+      `frozen Outcome ${outcomeRef}`,
+      { allowLegacyIdReferences: true }
+    );
+    const currentDefinition = normalizeOutcomeDefinition(
+      currentOutcome,
+      `current Outcome ${outcomeRef}`,
+      { allowLegacyIdReferences: true }
+    );
     aggregateDefinitionBytes += jsonBytes(previousDefinition) + jsonBytes(currentDefinition);
     if (aggregateDefinitionBytes > OUTCOME_PLAN_AMENDMENT_LIMITS.aggregateDefinitionBytes) {
       throw limitError(
@@ -454,7 +462,11 @@ function compileActivationBindings({ baselinePlan, appendedTransitions }) {
     return [{
       transitionId: readString(transition.id),
       outcomeRef,
-      frozenDefinitionDigest: canonicalDigest(normalizeOutcomeDefinition(outcome, `frozen Outcome ${outcomeRef}`))
+      frozenDefinitionDigest: canonicalDigest(normalizeOutcomeDefinition(
+        outcome,
+        `frozen Outcome ${outcomeRef}`,
+        { allowLegacyIdReferences: true }
+      ))
     }];
   }).sort((left, right) => left.outcomeRef.localeCompare(right.outcomeRef)
     || left.transitionId.localeCompare(right.transitionId));
@@ -487,7 +499,11 @@ function validateRevisionHistory({ plan, ledger, label }) {
   }
 
   for (const [outcomeRef, revisions] of byOutcome) {
-    const materializedDefinition = normalizeOutcomeDefinition(outcomes.get(outcomeRef), `${label} Outcome ${outcomeRef}`);
+    const materializedDefinition = normalizeOutcomeDefinition(
+      outcomes.get(outcomeRef),
+      `${label} Outcome ${outcomeRef}`,
+      { allowLegacyIdReferences: true }
+    );
     for (let index = 0; index < revisions.length; index += 1) {
       const revision = revisions[index];
       const expectedId = `${outcomeRef}-R${index + 1}`;
@@ -624,7 +640,7 @@ function normalizeRevisionLedger(value, label) {
   });
 }
 
-function normalizeOutcomeDefinition(outcome, label) {
+function normalizeOutcomeDefinition(outcome, label, { allowLegacyIdReferences = false } = {}) {
   assertPlainObject(outcome, "OUTCOME_REVISION_DEFINITION_INVALID", `${label} must be an Outcome object.`);
   const definitionSource = cloneJson(outcome);
   delete definitionSource.status;
@@ -642,8 +658,14 @@ function normalizeOutcomeDefinition(outcome, label) {
     return {
       id: requireString(criterion.id, `${label} Criterion id`),
       statement: requireString(criterion.statement, `${label} Criterion statement`),
-      claimRefs: normalizeDefinitionList(criterion.claimRefs, `${label} Criterion claimRefs`).sort(),
-      gapRefs: normalizeDefinitionList(criterion.gapRefs, `${label} Criterion gapRefs`).sort()
+      claimRefs: normalizeDefinitionReferenceList(
+        criterion.claimRefs,
+        `${label} Criterion claimRefs`
+      ).sort(),
+      gapRefs: normalizeDefinitionReferenceList(
+        criterion.gapRefs,
+        `${label} Criterion gapRefs`
+      ).sort()
     };
   }).sort((left, right) => left.id.localeCompare(right.id));
   const duplicateCriterionIds = duplicates(criteria.map((criterion) => criterion.id));
@@ -658,24 +680,37 @@ function normalizeOutcomeDefinition(outcome, label) {
     id: requireString(definitionSource.id, `${label}.id`),
     stage: requireString(definitionSource.stage, `${label}.stage`),
     outcome: requireString(definitionSource.outcome, `${label}.outcome`),
-    dependsOn: normalizeDefinitionList(definitionSource.dependsOn, `${label}.dependsOn`).sort(),
+    dependsOn: normalizeDefinitionReferenceList(
+      definitionSource.dependsOn,
+      `${label}.dependsOn`,
+      { allowLegacyIdReferences }
+    ).sort(),
     kind: readString(definitionSource.kind) ?? null,
     allowedChangeKinds: normalizeDefinitionList(
       definitionSource.allowedChangeKinds,
       `${label}.allowedChangeKinds`
     ).sort(),
     acceptance: {
-      activationCriterionRefs: normalizeDefinitionList(
+      activationCriterionRefs: normalizeDefinitionReferenceList(
         acceptance.activationCriterionRefs,
-        `${label}.acceptance.activationCriterionRefs`
+        `${label}.acceptance.activationCriterionRefs`,
+        { allowLegacyIdReferences }
       ).sort(),
       criteria,
       exitCriteria: normalizeDefinitionList(
         acceptance.exitCriteria,
         `${label}.acceptance.exitCriteria`
       ).sort(),
-      claimRefs: normalizeDefinitionList(acceptance.claimRefs, `${label}.acceptance.claimRefs`).sort(),
-      gapRefs: normalizeDefinitionList(acceptance.gapRefs, `${label}.acceptance.gapRefs`).sort()
+      claimRefs: normalizeDefinitionReferenceList(
+        acceptance.claimRefs,
+        `${label}.acceptance.claimRefs`,
+        { allowLegacyIdReferences }
+      ).sort(),
+      gapRefs: normalizeDefinitionReferenceList(
+        acceptance.gapRefs,
+        `${label}.acceptance.gapRefs`,
+        { allowLegacyIdReferences }
+      ).sort()
     },
     nonGoals: normalizeDefinitionList(definitionSource.nonGoals, `${label}.nonGoals`).sort()
   };
@@ -949,6 +984,33 @@ function normalizeDefinitionList(value, label) {
     );
   }
   return [...new Set(value.map((entry) => entry.trim()))];
+}
+
+function normalizeDefinitionReferenceList(value, label, { allowLegacyIdReferences = false } = {}) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    throw amendmentError(
+      "OUTCOME_REVISION_DEFINITION_INVALID",
+      `${label} must be a list of stable references.`
+    );
+  }
+  const references = value.map((entry) => readStableReference(entry, { allowLegacyIdReferences }));
+  if (references.some((entry) => !entry)) {
+    throw amendmentError(
+      "OUTCOME_REVISION_DEFINITION_INVALID",
+      `${label} contains an invalid stable reference.`
+    );
+  }
+  return [...new Set(references)];
+}
+
+function readStableReference(value, { allowLegacyIdReferences }) {
+  if (typeof value === "string") return readString(value);
+  if (!allowLegacyIdReferences || !value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const fields = Object.keys(value);
+  return fields.length === 1 && fields[0] === "id" ? readString(value.id) : undefined;
 }
 
 function uniqueStrings(value) {

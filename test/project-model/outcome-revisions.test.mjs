@@ -83,6 +83,34 @@ test("Outcome Plan Amendment compiles one exact bounded pre-activation Revision"
     nonGoalCompilation.appendedRevisions[0].currentDefinitionDigest,
     nonGoalCompilation.appendedRevisions[0].previousDefinitionDigest
   );
+
+  const canonicalCompilation = compileOutcomePlanAmendment(revisionFixture());
+  const legacy = revisionFixture();
+  for (const planValue of [legacy.governanceBaseline.plan, legacy.currentModel.plan]) {
+    planValue.outcomes.find((outcome) => outcome.id === TARGET).acceptance.claimRefs = [{
+      id: "revision-exact"
+    }];
+  }
+  legacy.currentModel.plan.outcomes.find((outcome) => outcome.id === TARGET).dependsOn = [{ id: OTHER }];
+  reseal(legacy.governanceBaseline);
+  legacy.currentModel.plan.outcomeRevisions.at(-1).governanceBaselineDigest = legacy.governanceBaseline.digest;
+  const legacyCompilation = compileOutcomePlanAmendment(legacy);
+  assert.deepEqual(
+    legacyCompilation.appendedRevisions[0].previousDefinition,
+    canonicalCompilation.appendedRevisions[0].previousDefinition
+  );
+  assert.equal(
+    legacyCompilation.appendedRevisions[0].previousDefinitionDigest,
+    canonicalCompilation.appendedRevisions[0].previousDefinitionDigest
+  );
+  assert.equal(
+    legacyCompilation.appendedRevisions[0].currentDefinitionDigest,
+    canonicalCompilation.appendedRevisions[0].currentDefinitionDigest
+  );
+  assert.deepEqual(
+    legacyCompilation.appendedRevisions[0].changedFields,
+    canonicalCompilation.appendedRevisions[0].changedFields
+  );
 });
 
 test("Outcome Plan Amendment rejects history, lifecycle, authorization, and resource attacks", () => {
@@ -149,6 +177,52 @@ test("Outcome Plan Amendment rejects history, lifecycle, authorization, and reso
       code: "OUTCOME_REVISION_DEFINITION_INVALID",
       mutate: ({ currentModel }) => {
         delete currentModel.plan.outcomeRevisions.at(-1).previousDefinition.nonGoals;
+      }
+    },
+    {
+      name: "write a legacy reference object into new Revision history",
+      code: "OUTCOME_REVISION_DEFINITION_INVALID",
+      mutate: ({ currentModel }) => {
+        currentModel.plan.outcomeRevisions.at(-1).previousDefinition.acceptance.claimRefs = [{
+          id: "revision-exact"
+        }];
+      }
+    },
+    {
+      name: "accept an ambiguous legacy reference object",
+      code: "OUTCOME_REVISION_DEFINITION_INVALID",
+      mutate: ({ currentModel }) => {
+        currentModel.plan.outcomes.find((outcome) => outcome.id === TARGET).acceptance.claimRefs = [{
+          id: "revision-exact",
+          ref: "forged-reference"
+        }];
+      }
+    },
+    {
+      name: "accept a non-id legacy reference alias",
+      code: "OUTCOME_REVISION_DEFINITION_INVALID",
+      mutate: ({ currentModel }) => {
+        currentModel.plan.outcomes.find((outcome) => outcome.id === TARGET).acceptance.claimRefs = [{
+          claimRef: "revision-exact"
+        }];
+      }
+    },
+    {
+      name: "replace a reference list with a scalar object",
+      code: "OUTCOME_REVISION_DEFINITION_INVALID",
+      mutate: ({ currentModel }) => {
+        currentModel.plan.outcomes.find((outcome) => outcome.id === TARGET).acceptance.claimRefs = {
+          id: "revision-exact"
+        };
+      }
+    },
+    {
+      name: "treat prose fields as legacy references",
+      code: "OUTCOME_REVISION_DEFINITION_INVALID",
+      mutate: ({ currentModel }) => {
+        currentModel.plan.outcomes.find((outcome) => outcome.id === TARGET).nonGoals = [{
+          id: "not-prose"
+        }];
       }
     },
     {
