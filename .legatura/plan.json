@@ -160,7 +160,7 @@
     {
       "id": "LGT-010",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "Every ordinary Change is compiled against an active Development Outcome through an explicit, reviewable contribution, and humans can inspect how architecture Claims map to Gates, Evidence, and open Gaps.",
       "dependsOn": ["LGT-001", "LGT-002", "LGT-003", "LGT-004"],
       "acceptance": {
@@ -728,7 +728,141 @@
       "authority": "governance-maintainer"
     }
   },
-  "outcomeTransitions": [],
+  "outcomeTransitions": [
+    {
+      "id": "LGT-010-T1",
+      "outcomeRef": "LGT-010",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "Prior sealed Packages now cover every frozen LGT-010 Criterion and atomically close its Architecture Profile Gap plus every declared blocker without using this Plan Amendment as proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt010-adopt-local-workbench-projections",
+          "acceptanceDigest": "sha256:0f1bc0265f66cd853d75fc55d7887bad0a8bef6d82552954458d9c3d04281078"
+        },
+        {
+          "changeId": "lgt010-adopt-module-claim-gate-projection",
+          "acceptanceDigest": "sha256:b151b82f4cef122998574918480e3a1eefa0af5e78247cf6d63af80a1a1e18b4"
+        },
+        {
+          "changeId": "lgt010-compile-architecture-profile",
+          "acceptanceDigest": "sha256:63737c8ec7e3f3ca07a54c58a177551a337da1e5b67c5c7473b7128636fac675"
+        },
+        {
+          "changeId": "lgt010-compile-outcome-contributions",
+          "acceptanceDigest": "sha256:96047c966709270b40f955510452beb1ca4d8511b397579742d496846387bd1e"
+        },
+        {
+          "changeId": "lgt010-compile-workbench-semantics",
+          "acceptanceDigest": "sha256:1acef550afa62c6903e64e0446507ecd06e7c1fdf71243074f707feffc294fdb"
+        },
+        {
+          "changeId": "lgt010-stabilize-change-query-snapshot",
+          "acceptanceDigest": "sha256:3e15726550629b8722ba23e0efeb1bbeb92270d61d319b267fa31c6752f6648a"
+        },
+        {
+          "changeId": "lgt010-enforce-gap-blockers",
+          "acceptanceDigest": "sha256:3319b8ac7684d46c946a83fbd7f7e26af2662fe46b83edb9a4d2f629eb2458af"
+        },
+        {
+          "changeId": "lgt010-enforce-kernel-planrefs-adapter",
+          "acceptanceDigest": "sha256:814a1215a783c2728f256211887327ddc10e8f6d8a48b016bc456d99d4373b3b"
+        },
+        {
+          "changeId": "lgt010-enforce-outcome-alignment",
+          "acceptanceDigest": "sha256:3abc23eac771c03ca3e38a60a5ed55d58356cc0b632dd6d2024d35f4b7c1277d"
+        },
+        {
+          "changeId": "lgt010-enforce-outcome-transitions",
+          "acceptanceDigest": "sha256:2b3cf24e765f2d260e4fa9853cd7ca9354946bfe2026b49fb0f34fa5262507af"
+        },
+        {
+          "changeId": "lgt010-kernel-outcome-transitions",
+          "acceptanceDigest": "sha256:12da8454daf4bf7bf31589c53b9e4f31a7cd9eecfea7a0489f291462d83970f6"
+        },
+        {
+          "changeId": "lgt010-project-module-claim-gate-routes",
+          "acceptanceDigest": "sha256:497282ac610a1f485d31cc87de12101398a206b2288d4a7edd77c39fbaa05319"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-010-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "Prior Project Model implementation Packages directly cover validation, frozen Plan governance, and exact model-bound architecture compilation through project-model-references-are-consistent.",
+            "residualUncertainty": "Planned Outcome refinement remains unsupported and is tracked separately; it does not weaken the frozen active LGT-010 Plan facts."
+          }
+        },
+        {
+          "criterionRef": "LGT-010-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Kernel planRefs adapter Package directly proves that missing, unknown, non-active, or lossy Outcome references fail closed before Change compilation.",
+            "residualUncertainty": "Browser Plan option requirements are not yet a canonical Workbench input projection, while Kernel enforcement remains authoritative and fail-closed."
+          }
+        },
+        {
+          "criterionRef": "LGT-010-C3",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Outcome Contribution compiler Package directly binds only selected Outcomes into the generated Context Capsule and exact verification subject.",
+            "residualUncertainty": "Worker Context Expansion enforcement belongs to later Worker Execution Outcomes and is outside this Criterion."
+          }
+        },
+        {
+          "criterionRef": "LGT-010-C4",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "Accepted compiler and Kernel Packages derive and revalidate exact content-addressed Contributions from the primary Module and Contract-visible Claims, with Plan-authority non-progress exceptions isolated.",
+            "residualUncertainty": "A Contribution proves relevance rather than Criterion satisfaction; this Transition supplies the separate Plan-authority assessment required for satisfaction."
+          }
+        },
+        {
+          "criterionRef": "LGT-010-C5",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "Prior sealed Transition compiler, Kernel lifecycle, and exact-package Packages bind status changes to Candidate-frozen history, Claim Evidence, Gap dispositions, and Plan authority at compile, Gate, and acceptance boundaries.",
+            "residualUncertainty": "Accepted history remains local and unauthenticated across clones; the accepted-history-not-portable Gap remains open."
+          }
+        },
+        {
+          "criterionRef": "LGT-010-C6",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "Project Model, Kernel, and Local Workbench Packages now project exact Outcome-to-Claim-to-Gate relations, current and sealed historical Evidence currency, Residual Uncertainty, and Knowledge Gaps through bounded source-bound views without aggregate assurance.",
+            "residualUncertainty": "Browser DOM interaction and canonical Plan or acceptance-input choices remain explicit LGT-014-era Gaps; the Profile and Workbench semantic seams themselves are directly proved."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "architecture-acceptance-profile-not-projected",
+          "rationale": "The three declared Profile Closure Claims are covered by exact prior Project Model, Kernel, and Local Workbench Packages."
+        },
+        {
+          "gapRef": "architecture-profile-projection-boundaries-not-closed",
+          "rationale": "The Kernel and Local Workbench semantic projection Claims are covered after all declared blocker Gaps close in the same Transition."
+        },
+        {
+          "gapRef": "knowledge-gap-blockers-not-enforced",
+          "rationale": "The prior blocker-enforcement Package directly proves append-only validation, transitive derivation, route blocking, and atomic Closure consumption."
+        },
+        {
+          "gapRef": "module-claim-gate-projection-not-centralized",
+          "rationale": "Prior Project Model and Kernel adoption Packages directly prove one bounded batch Claim and Gate projection with no consumer-side semantic traversal."
+        },
+        {
+          "gapRef": "outcome-contribution-not-machine-validated",
+          "rationale": "Its already-closed exact Contribution implementation remains a necessary frozen LGT-010 Criterion disposition."
+        },
+        {
+          "gapRef": "outcome-transition-evidence-not-machine-bound",
+          "rationale": "Its already-closed compiler and Kernel lifecycle Packages remain the exact mechanism compiling this Transition."
+        }
+      ]
+    }
+  ],
   "changeRules": {
     "planBeforeImplementation": "A new or materially changed Outcome uses a plan-amendment Change that can touch only .legatura/** and cannot reference the plan it edits; implementation follows in a later Change against the accepted baseline.",
     "stableIds": "Outcome ids are never reused or renamed; retired Outcomes remain as historical records with reasons and replacements.",
