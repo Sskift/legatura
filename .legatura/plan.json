@@ -237,7 +237,7 @@
     {
       "id": "LGT-011",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "Project Model compiles every tracked repository path to exactly one Module write owner or one explicit ungoverned disposition, rejects latent and concrete ambiguous ownership, and Change Kernel binds Context Capsule plus touched or prospective path enforcement to that exact result.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1089,6 +1089,16 @@
           "rationale": "The fixed Project Model proof command in the prior compiler Package directly covers both frozen Closure proof Claims, while the separate Kernel Package proves lifecycle adoption required by the durable resolution."
         }
       ]
+    },
+    {
+      "id": "LGT-011-T1",
+      "outcomeRef": "LGT-011",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-010 is achieved in the frozen Governance Baseline, LGT-011 was independently revised with stable Criteria and exact proof routes, and this isolated Amendment freezes that unchanged definition before any implementation Change can reference it.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
