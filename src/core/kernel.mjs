@@ -26,6 +26,10 @@ import {
 } from "./evidence.mjs";
 import { readGitBinding } from "./git-binding.mjs";
 import {
+  OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION,
+  compileOutcomePlanAmendment
+} from "./outcome-evolution.mjs";
+import {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
   loadProjectModel,
@@ -35,8 +39,6 @@ import {
   validateProjectModel
 } from "./project-model.mjs";
 import {
-  OUTCOME_TRANSITION_SCHEMA_VERSION,
-  compileOutcomeTransitions,
   inspectAcceptedPackageRecord
 } from "./outcome-transitions.mjs";
 
@@ -162,22 +164,21 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return compileWorkbenchProjectionFromSnapshot(snapshot);
   }
 
-  async function observeCurrentChangeScope(change, git, currentPlan) {
+  async function observeCurrentChangeScope(change, git) {
     const touchedPaths = await readObservedTouchedPaths(change, git, resolvedRepoPath, commandRunner);
     change.changeSet = compileObservedChangeSet(change, git, touchedPaths);
     change.scopeAnalysis = analyzeChangeScope(change, git, touchedPaths);
     assertPlanChangeSeparation(change, touchedPaths);
-    assertPlanHistoryPreserved(change, currentPlan);
   }
 
-  async function deriveCurrentOutcomeTransitions(change, currentModel) {
+  async function deriveCurrentOutcomePlanAmendment(change, currentModel) {
     const catalog = assertPriorAcceptedPackageCatalog(change.priorAcceptedPackages, {
       required: change.changeKind === "plan-amendment"
     });
     const resolvedPackages = catalog
       ? (await Promise.all(catalog.entries.map((entry) => store.get(entry.changeId)))).filter(Boolean)
       : [];
-    return compileOutcomeTransitions({
+    return compileOutcomePlanAmendment({
       change,
       governanceBaseline: readGovernanceBaseline(change),
       currentModel,
@@ -186,24 +187,24 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     });
   }
 
-  async function assertCurrentOutcomeTransitions(change, currentModel) {
-    if (change.outcomeTransitionSchemaVersion !== OUTCOME_TRANSITION_SCHEMA_VERSION
-      || !change.outcomeTransitionCompilation) {
+  async function assertCurrentOutcomePlanAmendment(change, currentModel) {
+    if (change.outcomePlanAmendmentSchemaVersion !== OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION
+      || !change.outcomePlanAmendmentCompilation) {
       throw kernelError(
-        "OUTCOME_TRANSITION_COMPILATION_STALE",
-        "Compile the Outcome Transition projection before running Gates or accepting the Change.",
+        "OUTCOME_PLAN_AMENDMENT_COMPILATION_STALE",
+        "Compile the Outcome Plan Amendment projection before running Gates or accepting the Change.",
         409
       );
     }
-    const expected = await deriveCurrentOutcomeTransitions(change, currentModel);
-    if (canonicalDigest(expected) !== canonicalDigest(change.outcomeTransitionCompilation)) {
+    const expected = await deriveCurrentOutcomePlanAmendment(change, currentModel);
+    if (canonicalDigest(expected) !== canonicalDigest(change.outcomePlanAmendmentCompilation)) {
       throw kernelError(
-        "OUTCOME_TRANSITION_COMPILATION_STALE",
-        "Outcome Transition proof no longer matches the frozen catalog, current Plan, or resolved Accepted Packages.",
+        "OUTCOME_PLAN_AMENDMENT_COMPILATION_STALE",
+        "Outcome Plan Amendment proof no longer matches the frozen catalog, current Plan, or resolved Accepted Packages.",
         409,
         {
           expectedDigest: canonicalDigest(expected),
-          observedDigest: canonicalDigest(change.outcomeTransitionCompilation)
+          observedDigest: canonicalDigest(change.outcomePlanAmendmentCompilation)
         }
       );
     }
@@ -213,7 +214,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function assertCurrentGovernanceContracts(change, currentModel, { modelValid = true } = {}) {
     if (!modelValid) return null;
     if (change.changeKind === "plan-amendment") {
-      return assertCurrentOutcomeTransitions(change, currentModel);
+      return assertCurrentOutcomePlanAmendment(change, currentModel);
     }
     return assertKnowledgeGapProofContractsPreserved({
       governanceBaseline: readGovernanceBaseline(change),
@@ -336,9 +337,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       integrityTarget: cloneJson(input.integrityTarget ?? null),
       outcomeAlignmentSchemaVersion: OUTCOME_ALIGNMENT_SCHEMA_VERSION,
       outcomeAlignment: null,
-      outcomeTransitionSchemaVersion: OUTCOME_TRANSITION_SCHEMA_VERSION,
+      outcomePlanAmendmentSchemaVersion: OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION,
       priorAcceptedPackages,
-      outcomeTransitionCompilation: null,
+      outcomePlanAmendmentCompilation: null,
       claims,
       verificationObligations: normalizeVerificationObligations(input.verificationObligations, claims),
       verificationPlan: null,
@@ -412,9 +413,11 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       await assertCurrentGovernanceContracts(change, inspection);
     }
     change = compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
-    await observeCurrentChangeScope(change, inspection.git, inspection.plan);
-    change.outcomeTransitionSchemaVersion = OUTCOME_TRANSITION_SCHEMA_VERSION;
-    change.outcomeTransitionCompilation = await deriveCurrentOutcomeTransitions(change, inspection);
+    await observeCurrentChangeScope(change, inspection.git);
+    delete change.outcomeTransitionSchemaVersion;
+    delete change.outcomeTransitionCompilation;
+    change.outcomePlanAmendmentSchemaVersion = OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION;
+    change.outcomePlanAmendmentCompilation = await deriveCurrentOutcomePlanAmendment(change, inspection);
     if (patch.authorityDecision !== undefined) bindAuthorityDecision(change);
     transition(change, "Submitted", now(), "Change compiled with explicit Claims.");
     deriveEvidenceReady(change, inspection, now());
@@ -450,7 +453,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (change.state === "Integrated") {
       throw kernelError("CHANGE_SEALED", `Change ${change.id} is Integrated and cannot run more Gates.`, 409);
     }
-    await observeCurrentChangeScope(change, inspection.git, model.plan);
+    await observeCurrentChangeScope(change, inspection.git);
     assertIntegrityFailureEvidenceCurrent(change);
     if (change.state === "Accepted") {
       if (!validation.valid) {
@@ -555,7 +558,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       await assertCurrentGovernanceContracts(change, inspection);
     }
     if (change.compilation) {
-      await observeCurrentChangeScope(change, inspection.git, inspection.plan);
+      await observeCurrentChangeScope(change, inspection.git);
       assertIntegrityFailureEvidenceCurrent(change);
     }
 
@@ -3908,147 +3911,6 @@ function assertPlanChangeSeparation(change, touchedPaths) {
   }
 }
 
-function assertPlanHistoryPreserved(change, currentPlan) {
-  if ((readString(change.changeKind) ?? "implementation") !== "plan-amendment") return;
-  const baselinePlan = readGovernanceBaseline(change).plan;
-  if (!baselinePlan) return;
-  if (readString(currentPlan?.id) !== readString(baselinePlan.id)) {
-    throw kernelError(
-      "PLAN_HISTORY_REWRITE_FORBIDDEN",
-      "A Development Plan amendment cannot replace the identity of the existing plan.",
-      422,
-      { baselinePlanId: baselinePlan.id ?? null, currentPlanId: currentPlan?.id ?? null }
-    );
-  }
-  const currentById = new Map((Array.isArray(currentPlan?.outcomes) ? currentPlan.outcomes : [])
-    .map((outcome) => [readString(outcome?.id), outcome])
-    .filter(([id]) => Boolean(id)));
-  const removedOutcomeIds = [];
-  const rewrittenOutcomeIds = [];
-  const reopenedOutcomeIds = [];
-  const removedCriteria = [];
-  const rewrittenCriteria = [];
-  const terminalAdditions = [];
-  const statusChangeAdditions = [];
-  for (const baselineOutcome of Array.isArray(baselinePlan.outcomes) ? baselinePlan.outcomes : []) {
-    const outcomeId = readString(baselineOutcome?.id);
-    if (!outcomeId) continue;
-    const currentOutcome = currentById.get(outcomeId);
-    if (!currentOutcome) {
-      removedOutcomeIds.push(outcomeId);
-      continue;
-    }
-    if (readString(currentOutcome.outcome) !== readString(baselineOutcome.outcome)) {
-      rewrittenOutcomeIds.push(outcomeId);
-    }
-    if (["achieved", "retired"].includes(baselineOutcome.status)
-      && currentOutcome.status !== baselineOutcome.status) {
-      reopenedOutcomeIds.push(outcomeId);
-    }
-    const criteriaGoverned = Array.isArray(baselineOutcome.acceptance?.criteria)
-      || Array.isArray(currentOutcome.acceptance?.criteria);
-    if (baselineOutcome.status === "achieved"
-      && canonicalDigest(achievedAcceptanceHistoryValue(currentOutcome.acceptance, criteriaGoverned))
-        !== canonicalDigest(achievedAcceptanceHistoryValue(baselineOutcome.acceptance, criteriaGoverned))) {
-      rewrittenOutcomeIds.push(outcomeId);
-    }
-    const criterionChanges = compareStableCriteria(baselineOutcome, currentOutcome);
-    removedCriteria.push(...criterionChanges.removed.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
-    rewrittenCriteria.push(...criterionChanges.rewritten.map((entry) => ({
-      outcomeRef: outcomeId,
-      ...entry
-    })));
-    if (["achieved", "retired"].includes(baselineOutcome.status)) {
-      terminalAdditions.push(...criterionChanges.added.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
-    }
-    if (currentOutcome.status !== baselineOutcome.status) {
-      statusChangeAdditions.push(...criterionChanges.added.map((criterionRef) => ({ outcomeRef: outcomeId, criterionRef })));
-    }
-  }
-  if (removedOutcomeIds.length > 0 || rewrittenOutcomeIds.length > 0 || reopenedOutcomeIds.length > 0) {
-    throw kernelError(
-      "PLAN_HISTORY_REWRITE_FORBIDDEN",
-      "Existing Outcome identities and achieved records are durable history; retire or supersede them instead of deleting, renaming, reopening, or rewriting them.",
-      422,
-      {
-        removedOutcomeIds,
-        rewrittenOutcomeIds: uniqueStrings(rewrittenOutcomeIds),
-        reopenedOutcomeIds
-      }
-    );
-  }
-  if (removedCriteria.length > 0
-    || rewrittenCriteria.length > 0
-    || terminalAdditions.length > 0
-    || statusChangeAdditions.length > 0) {
-    throw kernelError(
-      "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN",
-      "Stable Outcome Criteria cannot be removed or reinterpreted; new Criteria must be declared before a status transition and before an Outcome becomes terminal.",
-      422,
-      { removedCriteria, rewrittenCriteria, terminalAdditions, statusChangeAdditions }
-    );
-  }
-}
-
-function compareStableCriteria(baselineOutcome, currentOutcome) {
-  const baselineById = new Map((Array.isArray(baselineOutcome?.acceptance?.criteria)
-    ? baselineOutcome.acceptance.criteria
-    : []).map((criterion) => [readString(criterion?.id), criterion]).filter(([id]) => Boolean(id)));
-  const currentById = new Map((Array.isArray(currentOutcome?.acceptance?.criteria)
-    ? currentOutcome.acceptance.criteria
-    : []).map((criterion) => [readString(criterion?.id), criterion]).filter(([id]) => Boolean(id)));
-  const removed = [];
-  const rewritten = [];
-  for (const [criterionRef, baselineCriterion] of baselineById) {
-    const currentCriterion = currentById.get(criterionRef);
-    if (!currentCriterion) {
-      removed.push(criterionRef);
-      continue;
-    }
-    const baselineValue = criterionSemanticValue(baselineCriterion);
-    const currentValue = criterionSemanticValue(currentCriterion);
-    if (canonicalDigest(baselineValue) !== canonicalDigest(currentValue)) {
-      rewritten.push({
-        criterionRef,
-        changedFields: ["statement", "claimRefs", "gapRefs"].filter((field) => (
-          canonicalDigest(baselineValue[field]) !== canonicalDigest(currentValue[field])
-        )),
-        baselineDigest: canonicalDigest(baselineValue),
-        currentDigest: canonicalDigest(currentValue)
-      });
-    }
-  }
-  const added = [...currentById.keys()].filter((criterionRef) => !baselineById.has(criterionRef));
-  return { removed, rewritten, added };
-}
-
-function criterionSemanticValue(criterion) {
-  return {
-    id: readString(criterion?.id) ?? null,
-    statement: readString(criterion?.statement) ?? null,
-    claimRefs: normalizeStringList(criterion?.claimRefs).sort(),
-    gapRefs: normalizeStringList(criterion?.gapRefs).sort()
-  };
-}
-
-function achievedAcceptanceHistoryValue(acceptance, criteriaGoverned) {
-  const value = acceptance && typeof acceptance === "object" && !Array.isArray(acceptance)
-    ? cloneJson(acceptance)
-    : {};
-  if (criteriaGoverned) {
-    delete value.criteria;
-    delete value.exitCriteria;
-    delete value.claimRefs;
-    delete value.gapRefs;
-    return value;
-  }
-  if (Array.isArray(value.exitCriteria)) value.exitCriteria = normalizeStringList(value.exitCriteria).sort();
-  for (const field of ["claimRefs", "gapRefs"]) {
-    if (Array.isArray(value[field])) value[field] = normalizeReferenceList(value[field]).sort();
-  }
-  return value;
-}
-
 function assertOutcomeExceptionBinding(change) {
   const requestedValue = change.compilerInput?.outcomeExceptions;
   const compiledValue = change.outcomeAlignment?.exceptions;
@@ -4370,7 +4232,7 @@ function createAcceptedPackageContent(change) {
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
     ...readOutcomeAlignmentFields(change),
-    ...readOutcomeTransitionFields(change),
+    ...readOutcomePlanAmendmentFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -4401,7 +4263,7 @@ function createVerificationSubject(change) {
     planRefs: change.planRefs ?? [],
     integrityTarget: change.integrityTarget ?? null,
     ...readOutcomeAlignmentFields(change),
-    ...readOutcomeTransitionFields(change),
+    ...readOutcomePlanAmendmentFields(change),
     claims: change.claims,
     verificationObligations: change.verificationObligations,
     verificationPlan: change.verificationPlan,
@@ -4428,10 +4290,19 @@ function readOutcomeAlignmentFields(change) {
   });
 }
 
-function readOutcomeTransitionFields(change) {
-  if (change.outcomeTransitionSchemaVersion !== OUTCOME_TRANSITION_SCHEMA_VERSION) return {};
+function readOutcomePlanAmendmentFields(change) {
+  const claimsCurrentSchema = Object.hasOwn(change, "outcomePlanAmendmentSchemaVersion")
+    || Object.hasOwn(change, "outcomePlanAmendmentCompilation");
+  if (claimsCurrentSchema) {
+    return cloneJson({
+      outcomePlanAmendmentSchemaVersion: change.outcomePlanAmendmentSchemaVersion ?? null,
+      priorAcceptedPackages: change.priorAcceptedPackages ?? null,
+      outcomePlanAmendmentCompilation: change.outcomePlanAmendmentCompilation ?? null
+    });
+  }
+  if (change.outcomeTransitionSchemaVersion !== 1) return {};
   return cloneJson({
-    outcomeTransitionSchemaVersion: OUTCOME_TRANSITION_SCHEMA_VERSION,
+    outcomeTransitionSchemaVersion: 1,
     priorAcceptedPackages: change.priorAcceptedPackages ?? null,
     outcomeTransitionCompilation: change.outcomeTransitionCompilation ?? null
   });

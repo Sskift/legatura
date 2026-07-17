@@ -356,8 +356,8 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   await writeJson(planPath, renamedPlan);
   await assert.rejects(
     kernel.compileChange(historyChange.id),
-    (error) => error.code === "PLAN_HISTORY_REWRITE_FORBIDDEN"
-      && error.details.removedOutcomeIds.includes("LGT-901")
+    (error) => error.code === "OUTCOME_REVISION_LEDGER_REWRITE_FORBIDDEN"
+      && error.details.removedOutcomeRefs.includes("LGT-901")
   );
   await writeJson(planPath, plan);
 
@@ -368,8 +368,8 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   await writeJson(planPath, rewrittenCriterionPlan);
   await assert.rejects(
     kernel.compileChange(historyChange.id),
-    (error) => error.code === "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN"
-      && error.details.rewrittenCriteria.some((entry) => entry.criterionRef === "LGT-900-C1")
+    (error) => error.code === "OUTCOME_REVISION_STATUS_FORBIDDEN"
+      && error.details.outcomeRef === "LGT-900"
   );
   await writeJson(planPath, plan);
 
@@ -386,8 +386,8 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   await writeJson(planPath, deletedLegacyReferencePlan);
   await assert.rejects(
     kernel.compileChange(historyChange.id),
-    (error) => error.code === "PLAN_HISTORY_REWRITE_FORBIDDEN"
-      && error.details.rewrittenOutcomeIds.includes("LGT-897")
+    (error) => error.code === "OUTCOME_REVISION_STATUS_FORBIDDEN"
+      && error.details.outcomeRef === "LGT-897"
   );
   await writeJson(planPath, plan);
 
@@ -404,10 +404,9 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   await writeJson(planPath, statusChangeCriteriaPlan);
   await assert.rejects(
     kernel.compileChange(historyChange.id),
-    (error) => error.code === "PLAN_CRITERIA_HISTORY_REWRITE_FORBIDDEN"
-      && error.details.statusChangeAdditions.some((entry) => (
-        entry.outcomeRef === "LGT-901" && entry.criterionRef === "LGT-901-C1"
-      ))
+    (error) => error.code === "OUTCOME_REVISION_TRANSITION_MIXED"
+      && error.details.revisedOutcomeRefs.includes("LGT-901")
+      && error.details.statusOutcomeRefs.includes("LGT-901")
   );
   await writeJson(planPath, plan);
 
@@ -441,9 +440,9 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   unresolvedPlan.outcomes.find((outcome) => outcome.id === "LGT-903").status = "achieved";
   await writeJson(planPath, unresolvedPlan);
   const unresolved = await kernel.compileChange(historyChange.id);
-  assert.equal(unresolved.outcomeTransitionCompilation.mode, "declared");
-  assert.equal(unresolved.outcomeTransitionCompilation.status, "unresolved");
-  assert.deepEqual(unresolved.outcomeTransitionCompilation.unresolved, [{
+  assert.equal(unresolved.outcomePlanAmendmentCompilation.mode, "declared");
+  assert.equal(unresolved.outcomePlanAmendmentCompilation.status, "unresolved");
+  assert.deepEqual(unresolved.outcomePlanAmendmentCompilation.unresolved, [{
     outcomeRef: "LGT-903",
     from: "active",
     to: "achieved",
@@ -481,16 +480,16 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   };
   let planCompiled = await kernel.compileChange(historyChange.id, compilePatch);
   assert.equal(planCompiled.state, "Submitted");
-  assert.equal(planCompiled.outcomeTransitionCompilation.status, "complete");
-  assert.equal(planCompiled.outcomeTransitionCompilation.priorAcceptedPackagesDigest, frozenCatalog.digest);
-  const compiledProof = planCompiled.outcomeTransitionCompilation.appendedTransitions[0]
+  assert.equal(planCompiled.outcomePlanAmendmentCompilation.status, "complete");
+  assert.equal(planCompiled.outcomePlanAmendmentCompilation.priorAcceptedPackagesDigest, frozenCatalog.digest);
+  const compiledProof = planCompiled.outcomePlanAmendmentCompilation.appendedTransitions[0]
     .criterionProofs[0].packages[0];
   assert.deepEqual(
     { changeId: compiledProof.changeId, acceptanceDigest: compiledProof.acceptanceDigest },
     proofA.reference
   );
   assert.ok(compiledProof.evidenceBindings.length > 0);
-  const compiledGapProof = planCompiled.outcomeTransitionCompilation.appendedTransitions[0]
+  const compiledGapProof = planCompiled.outcomePlanAmendmentCompilation.appendedTransitions[0]
     .gapDispositions[0];
   assert.deepEqual(compiledGapProof.proofClaimRefs, [TRANSITION_GAP_PROOF_CLAIM_ID]);
   assert.deepEqual(
@@ -523,11 +522,11 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
     `${historyChange.id}.json`
   );
   const forgedProjection = JSON.parse(await readFile(candidateRecordPath, "utf8"));
-  forgedProjection.outcomeTransitionCompilation.status = "forged";
+  forgedProjection.outcomePlanAmendmentCompilation.status = "forged";
   await writeJson(candidateRecordPath, forgedProjection);
   await assert.rejects(
     kernel.runGate(historyChange.id, "minimum"),
-    (error) => error.code === "OUTCOME_TRANSITION_COMPILATION_STALE"
+    (error) => error.code === "OUTCOME_PLAN_AMENDMENT_COMPILATION_STALE"
   );
   planCompiled = await kernel.compileChange(historyChange.id, compilePatch);
   const planGate = await kernel.runGate(historyChange.id, "minimum");
@@ -562,8 +561,8 @@ test("plan amendments preserve history, isolate implementation, and use Plan aut
   assert.equal(acceptedPlan.state, "Accepted");
   assert.deepEqual(acceptedPlan.acceptance.package.priorAcceptedPackages, frozenCatalog);
   assert.deepEqual(
-    acceptedPlan.acceptance.package.outcomeTransitionCompilation,
-    planCompiled.outcomeTransitionCompilation
+    acceptedPlan.acceptance.package.outcomePlanAmendmentCompilation,
+    planCompiled.outcomePlanAmendmentCompilation
   );
   assert.equal(acceptedPlan.acceptance.acceptedAt, acceptedPlan.history.find((entry) => (
     entry.to === "Accepted" && entry.digest === acceptedPlan.acceptance.digest
