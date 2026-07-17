@@ -13,6 +13,8 @@ const HARD_LIMITS = Object.freeze({
   trackedPaths: 65_536,
   moduleRefs: 2048,
   pathRefs: 65_536,
+  scopeSelections: 2048,
+  scopeSelectors: 65_536,
   projectionBindings: 262_144,
   segmentsPerPath: 256,
   selectorBytes: 4096,
@@ -151,7 +153,11 @@ export function projectCompiledModulePathOwnershipIndex(product, options = {}) {
     throw productError("Module path ownership product is forged or serialized.");
   }
   assertPlainRecord(options, "projection options");
-  assertAllowedKeys(options, ["limits", "model", "moduleRefs", "pathRefs"], "projection options");
+  assertAllowedKeys(
+    options,
+    ["limits", "model", "moduleRefs", "pathRefs", "scopeSelections"],
+    "projection options"
+  );
   const model = readOwn(options, "model");
   const limits = resolveLimits(readOwn(options, "limits"), state.limits, "projection");
   assertCompiledUsageWithinLimits(state.observation, limits);
@@ -179,21 +185,34 @@ export function projectCompiledModulePathOwnershipIndex(product, options = {}) {
     budget
   );
   const pathRefs = normalizeRequestedPaths(readOwn(options, "pathRefs"), limits.pathRefs, budget);
+  const scopeSelections = normalizeScopeSelections(
+    readOwn(options, "scopeSelections"),
+    limits,
+    budget
+  );
   const unknownModuleRefs = moduleRefs.filter((moduleRef) => !state.moduleSubjects.has(moduleRef));
-  if (unknownModuleRefs.length > 0) {
+  const unknownSelectionModuleRefs = scopeSelections
+    .map((selection) => selection.moduleRef)
+    .filter((moduleRef) => !state.moduleSubjects.has(moduleRef));
+  if (unknownModuleRefs.length > 0 || unknownSelectionModuleRefs.length > 0) {
+    const unknownRefs = [...new Set([...unknownModuleRefs, ...unknownSelectionModuleRefs])]
+      .sort(compareUtf8);
     throw projectionError("Projection references unknown Modules.", {
-      unknownModuleRefCount: unknownModuleRefs.length,
-      unknownModuleRefs: unknownModuleRefs.slice(0, 32)
+      unknownModuleRefCount: unknownRefs.length,
+      unknownModuleRefs: unknownRefs.slice(0, 32)
     });
   }
+  const projectionBindings = (moduleRefs.length + scopeSelections.length) * pathRefs.length;
   assertLimit(
     "projectionBindings",
-    moduleRefs.length * pathRefs.length,
+    projectionBindings,
     limits.projectionBindings
   );
 
   const writeScopesByModule = new Map();
   const pathDecisionsByModule = new Map();
+  const scopeBindingsBySelection = new Map();
+  const writeDecisionsBySelection = new Map();
   const authoritativeDecisions = new Map();
   for (const pathRef of pathRefs) {
     consumeWork(budget);
@@ -223,16 +242,57 @@ export function projectCompiledModulePathOwnershipIndex(product, options = {}) {
     }
     pathDecisionsByModule.set(moduleRef, decisions);
   }
+  for (const selection of scopeSelections) {
+    consumeWork(budget);
+    const authoritativeSubject = state.moduleSubjects.get(selection.moduleRef);
+    const effectiveSelection = compileEffectiveScopeSelection(
+      selection,
+      authoritativeSubject,
+      budget
+    );
+    const authoritativeScope = {
+      include: projectSelectorDisplays(authoritativeSubject.includes, budget),
+      exclude: projectSelectorDisplays(authoritativeSubject.excludes, budget)
+    };
+    scopeBindingsBySelection.set(selection.id, {
+      schemaVersion: 1,
+      selectionId: selection.id,
+      moduleRef: selection.moduleRef,
+      authoritativeScopeDigest: canonicalDigest(authoritativeScope),
+      requestScopeDigest: selection.requestScopeDigest,
+      effectiveScope: cloneJson(effectiveSelection.scope),
+      effectiveScopeDigest: effectiveSelection.digest
+    });
+    const decisions = new Map();
+    for (const pathRef of pathRefs) {
+      consumeWork(budget);
+      const ownershipDecision = projectPathDecision(
+        authoritativeDecisions.get(pathRef),
+        selection.moduleRef
+      );
+      const scopeAllowsWrite = someSelectorMatches(effectiveSelection.includes, pathRef, budget)
+        && !someSelectorMatches(effectiveSelection.excludes, pathRef, budget);
+      decisions.set(pathRef, {
+        ...ownershipDecision,
+        scopeAllowsWrite,
+        writeAllowed: ownershipDecision.ownershipAllowsWrite && scopeAllowsWrite
+      });
+    }
+    writeDecisionsBySelection.set(selection.id, decisions);
+  }
 
   return {
     sourceBinding: cloneJson(state.sourceBinding),
     writeScopesByModule,
     pathDecisionsByModule,
+    scopeBindingsBySelection,
+    writeDecisionsBySelection,
     observation: {
       schemaVersion: 1,
       moduleRefs: moduleRefs.length,
       pathRefs: pathRefs.length,
-      bindings: moduleRefs.length * pathRefs.length,
+      scopeSelections: scopeSelections.length,
+      bindings: projectionBindings,
       workUnits: budget.workUnits
     }
   };
@@ -510,6 +570,110 @@ function projectPathDecision(decision, requestedModuleRef) {
     ownerModuleRef: decision.ownerModuleRef,
     dispositionRef: null
   };
+}
+
+function normalizeScopeSelections(value, limits, budget) {
+  assertDenseArray(value ?? [], "scopeSelections", limits.scopeSelections);
+  const seen = new Set();
+  let selectorCount = 0;
+  const selections = (value ?? []).map((selection, index) => {
+    consumeWork(budget);
+    const location = `scopeSelections[${index}]`;
+    assertExactKeys(
+      selection,
+      ["expectedScopeDigest", "id", "moduleRef", "scope"],
+      location
+    );
+    const id = requireBoundedString(selection.id, `${location}.id`, limits.selectorBytes);
+    const moduleRef = requireBoundedString(
+      selection.moduleRef,
+      `${location}.moduleRef`,
+      limits.selectorBytes
+    );
+    if (seen.has(id)) throw projectionError("Scope selection ids must be unique.", { id });
+    seen.add(id);
+    if (!DIGEST_PATTERN.test(selection.expectedScopeDigest ?? "")) {
+      throw projectionError("Scope selection requires a canonical request scope digest.", {
+        selectionId: id
+      });
+    }
+    assertFinitePlainData(selection.scope, `${location}.scope`, budget);
+    const requestScopeDigest = canonicalDigest(selection.scope);
+    if (requestScopeDigest !== selection.expectedScopeDigest) {
+      throw projectionError("Scope selection digest does not match its exact request scope.", {
+        selectionId: id,
+        expectedScopeDigest: selection.expectedScopeDigest,
+        observedScopeDigest: requestScopeDigest
+      });
+    }
+    const request = normalizeScopeRequest(selection.scope, `${location}.scope`, budget);
+    selectorCount += (request.includes?.length ?? 0) + request.excludes.length;
+    assertLimit("scopeSelectors", selectorCount, limits.scopeSelectors);
+    return {
+      id,
+      moduleRef,
+      request,
+      requestScopeDigest
+    };
+  });
+  return sortWithBudget(selections, (left, right) => compareUtf8(left.id, right.id), budget);
+}
+
+function normalizeScopeRequest(value, location, budget) {
+  if (value === null) return { includes: null, excludes: [] };
+  if (typeof value === "string" || Array.isArray(value)) {
+    return {
+      includes: normalizeSelectorInput(value, `${location}.include`, budget),
+      excludes: []
+    };
+  }
+  assertPlainRecord(value, location);
+  assertAllowedKeys(value, ["exclude", "include"], location);
+  return {
+    includes: readOwn(value, "include") === undefined
+      ? null
+      : normalizeSelectorInput(readOwn(value, "include"), `${location}.include`, budget),
+    excludes: readOwn(value, "exclude") === undefined
+      ? []
+      : normalizeSelectorInput(readOwn(value, "exclude"), `${location}.exclude`, budget)
+  };
+}
+
+function normalizeSelectorInput(value, location, budget) {
+  const values = typeof value === "string" ? [value] : value;
+  return minimizeSelectors(normalizeSelectorList(values, location, budget), budget);
+}
+
+function compileEffectiveScopeSelection(selection, authoritativeSubject, budget) {
+  const includes = selection.request.includes ?? authoritativeSubject.includes;
+  const outsideIncludes = includes.filter((candidate) => (
+    !someSelectorCovers(authoritativeSubject.includes, candidate, budget)
+  ));
+  if (outsideIncludes.length > 0) {
+    throw projectionError("Scope selection may only narrow the authoritative Module scope.", {
+      selectionId: selection.id,
+      moduleRef: selection.moduleRef,
+      outsideIncludes: outsideIncludes.map((selector) => selector.display).slice(0, 32)
+    });
+  }
+  const excludes = minimizeSelectors(uniqueSelectors([
+    ...authoritativeSubject.excludes,
+    ...selection.request.excludes
+  ]), budget);
+  const scope = {
+    include: projectSelectorDisplays(includes, budget),
+    exclude: projectSelectorDisplays(excludes, budget)
+  };
+  return {
+    includes,
+    excludes,
+    scope,
+    digest: canonicalDigest(scope)
+  };
+}
+
+function uniqueSelectors(selectors) {
+  return [...new Map(selectors.map((selector) => [selector.display, selector])).values()];
 }
 
 function selectorIntersection(left, right) {

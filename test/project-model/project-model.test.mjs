@@ -431,11 +431,21 @@ test("an explicit ownership product bounds Context Capsule scope without weakeni
       minimumRationaleCharacters: 12,
       grantsWriteAuthority: false
     },
-    dispositions: []
+    dispositions: [{
+      id: "legacy-docs",
+      kind: "ungoverned",
+      paths: { include: ["docs/ungoverned/**"], exclude: [] },
+      rationale: "Legacy documentation is deliberately outside automatic write authority."
+    }]
   };
   for (const module of model.modules) module.paths.exclude = [];
+  model.modules.find((module) => module.id === "core").paths.exclude = ["src/core/generated/**"];
   const baseline = governanceBaseline(model);
-  const trackedPaths = ["src/core/index.mjs", "src/dependency/index.mjs"];
+  const trackedPaths = [
+    "docs/ungoverned/legacy.md",
+    "src/core/index.mjs",
+    "src/dependency/index.mjs"
+  ];
   const trackedPathFacts = {
     schemaVersion: 1,
     paths: trackedPaths,
@@ -467,13 +477,14 @@ test("an explicit ownership product bounds Context Capsule scope without weakeni
   });
   assert.deepEqual(productBound.contextCapsule.scope.write, {
     include: ["src/core/**"],
-    exclude: []
+    exclude: ["src/core/generated/**"]
   });
   assert.deepEqual(
     productBound.contextCapsule.compiledFrom.pathOwnership,
     {
       ...projection.sourceBinding,
-      scopeDigest: projection.writeScopesByModule.get("core").digest
+      scopeDigest: projection.writeScopesByModule.get("core").digest,
+      effectiveScopeDigest: canonicalDigest(productBound.contextCapsule.scope.write)
     }
   );
   assert.equal(JSON.stringify(product), "{}");
@@ -483,11 +494,157 @@ test("an explicit ownership product bounds Context Capsule scope without weakeni
   narrowedChange.compilerInput.contextCapsule = {
     scope: { write: { include: ["src/core/feature/**"] } }
   };
-  assert.deepEqual(
-    compileChangeAgainstGovernance(narrowedChange, baseline, {
+  const narrowed = compileChangeAgainstGovernance(narrowedChange, baseline, {
+    modulePathOwnershipProduct: product
+  });
+  assert.deepEqual(narrowed.contextCapsule.scope.write.include, ["src/core/feature/**"]);
+  const narrowedProjection = projectCompiledModulePathOwnershipIndex(product, {
+    model: baseline,
+    moduleRefs: ["core"],
+    pathRefs: [
+      "src/core/feature/inside.mjs",
+      "src/core/outside.mjs",
+      "src/dependency/index.mjs",
+      "docs/ungoverned/legacy.md",
+      "unowned/file.mjs"
+    ],
+    scopeSelections: [{
+      id: "compiled-context-write",
+      moduleRef: "core",
+      scope: narrowed.contextCapsule.scope.write,
+      expectedScopeDigest:
+        narrowed.contextCapsule.compiledFrom.pathOwnership.effectiveScopeDigest
+    }]
+  });
+  const narrowedBinding = narrowedProjection.scopeBindingsBySelection.get("compiled-context-write");
+  const narrowedDecisions = narrowedProjection.writeDecisionsBySelection.get("compiled-context-write");
+  assert.equal(
+    narrowedBinding.authoritativeScopeDigest,
+    narrowed.contextCapsule.compiledFrom.pathOwnership.scopeDigest
+  );
+  assert.deepEqual(narrowedDecisions.get("src/core/feature/inside.mjs"), {
+    classification: "owned-by-requested-module",
+    ownershipAllowsWrite: true,
+    ownerModuleRef: "core",
+    dispositionRef: null,
+    scopeAllowsWrite: true,
+    writeAllowed: true
+  });
+  assert.equal(narrowedDecisions.get("src/core/outside.mjs").ownershipAllowsWrite, true);
+  assert.equal(narrowedDecisions.get("src/core/outside.mjs").scopeAllowsWrite, false);
+  assert.equal(narrowedDecisions.get("src/core/outside.mjs").writeAllowed, false);
+  assert.equal(narrowedDecisions.get("src/dependency/index.mjs").scopeAllowsWrite, false);
+  assert.equal(narrowedDecisions.get("src/dependency/index.mjs").writeAllowed, false);
+  assert.equal(
+    narrowedDecisions.get("docs/ungoverned/legacy.md").classification,
+    "ungoverned-disposition"
+  );
+  assert.equal(narrowedDecisions.get("docs/ungoverned/legacy.md").writeAllowed, false);
+  assert.equal(narrowedDecisions.get("unowned/file.mjs").classification, "unassigned");
+  assert.equal(narrowedDecisions.get("unowned/file.mjs").writeAllowed, false);
+
+  const broadenedScope = { include: ["src/**"], exclude: [] };
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      pathRefs: [],
+      scopeSelections: [{
+        id: "broadened",
+        moduleRef: "core",
+        scope: broadenedScope,
+        expectedScopeDigest: canonicalDigest(broadenedScope)
+      }]
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_PROJECTION_INVALID" }
+  );
+  const malformedScope = { include: ["src/core/*.mjs"], exclude: [] };
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      pathRefs: [],
+      scopeSelections: [{
+        id: "malformed-scope",
+        moduleRef: "core",
+        scope: malformedScope,
+        expectedScopeDigest: canonicalDigest(malformedScope)
+      }]
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_INPUT_INVALID" }
+  );
+  let scopeAccessorReads = 0;
+  const accessorScope = {};
+  Object.defineProperty(accessorScope, "include", {
+    enumerable: true,
+    get() {
+      scopeAccessorReads += 1;
+      return ["src/core/**"];
+    }
+  });
+  const accessorChange = outcomeChange();
+  accessorChange.compilerInput.contextCapsule = { scope: { write: accessorScope } };
+  assert.throws(
+    () => compileChangeAgainstGovernance(accessorChange, baseline, {
       modulePathOwnershipProduct: product
-    }).contextCapsule.scope.write.include,
-    ["src/core/feature/**"]
+    }),
+    { code: "CONTEXT_CAPSULE_INPUT_INVALID" }
+  );
+  assert.equal(scopeAccessorReads, 0);
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      pathRefs: [],
+      scopeSelections: [{
+        id: "forged-digest",
+        moduleRef: "core",
+        scope: narrowed.contextCapsule.scope.write,
+        expectedScopeDigest: projection.sourceBinding.productDigest
+      }]
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_PROJECTION_INVALID" }
+  );
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      pathRefs: [],
+      scopeSelections: [
+        {
+          id: "duplicate",
+          moduleRef: "core",
+          scope: narrowed.contextCapsule.scope.write,
+          expectedScopeDigest:
+            narrowed.contextCapsule.compiledFrom.pathOwnership.effectiveScopeDigest
+        },
+        {
+          id: "duplicate",
+          moduleRef: "core",
+          scope: narrowed.contextCapsule.scope.write,
+          expectedScopeDigest:
+            narrowed.contextCapsule.compiledFrom.pathOwnership.effectiveScopeDigest
+        }
+      ]
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_PROJECTION_INVALID" }
+  );
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      pathRefs: [],
+      scopeSelections: [{
+        id: "over-limit-a",
+        moduleRef: "core",
+        scope: narrowed.contextCapsule.scope.write,
+        expectedScopeDigest:
+          narrowed.contextCapsule.compiledFrom.pathOwnership.effectiveScopeDigest
+      }, {
+        id: "over-limit-b",
+        moduleRef: "core",
+        scope: narrowed.contextCapsule.scope.write,
+        expectedScopeDigest:
+          narrowed.contextCapsule.compiledFrom.pathOwnership.effectiveScopeDigest
+      }],
+      limits: { scopeSelections: 1 }
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_LIMIT_EXCEEDED" }
   );
   const widenedChange = outcomeChange();
   widenedChange.compilerInput.contextCapsule = {
@@ -497,7 +654,7 @@ test("an explicit ownership product bounds Context Capsule scope without weakeni
     () => compileChangeAgainstGovernance(widenedChange, baseline, {
       modulePathOwnershipProduct: product
     }),
-    { code: "CONTEXT_SCOPE_EXPANSION_FORBIDDEN" }
+    { code: "MODULE_PATH_OWNERSHIP_PROJECTION_INVALID" }
   );
 
   const legacy = compileChangeAgainstGovernance(change, baseline);

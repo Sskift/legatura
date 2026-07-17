@@ -37,6 +37,13 @@ const INTEGRITY_EVIDENCE_FIELDS = [
 
 const MAX_CHANGE_PLAN_REFS = 64;
 const MAX_CHANGE_PLAN_REF_LENGTH = 256;
+const CONTEXT_SUPPLEMENT_LIMITS = Object.freeze({
+  arrayEntries: 8192,
+  depth: 64,
+  nodes: 16_384,
+  stringBytes: 65_536,
+  totalBytes: 2 * 1024 * 1024
+});
 
 export const CLAIM_GATE_ROUTE_INDEX_LIMITS = Object.freeze({
   claimRefs: 4096,
@@ -167,14 +174,26 @@ export function compileChangeAgainstGovernance(change, governanceBaseline, optio
   const planOutcomes = selectDevelopmentOutcomes(change, governanceBaseline);
   const integrityTarget = compileIntegrityTarget(change);
   const assurance = assertAssuranceAllowsCompilation(change, primaryModule, governanceBaseline);
+  const compilerInput = change.compilerInput ?? {};
+  validateContextSupplement(compilerInput.contextCapsule);
+  const requestedWriteScope = readRequestedContextWriteScope(compilerInput.contextCapsule);
+  if (primaryModule.status === "opaque") assertOpaqueWriteScopeRequestEmpty(requestedWriteScope);
+  const ownershipScopeRequest = primaryModule.status === "opaque"
+    ? { include: [], exclude: [] }
+    : requestedWriteScope;
   const pathOwnership = pathOwnershipOption.supplied
     ? projectCompiledModulePathOwnershipIndex(pathOwnershipOption.product, {
         model: governanceBaseline,
         moduleRefs: [primaryModule.id],
-        pathRefs: []
+        pathRefs: [],
+        scopeSelections: [{
+          id: "compiled-context-write",
+          moduleRef: primaryModule.id,
+          scope: ownershipScopeRequest,
+          expectedScopeDigest: canonicalDigest(ownershipScopeRequest)
+        }]
       })
     : null;
-  const compilerInput = change.compilerInput ?? {};
   const outcomeAlignment = compileOutcomeAlignment({
     change,
     governanceBaseline,
@@ -190,6 +209,8 @@ export function compileChangeAgainstGovernance(change, governanceBaseline, optio
     outcomeAlignment,
     assurance,
     pathOwnership,
+    pathOwnershipScopeBinding: pathOwnership?.scopeBindingsBySelection
+      ?.get("compiled-context-write"),
     supplied: compilerInput.contextCapsule
   });
   const impact = compileImpact({
@@ -2115,6 +2136,7 @@ function compileContextCapsule({
   outcomeAlignment,
   assurance,
   pathOwnership,
+  pathOwnershipScopeBinding,
   supplied
 }) {
   validateContextSupplement(supplied);
@@ -2180,6 +2202,15 @@ function compileContextCapsule({
       { primaryModule: primaryModule.id }
     );
   }
+  if (pathOwnership && (!pathOwnershipScopeBinding
+    || pathOwnershipScopeBinding.moduleRef !== primaryModule.id
+    || pathOwnershipScopeBinding.authoritativeScopeDigest !== projectedWriteScope.digest)) {
+    throw compilerError(
+      "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID",
+      "Module path ownership projection omitted the bound effective Context write scope.",
+      { primaryModule: primaryModule.id }
+    );
+  }
   const generatedWrite = primaryModule.status === "opaque"
     ? { include: [], exclude: normalizePaths(primaryModule.paths?.include) }
     : projectedWriteScope ? {
@@ -2200,7 +2231,9 @@ function compileContextCapsule({
   };
   const suppliedScope = supplied?.scope ?? supplied?.allowedScope ?? {};
   const scope = {
-    write: narrowScope(generatedWrite, suppliedScope.write ?? supplied?.allowedWriteScope, "write"),
+    write: pathOwnershipScopeBinding
+      ? cloneJson(pathOwnershipScopeBinding.effectiveScope)
+      : narrowScope(generatedWrite, suppliedScope.write ?? supplied?.allowedWriteScope, "write"),
     read: narrowScope(generatedRead, suppliedScope.read ?? supplied?.allowedReadScope, "read"),
     otherModuleImplementation: "contract-only; expansion must be recorded before reading implementation"
   };
@@ -2218,7 +2251,8 @@ function compileContextCapsule({
       ...(pathOwnership ? {
         pathOwnership: {
           ...cloneJson(pathOwnership.sourceBinding),
-          scopeDigest: projectedWriteScope.digest
+          scopeDigest: projectedWriteScope.digest,
+          effectiveScopeDigest: pathOwnershipScopeBinding.effectiveScopeDigest
         }
       } : {})
     },
@@ -3230,7 +3264,9 @@ function assertAssuranceAllowsCompilation(change, primaryModule, governanceBasel
 
 function validateContextSupplement(value) {
   if (value === undefined || value === null) return;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const budget = { nodes: 0, totalBytes: 0 };
+  assertBoundedPlainContextValue(value, "contextCapsule", budget);
+  if (Array.isArray(value)) {
     throw compilerError("CONTEXT_CAPSULE_INPUT_INVALID", "contextCapsule supplement must be an object.");
   }
   const allowed = new Set([
@@ -3243,7 +3279,8 @@ function validateContextSupplement(value) {
     "workerInstructions",
     "annotations"
   ]);
-  const forbidden = Object.keys(value).filter((key) => COMPILED_CONTEXT_KEYS.has(key) && !allowed.has(key));
+  const forbidden = Object.getOwnPropertyNames(value)
+    .filter((key) => COMPILED_CONTEXT_KEYS.has(key) && !allowed.has(key));
   if (forbidden.length > 0) {
     throw compilerError(
       "COMPILED_CONTEXT_OVERRIDE_FORBIDDEN",
@@ -3251,6 +3288,129 @@ function validateContextSupplement(value) {
       { forbiddenFields: forbidden }
     );
   }
+}
+
+function readRequestedContextWriteScope(value) {
+  if (value === undefined || value === null) return null;
+  const suppliedScope = readContextDataProperty(value, "scope")
+    ?? readContextDataProperty(value, "allowedScope");
+  let nestedWriteScope;
+  if (suppliedScope !== undefined && suppliedScope !== null) {
+    if (!suppliedScope || typeof suppliedScope !== "object" || Array.isArray(suppliedScope)) {
+      throw compilerError(
+        "CONTEXT_CAPSULE_INPUT_INVALID",
+        "contextCapsule scope must be a plain object."
+      );
+    }
+    nestedWriteScope = readContextDataProperty(suppliedScope, "write");
+  }
+  return nestedWriteScope
+    ?? readContextDataProperty(value, "allowedWriteScope")
+    ?? null;
+}
+
+function assertOpaqueWriteScopeRequestEmpty(value) {
+  if (value === null
+    || (typeof value === "string" && !value.trim())
+    || (Array.isArray(value) && value.length === 0)) return;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const names = Object.getOwnPropertyNames(value);
+    const known = names.every((name) => name === "include" || name === "exclude");
+    const empty = known && names.every((name) => {
+      const item = readContextDataProperty(value, name);
+      return item === undefined
+        || item === null
+        || (typeof item === "string" && !item.trim())
+        || (Array.isArray(item) && item.length === 0);
+    });
+    if (empty) return;
+  }
+  throw compilerError(
+    "CONTEXT_SCOPE_EXPANSION_FORBIDDEN",
+    "Opaque Module write scope must remain empty.",
+    { automaticWriteScope: [] }
+  );
+}
+
+function readContextDataProperty(value, key) {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+}
+
+function assertBoundedPlainContextValue(value, location, budget, depth = 0) {
+  budget.nodes += 1;
+  if (budget.nodes > CONTEXT_SUPPLEMENT_LIMITS.nodes) {
+    throw contextSupplementLimitError("nodes", budget.nodes);
+  }
+  if (depth > CONTEXT_SUPPLEMENT_LIMITS.depth) {
+    throw contextSupplementLimitError("depth", depth);
+  }
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw contextSupplementDataError(location);
+    return;
+  }
+  if (typeof value === "string") {
+    const bytes = Buffer.byteLength(value, "utf8");
+    if (bytes > CONTEXT_SUPPLEMENT_LIMITS.stringBytes) {
+      throw contextSupplementLimitError("stringBytes", bytes);
+    }
+    budget.totalBytes += bytes;
+    if (budget.totalBytes > CONTEXT_SUPPLEMENT_LIMITS.totalBytes) {
+      throw contextSupplementLimitError("totalBytes", budget.totalBytes);
+    }
+    return;
+  }
+  if (!value || typeof value !== "object" || utilTypes.isProxy(value)) {
+    throw contextSupplementDataError(location);
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) {
+    throw contextSupplementDataError(location);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const names = Object.getOwnPropertyNames(value);
+  if (Object.getOwnPropertySymbols(value).length > 0
+    || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set)
+    || Object.entries(descriptors).some(([key, descriptor]) => (
+      key !== "length" && !descriptor.enumerable
+    ))) {
+    throw contextSupplementDataError(location);
+  }
+  if (Array.isArray(value)) {
+    if (value.length > CONTEXT_SUPPLEMENT_LIMITS.arrayEntries
+      || names.some((key) => key !== "length"
+        && (!/^(0|[1-9][0-9]*)$/u.test(key) || Number(key) >= value.length))) {
+      throw contextSupplementLimitError("arrayEntries", value.length);
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      if (!Object.hasOwn(descriptors, index)) throw contextSupplementDataError(`${location}[${index}]`);
+    }
+  }
+  for (const [key, descriptor] of Object.entries(descriptors)) {
+    if (key === "length") continue;
+    budget.totalBytes += Buffer.byteLength(key, "utf8");
+    if (budget.totalBytes > CONTEXT_SUPPLEMENT_LIMITS.totalBytes) {
+      throw contextSupplementLimitError("totalBytes", budget.totalBytes);
+    }
+    assertBoundedPlainContextValue(descriptor.value, `${location}.${key}`, budget, depth + 1);
+  }
+}
+
+function contextSupplementDataError(location) {
+  return compilerError(
+    "CONTEXT_CAPSULE_INPUT_INVALID",
+    "contextCapsule supplement must contain only finite plain data properties.",
+    { location }
+  );
+}
+
+function contextSupplementLimitError(dimension, observed) {
+  return compilerError(
+    "CONTEXT_CAPSULE_LIMIT_EXCEEDED",
+    `contextCapsule supplement exceeded the ${dimension} limit.`,
+    { dimension, observed, limit: CONTEXT_SUPPLEMENT_LIMITS[dimension] }
+  );
 }
 
 function copySupplementalContext(value) {
