@@ -354,7 +354,7 @@
     {
       "id": "LGT-018",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "A planned or conditional Outcome can be revised before activation through an append-only Plan-authority ledger, while activation freezes its complete normalized definition and active or terminal history remains immutable.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -925,6 +925,16 @@
       "from": "planned",
       "to": "retired",
       "rationale": "LGT-017 cannot be activated because its frozen planned definition predates stable Criteria while existing semantics correctly reject in-place repair; fully specified successor LGT-018 preserves the capability without using integrity maintenance as feature delivery.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
+    },
+    {
+      "id": "LGT-018-T1",
+      "outcomeRef": "LGT-018",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-010 is achieved in the frozen Governance Baseline, LGT-018 was declared earlier with stable Criteria and an open Closure Contract, and this independent Amendment freezes that unchanged definition before any implementation Change can reference it.",
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
