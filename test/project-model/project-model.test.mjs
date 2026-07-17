@@ -13,7 +13,9 @@ import { compileOutcomeTransitions } from "../../src/core/outcome-transitions.mj
 import {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRoutes,
+  compileModulePathOwnershipIndex,
   loadProjectModel,
+  projectCompiledModulePathOwnershipIndex,
   publicProjectModel,
   validateProjectModel
 } from "../../src/core/project-model.mjs";
@@ -413,6 +415,137 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   duplicateGapModel.knowledgeGaps.push(structuredClone(duplicateGapModel.knowledgeGaps[0]));
   assert.ok(validateProjectModel(duplicateGapModel).errors
     .some((error) => error.code === "knowledge-gap.id.duplicate"));
+});
+
+test("an explicit ownership product bounds Context Capsule scope without weakening legacy bootstrap", () => {
+  const model = baseModel();
+  model.projectDocument.pathGovernance = {
+    schemaVersion: 1,
+    selectorGrammar: "exact-or-recursive-prefix",
+    effectiveMatch: "include-minus-exclude",
+    overlapPolicy: "reject-latent-and-concrete",
+    conflictResolution: "none",
+    dispositionPolicy: {
+      allowedKinds: ["ungoverned"],
+      requiredFields: ["id", "kind", "paths.include", "paths.exclude", "rationale"],
+      minimumRationaleCharacters: 12,
+      grantsWriteAuthority: false
+    },
+    dispositions: []
+  };
+  for (const module of model.modules) module.paths.exclude = [];
+  const baseline = governanceBaseline(model);
+  const trackedPaths = ["src/core/index.mjs", "src/dependency/index.mjs"];
+  const trackedPathFacts = {
+    schemaVersion: 1,
+    paths: trackedPaths,
+    digest: canonicalDigest({ schemaVersion: 1, paths: trackedPaths })
+  };
+  const product = compileModulePathOwnershipIndex(baseline, trackedPathFacts);
+  const projection = projectCompiledModulePathOwnershipIndex(product, {
+    model: baseline,
+    moduleRefs: ["core", "dependency"],
+    pathRefs: [...trackedPaths, "src/core/prospective.mjs", "unowned/file.mjs"]
+  });
+  assert.deepEqual(projection.writeScopesByModule.get("core").include, ["src/core/**"]);
+  assert.equal(
+    projection.pathDecisionsByModule.get("core").get("src/core/prospective.mjs").ownershipAllowsWrite,
+    true
+  );
+  assert.equal(
+    projection.pathDecisionsByModule.get("core").get("src/dependency/index.mjs").classification,
+    "owned-by-other-module"
+  );
+  assert.equal(
+    projection.pathDecisionsByModule.get("core").get("unowned/file.mjs").classification,
+    "unassigned"
+  );
+
+  const change = outcomeChange();
+  const productBound = compileChangeAgainstGovernance(change, baseline, {
+    modulePathOwnershipProduct: product
+  });
+  assert.deepEqual(productBound.contextCapsule.scope.write, {
+    include: ["src/core/**"],
+    exclude: []
+  });
+  assert.deepEqual(
+    productBound.contextCapsule.compiledFrom.pathOwnership,
+    {
+      ...projection.sourceBinding,
+      scopeDigest: projection.writeScopesByModule.get("core").digest
+    }
+  );
+  assert.equal(JSON.stringify(product), "{}");
+  assert.equal(JSON.stringify(productBound.contextCapsule).includes("src/core/index.mjs"), false);
+
+  const narrowedChange = outcomeChange();
+  narrowedChange.compilerInput.contextCapsule = {
+    scope: { write: { include: ["src/core/feature/**"] } }
+  };
+  assert.deepEqual(
+    compileChangeAgainstGovernance(narrowedChange, baseline, {
+      modulePathOwnershipProduct: product
+    }).contextCapsule.scope.write.include,
+    ["src/core/feature/**"]
+  );
+  const widenedChange = outcomeChange();
+  widenedChange.compilerInput.contextCapsule = {
+    scope: { write: { include: ["src/foreign/**"] } }
+  };
+  assert.throws(
+    () => compileChangeAgainstGovernance(widenedChange, baseline, {
+      modulePathOwnershipProduct: product
+    }),
+    { code: "CONTEXT_SCOPE_EXPANSION_FORBIDDEN" }
+  );
+
+  const legacy = compileChangeAgainstGovernance(change, baseline);
+  assert.deepEqual(legacy.contextCapsule.scope.write, productBound.contextCapsule.scope.write);
+  assert.equal(Object.hasOwn(legacy.contextCapsule.compiledFrom, "pathOwnership"), false);
+  for (const invalidProduct of [undefined, null, false, {}, structuredClone(product)]) {
+    assert.throws(
+      () => compileChangeAgainstGovernance(change, baseline, {
+        modulePathOwnershipProduct: invalidProduct
+      }),
+      { code: "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID" }
+    );
+  }
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, {
+      model: baseline,
+      limits: { selectorBytes: 1 }
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_LIMIT_EXCEEDED" }
+  );
+
+  const overlapModel = structuredClone(baseline);
+  overlapModel.modules[1].paths.include = ["src/core/new/**"];
+  assert.throws(
+    () => compileModulePathOwnershipIndex(overlapModel, trackedPathFacts),
+    { code: "MODULE_PATH_OWNERSHIP_CONFLICT" }
+  );
+  const malformedModel = structuredClone(baseline);
+  malformedModel.modules[0].paths.include = ["src/**/**"];
+  assert.throws(
+    () => compileModulePathOwnershipIndex(malformedModel, trackedPathFacts),
+    { code: "MODULE_PATH_OWNERSHIP_INPUT_INVALID" }
+  );
+  const unownedPaths = [...trackedPaths, "unowned/file.mjs"];
+  assert.throws(
+    () => compileModulePathOwnershipIndex(baseline, {
+      schemaVersion: 1,
+      paths: unownedPaths,
+      digest: canonicalDigest({ schemaVersion: 1, paths: unownedPaths })
+    }),
+    { code: "MODULE_PATH_OWNERSHIP_INCOMPLETE" }
+  );
+
+  trackedPathFacts.paths.push("src/core/drift.mjs");
+  assert.throws(
+    () => projectCompiledModulePathOwnershipIndex(product, { model: baseline }),
+    { code: "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID" }
+  );
 });
 
 test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidence, and history", () => {

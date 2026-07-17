@@ -20,14 +20,20 @@ import {
   inspectBlockedOutcomeRouteReachability,
   validateOutcomeTransitionLedger
 } from "./outcome-transitions.mjs";
+import {
+  compileModulePathOwnershipIndex,
+  projectCompiledModulePathOwnershipIndex
+} from "./path-ownership.mjs";
 
 export {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
   compileClaimGateRoutes,
   compileOutcomePlanAmendment,
+  compileModulePathOwnershipIndex,
   projectCompiledClaimGateRouteIndex,
-  projectCompiledModuleClaimGateIndex
+  projectCompiledModuleClaimGateIndex,
+  projectCompiledModulePathOwnershipIndex
 };
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;

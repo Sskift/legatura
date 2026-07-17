@@ -2,6 +2,7 @@ import { Buffer } from "node:buffer";
 import { types as utilTypes } from "node:util";
 
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
+import { projectCompiledModulePathOwnershipIndex } from "./path-ownership.mjs";
 
 export const INTEGRITY_CHANGE_KINDS = Object.freeze([
   "regression-repair",
@@ -144,7 +145,8 @@ export function assertIntegrityFailureEvidenceCurrent(change) {
   return validation;
 }
 
-export function compileChangeAgainstGovernance(change, governanceBaseline) {
+export function compileChangeAgainstGovernance(change, governanceBaseline, options = {}) {
+  const pathOwnershipOption = readModulePathOwnershipProductOption(options);
   const primaryModuleId = readString(change.primaryModule);
   if (!primaryModuleId) {
     throw compilerError(
@@ -165,6 +167,13 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
   const planOutcomes = selectDevelopmentOutcomes(change, governanceBaseline);
   const integrityTarget = compileIntegrityTarget(change);
   const assurance = assertAssuranceAllowsCompilation(change, primaryModule, governanceBaseline);
+  const pathOwnership = pathOwnershipOption.supplied
+    ? projectCompiledModulePathOwnershipIndex(pathOwnershipOption.product, {
+        model: governanceBaseline,
+        moduleRefs: [primaryModule.id],
+        pathRefs: []
+      })
+    : null;
   const compilerInput = change.compilerInput ?? {};
   const outcomeAlignment = compileOutcomeAlignment({
     change,
@@ -180,6 +189,7 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
     planOutcomes,
     outcomeAlignment,
     assurance,
+    pathOwnership,
     supplied: compilerInput.contextCapsule
   });
   const impact = compileImpact({
@@ -220,6 +230,33 @@ export function compileChangeAgainstGovernance(change, governanceBaseline) {
       assuranceStatus: primaryModule.status
     }
   };
+}
+
+function readModulePathOwnershipProductOption(options) {
+  if (!options
+    || typeof options !== "object"
+    || Array.isArray(options)
+    || utilTypes.isProxy(options)
+    || (Object.getPrototypeOf(options) !== Object.prototype
+      && Object.getPrototypeOf(options) !== null)) {
+    throw compilerError(
+      "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID",
+      "Change compiler options must be a plain process-local object."
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const names = Object.getOwnPropertyNames(options);
+  if (Object.getOwnPropertySymbols(options).length > 0
+    || Object.values(descriptors).some((descriptor) => descriptor.get || descriptor.set)
+    || names.some((name) => name !== "modulePathOwnershipProduct")) {
+    throw compilerError(
+      "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID",
+      "Change compiler options may contain only a data-valued modulePathOwnershipProduct seam."
+    );
+  }
+  return Object.hasOwn(descriptors, "modulePathOwnershipProduct")
+    ? { supplied: true, product: descriptors.modulePathOwnershipProduct.value }
+    : { supplied: false, product: null };
 }
 
 export function compileOutcomeAlignmentAgainstGovernance(change, governanceBaseline) {
@@ -2077,6 +2114,7 @@ function compileContextCapsule({
   planOutcomes,
   outcomeAlignment,
   assurance,
+  pathOwnership,
   supplied
 }) {
   validateContextSupplement(supplied);
@@ -2134,9 +2172,20 @@ function compileContextCapsule({
   const normativePaths = normativeSources.map((source) => readString(source.path)).filter(Boolean);
   const focusedTestPaths = asArray(primaryModule.focusedTests)
     .flatMap((test) => normalizePaths(typeof test === "string" ? test : test?.path ?? test?.paths));
+  const projectedWriteScope = pathOwnership?.writeScopesByModule?.get(primaryModule.id);
+  if (pathOwnership && !projectedWriteScope) {
+    throw compilerError(
+      "MODULE_PATH_OWNERSHIP_PRODUCT_INVALID",
+      "Module path ownership projection omitted the primary Module write scope.",
+      { primaryModule: primaryModule.id }
+    );
+  }
   const generatedWrite = primaryModule.status === "opaque"
     ? { include: [], exclude: normalizePaths(primaryModule.paths?.include) }
-    : {
+    : projectedWriteScope ? {
+        include: cloneJson(projectedWriteScope.include),
+        exclude: cloneJson(projectedWriteScope.exclude)
+      } : {
         include: normalizePaths(primaryModule.paths?.include ?? primaryModule.paths),
         exclude: normalizePaths(primaryModule.paths?.exclude)
       };
@@ -2165,7 +2214,13 @@ function compileContextCapsule({
     schemaVersion: 1,
     compiledFrom: {
       governanceBaselineDigest: governanceBaseline.digest,
-      projectModelFiles: modelDocumentPaths
+      projectModelFiles: modelDocumentPaths,
+      ...(pathOwnership ? {
+        pathOwnership: {
+          ...cloneJson(pathOwnership.sourceBinding),
+          scopeDigest: projectedWriteScope.digest
+        }
+      } : {})
     },
     primaryModule: primaryModule.id,
     module: pickModuleContext(primaryModule),
