@@ -32,9 +32,11 @@ import {
 import {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
+  compileModulePathOwnershipIndex,
   loadProjectModel,
   projectCompiledClaimGateRouteIndex,
   projectCompiledModuleClaimGateIndex,
+  projectCompiledModulePathOwnershipIndex,
   publicProjectModel,
   validateProjectModel
 } from "./project-model.mjs";
@@ -112,7 +114,66 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         projectModelDigest: inspection.digest,
         gitContentDigest: inspection.git.contentDigest
       }),
+      model,
+      git,
       inspection
+    };
+  }
+
+  function compilePathOwnershipSource(model, trackedPathFacts) {
+    const product = compileModulePathOwnershipIndex(model, trackedPathFacts);
+    const projection = projectCompiledModulePathOwnershipIndex(product, {
+      model,
+      moduleRefs: [],
+      pathRefs: []
+    });
+    return {
+      model,
+      product,
+      sourceBinding: projection.sourceBinding
+    };
+  }
+
+  function hasPathOwnershipGovernance(model) {
+    return Boolean(model?.projectDocument?.pathGovernance);
+  }
+
+  async function inspectStableProjectSnapshot() {
+    const stable = await readStableObservation({
+      observe: observeProjectOnce,
+      code: "PROJECT_SNAPSHOT_UNSTABLE",
+      message: "Project Model and Git sources did not stabilize within the bounded observation window."
+    });
+    const validation = cloneJson(stable.inspection.validation);
+    let pathOwnership = null;
+    if (validation.valid && stable.git.available && hasPathOwnershipGovernance(stable.model)) {
+      try {
+        pathOwnership = compilePathOwnershipSource(
+          stable.model,
+          stable.git.trackedPathFacts
+        );
+      } catch (error) {
+        validation.errors.push({
+          code: "module.path-ownership.invalid",
+          location: ".legatura/project.json#pathGovernance",
+          message: error instanceof Error ? error.message : String(error),
+          sourceCode: readString(error?.code) ?? null
+        });
+        validation.valid = false;
+      }
+    }
+    const inspection = {
+      ...stable.inspection,
+      valid: validation.valid,
+      validation
+    };
+    return {
+      digest: stable.digest,
+      model: stable.model,
+      git: stable.git,
+      validation,
+      inspection,
+      pathOwnership
     };
   }
 
@@ -164,11 +225,88 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return compileWorkbenchProjectionFromSnapshot(snapshot);
   }
 
-  async function observeCurrentChangeScope(change, git) {
-    const touchedPaths = await readObservedTouchedPaths(change, git, resolvedRepoPath, commandRunner);
-    change.changeSet = compileObservedChangeSet(change, git, touchedPaths);
-    change.scopeAnalysis = analyzeChangeScope(change, git, touchedPaths);
+  async function observeCurrentChangeScope(change, snapshot, frozenOwnership) {
+    const touchedPaths = await readObservedTouchedPaths(
+      change,
+      snapshot.git,
+      resolvedRepoPath,
+      commandRunner
+    );
+    change.changeSet = compileObservedChangeSet(change, snapshot.git, touchedPaths);
+    change.scopeAnalysis = analyzeChangeScope(change, touchedPaths, {
+      currentOwnership: snapshot.pathOwnership,
+      frozenOwnership
+    });
     assertPlanChangeSeparation(change, touchedPaths);
+    return touchedPaths;
+  }
+
+  function compileFrozenPathOwnership(change, { allowInitialize = false } = {}) {
+    const governanceBaseline = readGovernanceBaseline(change);
+    const storedBinding = change.baseline?.pathOwnership;
+    if (!hasPathOwnershipGovernance(governanceBaseline)) {
+      if (storedBinding) {
+        throw kernelError(
+          "CHANGE_PATH_OWNERSHIP_BASELINE_INVALID",
+          "Legacy Candidate carries a path ownership binding without frozen path governance.",
+          409
+        );
+      }
+      return null;
+    }
+    const baselineGit = change.baseline?.git;
+    if (!baselineGit || typeof baselineGit !== "object" || Array.isArray(baselineGit)) {
+      throw kernelError(
+        "CHANGE_PATH_OWNERSHIP_BASELINE_INVALID",
+        "Candidate path ownership requires an exact frozen Git binding.",
+        409
+      );
+    }
+    const { contentDigest, ...gitBindingContent } = baselineGit;
+    if (!DIGEST_PATTERN.test(contentDigest ?? "")
+      || canonicalDigest(gitBindingContent) !== contentDigest) {
+      throw kernelError(
+        "CHANGE_PATH_OWNERSHIP_BASELINE_INVALID",
+        "Candidate frozen Git content does not match its exact digest.",
+        409
+      );
+    }
+    let frozenOwnership;
+    try {
+      frozenOwnership = compilePathOwnershipSource(
+        governanceBaseline,
+        baselineGit.trackedPathFacts
+      );
+    } catch (error) {
+      throw kernelError(
+        "CHANGE_PATH_OWNERSHIP_BASELINE_INVALID",
+        "Candidate frozen ownership sources cannot produce a valid ownership product.",
+        409,
+        { sourceCode: readString(error?.code) ?? null }
+      );
+    }
+    if (!storedBinding) {
+      const mayInitialize = allowInitialize
+        && change.state === "Candidate"
+        && !change.compilation
+        && !change.acceptance;
+      if (!mayInitialize) {
+        throw kernelError(
+          "CHANGE_PATH_OWNERSHIP_BASELINE_MISSING",
+          "Candidate has no frozen path ownership binding.",
+          409
+        );
+      }
+      change.baseline.pathOwnership = cloneJson(frozenOwnership.sourceBinding);
+    } else if (canonicalDigest(storedBinding)
+      !== canonicalDigest(frozenOwnership.sourceBinding)) {
+      throw kernelError(
+        "CHANGE_PATH_OWNERSHIP_BASELINE_INVALID",
+        "Candidate frozen path ownership binding does not match its Model and tracked-path facts.",
+        409
+      );
+    }
+    return frozenOwnership;
   }
 
   async function deriveCurrentOutcomePlanAmendment(change, currentModel) {
@@ -294,7 +432,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       throw kernelError("CHANGE_INPUT_INVALID", "createChange input must be an object.", 400);
     }
     const planRefsInput = adaptChangePlanRefsInput(input);
-    const inspection = await inspectProject();
+    const snapshot = await inspectStableProjectSnapshot();
+    const inspection = snapshot.inspection;
     assertValidProject(inspection);
     const id = readString(input.id) ?? await createUniqueChangeId(store, now());
     if (await store.get(id)) {
@@ -365,7 +504,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       baseline: {
         projectModelDigest: inspection.digest,
         git: inspection.git,
-        governanceDigest: governanceBaseline.digest
+        governanceDigest: governanceBaseline.digest,
+        ...(snapshot.pathOwnership ? {
+          pathOwnership: cloneJson(snapshot.pathOwnership.sourceBinding)
+        } : {})
       },
       currentGit: inspection.git,
       gateRuns: [],
@@ -392,7 +534,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     assertCompilePatchInput(patch);
     const planRefsInput = adaptChangePlanRefsInput(patch);
     let change = await requireChange(changeId);
-    change = await refreshChangeForWrite(change);
+    const snapshot = await inspectStableProjectSnapshot();
+    const inspection = snapshot.inspection;
+    change = await refreshChangeForWrite(change, inspection);
     if (change.acceptance || change.state === "Accepted" || change.state === "Integrated") {
       throw kernelError(
         "CHANGE_SEALED",
@@ -402,7 +546,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     await assertGovernanceWatermarkCurrent(change);
     change = applyCompilePatch(change, patch, now(), planRefsInput);
-    const inspection = await inspectProject();
+    const frozenOwnership = compileFrozenPathOwnership(change, { allowInitialize: true });
     assertValidProject(inspection);
     change.projectModelDigest = inspection.digest;
     change.currentGit = inspection.git;
@@ -412,8 +556,12 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (change.changeKind !== "plan-amendment") {
       await assertCurrentGovernanceContracts(change, inspection);
     }
-    change = compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
-    await observeCurrentChangeScope(change, inspection.git);
+    change = frozenOwnership
+      ? compileChangeAgainstGovernance(change, readGovernanceBaseline(change), {
+          modulePathOwnershipProduct: frozenOwnership.product
+        })
+      : compileChangeAgainstGovernance(change, readGovernanceBaseline(change));
+    await observeCurrentChangeScope(change, snapshot, frozenOwnership);
     delete change.outcomeTransitionSchemaVersion;
     delete change.outcomeTransitionCompilation;
     change.outcomePlanAmendmentSchemaVersion = OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION;
@@ -428,7 +576,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function runGate(idOrInput, optionalGateId) {
     const request = readGateRequest(idOrInput, optionalGateId);
     let change = await requireChange(request.changeId);
-    change = await refreshChangeForWrite(change);
+    const snapshot = await inspectStableProjectSnapshot();
+    const inspection = snapshot.inspection;
+    change = await refreshChangeForWrite(change, inspection);
     if (change.claims.length === 0) {
       throw kernelError("CHANGE_CLAIM_REQUIRED", "Compile the Change with at least one Claim before running Gates.", 422);
     }
@@ -443,7 +593,6 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
     await assertGovernanceWatermarkCurrent(change);
-    const inspection = await inspectProject();
     const observedAt = now();
     const model = inspection;
     const validation = inspection.validation;
@@ -453,8 +602,12 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     if (change.state === "Integrated") {
       throw kernelError("CHANGE_SEALED", `Change ${change.id} is Integrated and cannot run more Gates.`, 409);
     }
-    await observeCurrentChangeScope(change, inspection.git);
     assertIntegrityFailureEvidenceCurrent(change);
+    let frozenOwnership = null;
+    if (validation.valid) {
+      frozenOwnership = compileFrozenPathOwnership(change);
+      await observeCurrentChangeScope(change, snapshot, frozenOwnership);
+    }
     if (change.state === "Accepted") {
       if (!validation.valid) {
         throw kernelError("PROJECT_MODEL_INVALID", "The current Project Model is invalid.", 422, validation);
@@ -550,15 +703,17 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   async function acceptChange(idOrInput, optionalDecision) {
     const request = readAcceptanceRequest(idOrInput, optionalDecision);
     let change = await requireChange(request.changeId);
-    change = await refreshChangeForWrite(change);
+    const snapshot = await inspectStableProjectSnapshot();
+    const inspection = snapshot.inspection;
+    change = await refreshChangeForWrite(change, inspection);
     await assertGovernanceWatermarkCurrent(change);
-    const inspection = await inspectProject();
     assertValidProject(inspection);
+    const frozenOwnership = compileFrozenPathOwnership(change);
     if (change.changeKind !== "plan-amendment" || change.compilation) {
       await assertCurrentGovernanceContracts(change, inspection);
     }
     if (change.compilation) {
-      await observeCurrentChangeScope(change, inspection.git);
+      await observeCurrentChangeScope(change, snapshot, frozenOwnership);
       assertIntegrityFailureEvidenceCurrent(change);
     }
 
@@ -615,7 +770,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
     assertOutcomeExceptionBinding(change);
-    assertCompiledChangeCurrent(change);
+    assertCompiledChangeCurrent(change, frozenOwnership?.product);
     const expectedAuthorities = readExpectedAuthorities(readGovernanceBaseline(change), change);
     const authorityValidation = validateAuthorityDecision(
       change.authorityDecision,
@@ -663,8 +818,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return store.save(change);
   }
 
-  async function refreshChangeForWrite(change) {
-    const inspection = await inspectProject();
+  async function refreshChangeForWrite(change, inspection) {
     const next = cloneJson(change);
     next.currentGit = inspection.git;
     next.projectModelDigest = inspection.digest;
@@ -3833,24 +3987,182 @@ function compileObservedChangeSet(change, git, touchedPaths = readTouchedPaths(g
   };
 }
 
-function analyzeChangeScope(change, git, touchedPaths = readTouchedPaths(git)) {
+function analyzeChangeScope(change, touchedPaths, {
+  currentOwnership = null,
+  frozenOwnership = null
+} = {}) {
+  if (!currentOwnership && !frozenOwnership) {
+    return analyzeLegacyChangeScope(change, touchedPaths);
+  }
+  if (!currentOwnership || !frozenOwnership) {
+    throw kernelError(
+      "CHANGE_PATH_OWNERSHIP_DRIFT",
+      "Current and Candidate-frozen path ownership governance must both be present.",
+      409,
+      {
+        currentOwnershipPresent: Boolean(currentOwnership),
+        frozenOwnershipPresent: Boolean(frozenOwnership)
+      }
+    );
+  }
+  assertOwnershipSourcesCompatible(frozenOwnership.sourceBinding, currentOwnership.sourceBinding);
+  const primaryModuleRef = readString(change.primaryModule);
+  const effectiveScope = change.contextCapsule?.scope?.write;
+  const contextBinding = change.contextCapsule?.compiledFrom?.pathOwnership;
+  if (!primaryModuleRef || !effectiveScope || !contextBinding) {
+    throw kernelError(
+      "CHANGE_PATH_OWNERSHIP_BINDING_INVALID",
+      "Compiled Change context is missing its frozen path ownership scope binding.",
+      409
+    );
+  }
+  const effectiveScopeDigest = canonicalDigest(effectiveScope);
+  const selection = [{
+    id: "compiled-context-write",
+    moduleRef: primaryModuleRef,
+    scope: effectiveScope,
+    expectedScopeDigest: effectiveScopeDigest
+  }];
+  const frozenProjection = projectKernelPathOwnership({
+    ownership: frozenOwnership,
+    primaryModuleRef,
+    touchedPaths,
+    selection,
+    role: "frozen"
+  });
+  const currentProjection = projectKernelPathOwnership({
+    ownership: currentOwnership,
+    primaryModuleRef,
+    touchedPaths,
+    selection,
+    role: "current"
+  });
+  const frozenScopeBinding = frozenProjection.scopeBindingsBySelection
+    .get("compiled-context-write");
+  const currentScopeBinding = currentProjection.scopeBindingsBySelection
+    .get("compiled-context-write");
+  assertContextOwnershipBinding({
+    contextBinding,
+    effectiveScope,
+    effectiveScopeDigest,
+    frozenOwnership,
+    frozenScopeBinding
+  });
+  if (canonicalDigest(currentScopeBinding) !== canonicalDigest(frozenScopeBinding)) {
+    throw kernelError(
+      "CHANGE_PATH_OWNERSHIP_DRIFT",
+      "Current and Candidate-frozen effective path ownership scopes differ.",
+      409,
+      {
+        frozenScopeBinding: cloneJson(frozenScopeBinding),
+        currentScopeBinding: cloneJson(currentScopeBinding)
+      }
+    );
+  }
+
+  const frozenDecisions = frozenProjection.writeDecisionsBySelection
+    .get("compiled-context-write");
+  const currentDecisions = currentProjection.writeDecisionsBySelection
+    .get("compiled-context-write");
+  const decisions = touchedPaths.map((pathRef) => {
+    const frozenDecision = frozenDecisions?.get(pathRef);
+    const currentDecision = currentDecisions?.get(pathRef);
+    if (!frozenDecision
+      || !currentDecision
+      || canonicalDigest(currentDecision) !== canonicalDigest(frozenDecision)) {
+      throw kernelError(
+        "CHANGE_PATH_OWNERSHIP_DRIFT",
+        "Current and Candidate-frozen path ownership decisions differ.",
+        409,
+        {
+          pathRef,
+          frozenDecision: frozenDecision ? cloneJson(frozenDecision) : null,
+          currentDecision: currentDecision ? cloneJson(currentDecision) : null
+        }
+      );
+    }
+    return { path: pathRef, ...cloneJson(frozenDecision) };
+  });
+  const governance = readGovernanceBaseline(change);
+  const modelAmendmentPaths = touchedPaths.filter((filePath) => (
+    filePath.startsWith(".legatura/") && !filePath.startsWith(".legatura/runtime/")
+  ));
+  const decisionByPath = new Map(decisions.map((decision) => [decision.path, decision]));
+  const inModuleWriteScope = touchedPaths.filter((filePath) => (
+    !modelAmendmentPaths.includes(filePath) && decisionByPath.get(filePath)?.writeAllowed === true
+  ));
+  const outOfScopePaths = touchedPaths.filter((filePath) => (
+    decisionByPath.get(filePath)?.writeAllowed !== true
+  ));
+  const touchedOwnerRefs = new Set(decisions.map((decision) => decision.ownerModuleRef).filter(Boolean));
+  const touchedModules = governance.modules
+    .filter((module) => touchedOwnerRefs.has(module.id))
+    .map((module) => ({ id: module.id, name: module.name, status: module.status }));
+  const opaqueModuleRefs = new Set(touchedModules
+    .filter((module) => module.status === "opaque")
+    .map((module) => module.id));
+  const opaquePaths = outOfScopePaths.filter((filePath) => (
+    opaqueModuleRefs.has(decisionByPath.get(filePath)?.ownerModuleRef)
+  ));
+  const preExistingPaths = change.baseline?.git?.dirty
+    ? readTouchedPaths(change.baseline.git)
+    : [];
+  return {
+    schemaVersion: 1,
+    touchedPaths,
+    inModuleWriteScope,
+    modelAmendmentPaths,
+    outOfScopePaths,
+    opaquePaths,
+    preExistingPaths,
+    touchedModules,
+    pathOwnership: {
+      schemaVersion: 1,
+      frozenSourceBinding: cloneJson(frozenOwnership.sourceBinding),
+      currentSourceBinding: cloneJson(currentOwnership.sourceBinding),
+      scopeBinding: projectPersistedPathOwnershipScopeBinding(frozenScopeBinding),
+      decisions
+    },
+    requires: uniqueStrings([
+      ...(modelAmendmentPaths.length > 0 ? ["normative-amendment"] : []),
+      ...(outOfScopePaths.length > 0 ? ["scoped-waiver-or-change-split"] : []),
+      ...(preExistingPaths.length > 0 ? ["explicit-adoption"] : [])
+    ])
+  };
+}
+
+function projectPersistedPathOwnershipScopeBinding(binding) {
+  return {
+    schemaVersion: binding.schemaVersion,
+    selectionId: binding.selectionId,
+    moduleRef: binding.moduleRef,
+    authoritativeScopeDigest: binding.authoritativeScopeDigest,
+    requestScopeDigest: binding.requestScopeDigest,
+    effectiveScopeDigest: binding.effectiveScopeDigest
+  };
+}
+
+function analyzeLegacyChangeScope(change, touchedPaths) {
   const governance = readGovernanceBaseline(change);
   const writeScope = change.contextCapsule?.scope?.write ?? { include: [], exclude: [] };
   const modelAmendmentPaths = touchedPaths.filter((filePath) => (
     filePath.startsWith(".legatura/") && !filePath.startsWith(".legatura/runtime/")
   ));
   const inModuleWriteScope = touchedPaths.filter((filePath) => (
-    !modelAmendmentPaths.includes(filePath) && pathAllowed(filePath, writeScope)
+    !modelAmendmentPaths.includes(filePath) && legacyPathAllowed(filePath, writeScope)
   ));
   const outOfScopePaths = touchedPaths.filter((filePath) => (
     !modelAmendmentPaths.includes(filePath) && !inModuleWriteScope.includes(filePath)
   ));
   const touchedModules = governance.modules
-    .filter((module) => touchedPaths.some((filePath) => pathAllowed(filePath, module.paths)))
+    .filter((module) => touchedPaths.some((filePath) => legacyPathAllowed(filePath, module.paths)))
     .map((module) => ({ id: module.id, name: module.name, status: module.status }));
   const opaquePaths = outOfScopePaths.filter((filePath) => touchedModules.some((module) => (
     module.status === "opaque"
-      && pathAllowed(filePath, governance.modules.find((candidate) => candidate.id === module.id)?.paths)
+      && legacyPathAllowed(
+        filePath,
+        governance.modules.find((candidate) => candidate.id === module.id)?.paths
+      )
   )));
   const preExistingPaths = change.baseline?.git?.dirty
     ? readTouchedPaths(change.baseline.git)
@@ -3864,12 +4176,99 @@ function analyzeChangeScope(change, git, touchedPaths = readTouchedPaths(git)) {
     opaquePaths,
     preExistingPaths,
     touchedModules,
+    legacyBootstrap: true,
     requires: uniqueStrings([
       ...(modelAmendmentPaths.length > 0 ? ["normative-amendment"] : []),
       ...(outOfScopePaths.length > 0 ? ["scoped-waiver-or-change-split"] : []),
       ...(preExistingPaths.length > 0 ? ["explicit-adoption"] : [])
     ])
   };
+}
+
+function assertOwnershipSourcesCompatible(frozenBinding, currentBinding) {
+  const driftFields = [
+    "schemaVersion",
+    "trackedPathFactsDigest",
+    "ownershipPolicyDigest",
+    "assignmentDigest"
+  ];
+  const changedFields = driftFields.filter((field) => (
+    frozenBinding?.[field] !== currentBinding?.[field]
+  ));
+  if (changedFields.length > 0) {
+    throw kernelError(
+      "CHANGE_PATH_OWNERSHIP_DRIFT",
+      "Current ownership policy or tracked-path classification differs from the Candidate baseline.",
+      409,
+      {
+        changedFields,
+        frozenSourceBinding: cloneJson(frozenBinding),
+        currentSourceBinding: cloneJson(currentBinding)
+      }
+    );
+  }
+}
+
+function projectKernelPathOwnership({
+  ownership,
+  primaryModuleRef,
+  touchedPaths,
+  selection,
+  role
+}) {
+  try {
+    return projectCompiledModulePathOwnershipIndex(ownership.product, {
+      model: ownership.model,
+      moduleRefs: [primaryModuleRef],
+      pathRefs: touchedPaths,
+      scopeSelections: selection
+    });
+  } catch (error) {
+    throw kernelError(
+      role === "frozen"
+        ? "CHANGE_PATH_OWNERSHIP_BINDING_INVALID"
+        : "CHANGE_PATH_OWNERSHIP_DRIFT",
+      `${role === "frozen" ? "Candidate-frozen" : "Current"} path ownership projection failed closed.`,
+      409,
+      { sourceCode: readString(error?.code) ?? null }
+    );
+  }
+}
+
+function assertContextOwnershipBinding({
+  contextBinding,
+  effectiveScope,
+  effectiveScopeDigest,
+  frozenOwnership,
+  frozenScopeBinding
+}) {
+  const sourceKeys = Object.keys(frozenOwnership.sourceBinding);
+  const observedSourceBinding = Object.fromEntries(sourceKeys.map((key) => [
+    key,
+    contextBinding?.[key] ?? null
+  ]));
+  const sourceCurrent = canonicalDigest(observedSourceBinding)
+    === canonicalDigest(frozenOwnership.sourceBinding);
+  const scopeCurrent = frozenScopeBinding
+    && contextBinding?.scopeDigest === frozenScopeBinding.authoritativeScopeDigest
+    && contextBinding?.effectiveScopeDigest === effectiveScopeDigest
+    && frozenScopeBinding.requestScopeDigest === effectiveScopeDigest
+    && frozenScopeBinding.effectiveScopeDigest === effectiveScopeDigest
+    && canonicalDigest(frozenScopeBinding.effectiveScope) === canonicalDigest(effectiveScope);
+  if (!sourceCurrent || !scopeCurrent) {
+    throw kernelError(
+      "CHANGE_PATH_OWNERSHIP_BINDING_INVALID",
+      "Compiled Context path ownership binding does not match the Candidate-frozen product and scope.",
+      409,
+      {
+        sourceCurrent,
+        scopeCurrent,
+        expectedSourceBinding: cloneJson(frozenOwnership.sourceBinding),
+        observedSourceBinding,
+        frozenScopeBinding: frozenScopeBinding ? cloneJson(frozenScopeBinding) : null
+      }
+    );
+  }
 }
 
 function assertPlanChangeSeparation(change, touchedPaths) {
@@ -3970,9 +4369,13 @@ function compareOutcomeExceptionValues(left, right) {
     || canonicalDigest(left).localeCompare(canonicalDigest(right));
 }
 
-function assertCompiledChangeCurrent(change) {
+function assertCompiledChangeCurrent(change, modulePathOwnershipProduct) {
   const governanceBaseline = readGovernanceBaseline(change);
-  const recompiled = compileChangeAgainstGovernance(change, governanceBaseline);
+  const recompiled = modulePathOwnershipProduct
+    ? compileChangeAgainstGovernance(change, governanceBaseline, {
+        modulePathOwnershipProduct
+      })
+    : compileChangeAgainstGovernance(change, governanceBaseline);
   const expected = compiledChangeProjection(recompiled);
   const observed = compiledChangeProjection(change);
   const expectedDigest = canonicalDigest(expected);
@@ -4191,14 +4594,14 @@ function decodeGitPath(value) {
   return trimmed;
 }
 
-function pathAllowed(filePath, scope = {}) {
+function legacyPathAllowed(filePath, scope = {}) {
   const includes = normalizeStringList(scope?.include ?? scope);
   const excludes = normalizeStringList(scope?.exclude);
-  return includes.some((pattern) => globMatches(filePath, pattern))
-    && !excludes.some((pattern) => globMatches(filePath, pattern));
+  return includes.some((pattern) => legacyGlobMatches(filePath, pattern))
+    && !excludes.some((pattern) => legacyGlobMatches(filePath, pattern));
 }
 
-function globMatches(filePath, pattern) {
+function legacyGlobMatches(filePath, pattern) {
   if (!readString(pattern)) return false;
   let expression = "";
   for (let index = 0; index < pattern.length; index += 1) {
