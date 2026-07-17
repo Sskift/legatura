@@ -154,6 +154,13 @@ export function assertIntegrityFailureEvidenceCurrent(change) {
 
 export function compileChangeAgainstGovernance(change, governanceBaseline, options = {}) {
   const pathOwnershipOption = readModulePathOwnershipProductOption(options);
+  if (Object.hasOwn(governanceBaseline?.projectDocument ?? {}, "pathGovernance")
+    && !pathOwnershipOption.supplied) {
+    throw compilerError(
+      "MODULE_PATH_OWNERSHIP_PRODUCT_REQUIRED",
+      "A Governance Baseline with pathGovernance requires the process-local Module path ownership product."
+    );
+  }
   const primaryModuleId = readString(change.primaryModule);
   if (!primaryModuleId) {
     throw compilerError(
