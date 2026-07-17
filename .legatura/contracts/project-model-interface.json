@@ -34,6 +34,26 @@
     {
       "id": "module-claim-gate-projections-are-exact",
       "statement": "From one compiler-produced opaque Claim Gate route product bound to the exact unchanged Project Model, Project Model compiles under one aggregate bounded budget the complete canonical Claim descriptors visible through each requested Module's publicContracts and dependency via Contracts, plus the complete acceptance-eligible original Gate and command routes for those Claims and explicitly selected Module/Claim pairs. Explicit selections may address frozen-Plan target or cross-source Claims but never widen authoring visibility; routes admitted only by integration- or release-only full-Gate expansion are excluded; original route shape, order, and canonical digest are preserved; and forged, wrong-Model, content-drifted, incomplete-coverage, malformed, unknown-Module, or over-limit inputs fail closed without requiring a consumer to traverse Contracts or reinterpret Gate scope, command scope, or effective Module applicability."
+    },
+    {
+      "id": "planned-outcome-revisions-are-append-only",
+      "statement": "Before activation, a planned or conditional Outcome definition may change only through one bounded append-only Revision whose previous complete normalized definition and digest match the frozen Governance Baseline, whose current digest matches the candidate Plan, whose changed fields are compiler-derived, and whose rationale and required Plan authority are exact; removal, rewrite, reordering, no-op, fork, or Revision beside a status Transition fails closed."
+    },
+    {
+      "id": "outcome-activation-freezes-refined-semantics",
+      "statement": "Outcome activation binds the latest frozen-baseline definition digest and rejects activation in the same Amendment as a Revision; once active, achieved, or retired, the complete normalized Outcome definition is immutable."
+    },
+    {
+      "id": "outcome-revisions-cannot-self-authorize",
+      "statement": "An Outcome Revision does not change lifecycle status, an Amendment that appends any Revision cannot append any Outcome status Transition, and a Revision cannot authorize its own Plan Amendment or any ordinary Change created before the Revision is Accepted into a later frozen Governance Baseline."
+    },
+    {
+      "id": "outcome-revision-ledger-rejects-history-attacks",
+      "statement": "The fixed Project Model Outcome Revision proof rejects a missing, deleted, reordered, rewritten, forked, no-op, or digest-inconsistent Revision and accepts only exact complete prior and current definitions for a planned or conditional Outcome."
+    },
+    {
+      "id": "outcome-revision-freeze-rejects-lifecycle-attacks",
+      "statement": "The fixed Project Model Outcome Revision proof rejects any Amendment that appends both a Revision and an Outcome status Transition, any active or terminal definition drift, and activation not bound to the exact latest frozen-baseline definition."
     }
   ]
 }

@@ -218,6 +218,10 @@
       "affects": ["project-model", "change-kernel"],
       "owner": "governance-maintainer",
       "statement": "The Kernel permanently freezes every declared Outcome statement, so speculative planned or conditional meanings cannot yet be revised through append-only history before activation.",
+      "proofClaimRefs": [
+        "outcome-revision-ledger-rejects-history-attacks",
+        "outcome-revision-freeze-rejects-lifecycle-attacks"
+      ],
       "expansionTrigger": "Before a planned or conditional Outcome needs semantic refinement or any S2 Outcome is activated."
     }
   ]

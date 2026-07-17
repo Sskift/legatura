@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "outcome-revisions",
+  "name": "Outcome Revision Proof Gate",
+  "purpose": "Produce direct Project Model-owned Evidence that pre-activation Outcome revisions are append-only, authority-bound, and frozen before activation.",
+  "appliesTo": ["project-model"],
+  "commands": [
+    {
+      "id": "outcome-revision-proof",
+      "appliesTo": ["project-model"],
+      "command": ["node", "--test", "test/project-model/outcome-revisions.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "planned-outcome-revisions-are-append-only",
+        "outcome-activation-freezes-refined-semantics",
+        "outcome-revisions-cannot-self-authorize",
+        "outcome-revision-ledger-rejects-history-attacks",
+        "outcome-revision-freeze-rejects-lifecycle-attacks"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Outcome revision proof test entrypoint must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "outcome-revision-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "an Outcome semantic delta without exactly one append-only Revision",
+          "a deleted, reordered, rewritten, forked, no-op, or digest-forged Revision chain",
+          "a Revision of an active, achieved, or retired Outcome",
+          "an Amendment that appends both any Revision and any Outcome status Transition",
+          "activation that does not freeze the exact latest frozen-baseline Outcome definition"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof covers the bounded in-process Project Model compiler and local Kernel rederivation; Accepted history portability across workspaces remains an explicit Knowledge Gap.",
+        "Human-facing Outcome revision authoring is outside this Gate and belongs to a later Workbench Outcome."
+      ]
+    }
+  ]
+}

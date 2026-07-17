@@ -56,7 +56,7 @@
       "id": "S1",
       "name": "Self-Proving Project Model",
       "status": "active",
-      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017"]
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018"]
     },
     {
       "id": "S2",
@@ -337,7 +337,7 @@
     {
       "id": "LGT-017",
       "stage": "S1",
-      "status": "planned",
+      "status": "retired",
       "outcome": "A planned or conditional Outcome can be refined before activation through append-only Plan-authority history, while activation freezes its statement and stable Criteria and terminal history remains immutable.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -350,6 +350,52 @@
         ]
       },
       "nonGoals": ["Rewriting active or terminal Outcomes", "Treating task reprioritization as Outcome refinement"]
+    },
+    {
+      "id": "LGT-018",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "A planned or conditional Outcome can be revised before activation through an append-only Plan-authority ledger, while activation freezes its complete normalized definition and active or terminal history remains immutable.",
+      "dependsOn": ["LGT-010"],
+      "acceptance": {
+        "claimRefs": [
+          "planned-outcome-revisions-are-append-only",
+          "outcome-activation-freezes-refined-semantics",
+          "outcome-revisions-cannot-self-authorize"
+        ],
+        "gapRefs": ["planned-outcome-refinement-not-supported"],
+        "exitCriteria": [
+          "Every pre-activation semantic revision records prior and current digests, rationale, and Plan authority without deleting the earlier meaning.",
+          "Activating an Outcome freezes its statement and stable Criteria; active, achieved, and retired semantics cannot be rewritten.",
+          "An Amendment that appends a Revision contains no Outcome status Transition, and a revision cannot authorize implementation against the amended Plan within the same Change."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-018-C1",
+            "statement": "Every pre-activation semantic revision records prior and current digests, rationale, and Plan authority without deleting the earlier meaning.",
+            "claimRefs": ["planned-outcome-revisions-are-append-only"],
+            "gapRefs": ["planned-outcome-refinement-not-supported"]
+          },
+          {
+            "id": "LGT-018-C2",
+            "statement": "Activating an Outcome freezes its statement and stable Criteria; active, achieved, and retired semantics cannot be rewritten.",
+            "claimRefs": ["outcome-activation-freezes-refined-semantics"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-018-C3",
+            "statement": "An Amendment that appends a Revision contains no Outcome status Transition, and a revision cannot authorize implementation against the amended Plan within the same Change.",
+            "claimRefs": ["outcome-revisions-cannot-self-authorize"],
+            "gapRefs": []
+          }
+        ]
+      },
+      "nonGoals": [
+        "Rewriting active, achieved, or retired Outcomes",
+        "Treating priority, assignment, deadlines, or task progress as Outcome revisions",
+        "Combining any Outcome Revision with any Outcome status Transition in one Amendment",
+        "A generic event bus or Project Model migration framework"
+      ]
     },
     {
       "id": "LGT-020",
@@ -709,6 +755,16 @@
       "exceptionProgress": "none",
       "exceptionTransitionUse": "forbidden"
     },
+    "revision": {
+      "ledger": "append-only",
+      "ledgerField": "outcomeRevisions",
+      "allowedStatuses": ["planned", "conditional"],
+      "previousValue": "complete-normalized-definition-and-digest",
+      "currentValue": "compiler-derived-definition-digest-and-changed-fields",
+      "sameAmendmentTransition": "any-appended-outcome-transition-forbidden",
+      "activationFreeze": "latest-frozen-baseline-definition-digest",
+      "authority": "governance-maintainer"
+    },
     "transition": {
       "ledger": "append-only",
       "ledgerField": "outcomeTransitions",
@@ -728,6 +784,7 @@
       "authority": "governance-maintainer"
     }
   },
+  "outcomeRevisions": [],
   "outcomeTransitions": [
     {
       "id": "LGT-010-T1",
@@ -861,12 +918,23 @@
           "rationale": "Its already-closed compiler and Kernel lifecycle Packages remain the exact mechanism compiling this Transition."
         }
       ]
+    },
+    {
+      "id": "LGT-017-T1",
+      "outcomeRef": "LGT-017",
+      "from": "planned",
+      "to": "retired",
+      "rationale": "LGT-017 cannot be activated because its frozen planned definition predates stable Criteria while existing semantics correctly reject in-place repair; fully specified successor LGT-018 preserves the capability without using integrity maintenance as feature delivery.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
     "planBeforeImplementation": "A new or materially changed Outcome uses a plan-amendment Change that can touch only .legatura/** and cannot reference the plan it edits; implementation follows in a later Change against the accepted baseline.",
     "stableIds": "Outcome ids are never reused or renamed; retired Outcomes remain as historical records with reasons and replacements.",
     "activation": "Only Outcomes with satisfied dependencies may become active. Conditional Outcomes also require the activation condition in their acceptance criteria to be evidenced.",
+    "refinement": "A planned or conditional Outcome Definition changes only through an Accepted append-only Revision in an earlier Plan Amendment; an Amendment that appends any Revision cannot append any Outcome status Transition, and activation freezes the latest frozen-baseline Definition digest.",
     "contribution": "An ordinary Change explicitly selects its Module, Outcome, and Claims. The compiler may infer a Criterion only from one unique exact Claim match; ambiguity requires a narrow Criterion hint and no match fails closed unless Plan authority records a non-progress exception.",
     "completion": "Normative rule: an active Outcome becomes achieved only through a separate plan-amendment whose append-only Transition selects prior sealed Accepted Packages, supplies a Plan-authority assessment for every frozen Criterion, and disposes every referenced Knowledge Gap. The Candidate-frozen catalog forbids current-Change and post-Candidate proof; the Kernel re-resolves exact Package, Contribution, Gate Evidence, and ledger bindings before Gates and acceptance.",
     "frozenBaseline": "A Change is compiled and accepted against its frozen Governance Baseline; editing the plan during that Change cannot authorize it.",
