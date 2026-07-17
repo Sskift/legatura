@@ -135,7 +135,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   }
 
   function hasPathOwnershipGovernance(model) {
-    return Boolean(model?.projectDocument?.pathGovernance);
+    return Object.hasOwn(model?.projectDocument ?? {}, "pathGovernance");
   }
 
   async function inspectStableProjectSnapshot() {

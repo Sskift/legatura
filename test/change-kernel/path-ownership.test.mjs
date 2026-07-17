@@ -194,6 +194,32 @@ test("Kernel keeps ownership denial dimensions distinct and rejects policy drift
       "ownership drift fails before an external Gate command can run"
     );
   }
+
+  projectDocument.pathGovernance = null;
+  await writeJson(projectPath, projectDocument);
+  await assert.rejects(
+    () => kernel.createChange({
+      id: "malformed-governance-bootstrap",
+      title: "A present malformed ownership policy must not become legacy bootstrap"
+    }),
+    (error) => error?.code === "PROJECT_MODEL_INVALID"
+      && error?.details?.errors?.some((entry) => (
+        entry.code === "module.path-ownership.invalid"
+          && entry.location === ".legatura/project.json#pathGovernance"
+          && entry.sourceCode === "MODULE_PATH_OWNERSHIP_INPUT_INVALID"
+      )),
+    "only an absent pathGovernance field may use the brownfield bootstrap"
+  );
+  await assert.rejects(
+    () => kernel.getChange("malformed-governance-bootstrap"),
+    { code: "CHANGE_NOT_FOUND" },
+    "invalid governed input must not persist a Candidate"
+  );
+  assert.equal(
+    commands.gateExecutions(),
+    externalExecutions,
+    "malformed governed input fails before any external Gate command can run"
+  );
 });
 
 async function createGovernedFixture() {
