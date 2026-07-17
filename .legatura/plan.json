@@ -354,7 +354,7 @@
     {
       "id": "LGT-018",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "A planned or conditional Outcome can be revised before activation through an append-only Plan-authority ledger, while activation freezes its complete normalized definition and active or terminal history remains immutable.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -938,6 +938,55 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-018-T2",
+      "outcomeRef": "LGT-018",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "Prior sealed Project Model and Change Kernel Packages now cover every frozen LGT-018 Criterion and close the predeclared refinement Gap through its exact proof Claims without using this Plan Amendment as proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt018-compile-outcome-plan-amendments",
+          "acceptanceDigest": "sha256:e49feb684828f7c6487f6710a86bb6dfce10d0859628e2368f8d6eab6ce0653b"
+        },
+        {
+          "changeId": "lgt018-adopt-outcome-plan-amendments-v2",
+          "acceptanceDigest": "sha256:7b3f2e24a62bcd33f7fa814dffce6658a9e375539db743d5a50675912c3e2fdd"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-018-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Project Model compiler Package directly proves bounded append-only Revisions carrying complete prior definitions, exact prior and current digests, compiler-derived changed fields, substantive rationale, and frozen Plan authority.",
+            "residualUncertainty": "Human-facing Revision authoring remains outside this Criterion; malformed or ambiguous author input continues to fail closed at the compiler Interface."
+          }
+        },
+        {
+          "criterionRef": "LGT-018-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Project Model compiler Package directly proves activation binds the exact frozen definition and that active, achieved, or retired Outcome definitions cannot drift.",
+            "residualUncertainty": "The proof is bounded to the local deterministic Project Model compiler; authenticated portable history remains a separate open trust concern."
+          }
+        },
+        {
+          "criterionRef": "LGT-018-C3",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Change Kernel Package directly proves the combined Plan Amendment compilation is rederived at compile, Gate, and acceptance boundaries, that old Candidates become stale after an Accepted Revision, and that current-schema records cannot fall back to legacy projections.",
+            "residualUncertainty": "The watermark and Store proof cover the local single-writer runtime; authenticated multi-writer coordination remains outside the current boundary."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "planned-outcome-refinement-not-supported",
+          "rationale": "The fixed Project Model proof command in the prior compiler Package directly covers both frozen Closure proof Claims, while the separate Kernel Package proves lifecycle adoption required by the durable resolution."
+        }
+      ]
     }
   ],
   "changeRules": {

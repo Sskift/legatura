@@ -214,7 +214,7 @@
     },
     {
       "id": "planned-outcome-refinement-not-supported",
-      "status": "open",
+      "status": "closed",
       "affects": ["project-model", "change-kernel"],
       "owner": "governance-maintainer",
       "statement": "The Kernel permanently freezes every declared Outcome statement, so speculative planned or conditional meanings cannot yet be revised through append-only history before activation.",
@@ -222,7 +222,15 @@
         "outcome-revision-ledger-rejects-history-attacks",
         "outcome-revision-freeze-rejects-lifecycle-attacks"
       ],
-      "expansionTrigger": "Before a planned or conditional Outcome needs semantic refinement or any S2 Outcome is activated."
+      "expansionTrigger": "Before a planned or conditional Outcome needs semantic refinement or any S2 Outcome is activated.",
+      "resolution": "Project Model now compiles a bounded append-only Revision ledger with complete prior definitions, exact digests, compiler-derived changed fields, frozen Plan authority, Revision/Transition isolation, and activation bindings; Change Kernel rederives the same Interface before Gates and acceptance.",
+      "closedBy": [
+        {
+          "changeId": "lgt018-compile-outcome-plan-amendments",
+          "acceptanceDigest": "sha256:e49feb684828f7c6487f6710a86bb6dfce10d0859628e2368f8d6eab6ce0653b"
+        }
+      ],
+      "reopenTrigger": "Reopen if Revision history can be deleted, rewritten, reordered, forged, mixed with a status Transition, applied after activation, or accepted without Kernel lifecycle rederivation."
     }
   ]
 }
