@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { createKernel } from "./core/index.mjs";
 import { DEFAULT_PORT, startServer } from "./server.mjs";
+import { compileArchitectureProfileViewModel } from "./workbench-view-model.mjs";
 
 const HELP_TEXT = `Usage:
   legatura open <repo> [--port ${DEFAULT_PORT}] [--no-browser]
@@ -14,8 +15,18 @@ const HELP_TEXT = `Usage:
 
 Commands:
   open       Start the local Change workbench for a repository.
-  inspect    Validate and print the repository Project Atlas.
+  inspect    Compile and print the repository Architecture Profile.
 `;
+
+const PROFILE_DIMENSIONS = Object.freeze([
+  ["outcomes", "Outcomes"],
+  ["criteria", "Criteria"],
+  ["claims", "Claims"],
+  ["gates", "Gates"],
+  ["evidence", "Evidence"],
+  ["residualUncertainty", "Residual uncertainty"],
+  ["knowledgeGaps", "Knowledge gaps"]
+]);
 
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
@@ -32,7 +43,11 @@ export function parseArgs(argv) {
   throw cliError("UNKNOWN_COMMAND", `Unknown command: ${command}`, { command });
 }
 
-export async function runCli(argv, io = defaultIo()) {
+export async function runCli(
+  argv,
+  io = defaultIo(),
+  { kernelFactory = createKernel } = {}
+) {
   const options = parseArgs(argv);
   if (options.command === "help") {
     io.stdout.write(HELP_TEXT);
@@ -41,16 +56,14 @@ export async function runCli(argv, io = defaultIo()) {
 
   const repoPath = await resolveRepositoryPath(options.repo, io);
   if (options.command === "inspect") {
-    const project = await createKernel({ repoPath }).inspectProject();
-    if (project?.validation?.valid === false) {
-      throw cliError(
-        "PROJECT_MODEL_INVALID",
-        "The repository Project Model is invalid.",
-        project.validation
-      );
-    }
-    io.stdout.write(options.json ? `${JSON.stringify(project, null, 2)}\n` : renderAtlas(project));
-    return { status: "inspected", repoPath, project };
+    const profile = await kernelFactory({ repoPath }).inspectArchitectureProfile();
+    const viewModel = compileArchitectureProfileViewModel(profile);
+    io.stdout.write(
+      options.json
+        ? `${JSON.stringify(viewModel, null, 2)}\n`
+        : renderArchitectureProfileSummary(viewModel)
+    );
+    return { status: "inspected", repoPath, architectureProfile: viewModel };
   }
 
   const app = await startServer({ repoPath, port: options.port });
@@ -162,14 +175,20 @@ async function resolveRepositoryPath(value, io) {
   return resolved;
 }
 
-function renderAtlas(project) {
-  if (typeof project?.atlas === "string") {
-    return `${project.atlas.trimEnd()}\n`;
+function renderArchitectureProfileSummary(viewModel) {
+  const sourceRefs = viewModel.sourceRefs;
+  const lines = [
+    `Architecture Profile: ${viewModel.profileRef}`,
+    `Snapshot: ${sourceRefs.snapshotDigest}`,
+    `Project Model: ${sourceRefs.projectModelDigest}`,
+    `Git content: ${sourceRefs.gitContentDigest}`,
+    `Change Store: ${sourceRefs.changeStoreDigest}`,
+    "Orthogonal dimensions:"
+  ];
+  for (const [field, label] of PROFILE_DIMENSIONS) {
+    lines.push(`  ${label}: ${viewModel.dimensions[field].length}`);
   }
-  if (typeof project?.atlas?.markdown === "string") {
-    return `${project.atlas.markdown.trimEnd()}\n`;
-  }
-  return `${JSON.stringify(project, null, 2)}\n`;
+  return `${lines.join("\n")}\n`;
 }
 
 function cliError(code, message, details) {

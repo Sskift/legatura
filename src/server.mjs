@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createKernel } from "./core/index.mjs";
+import { compileArchitectureProfileViewModel } from "./workbench-view-model.mjs";
 
 export const LOOPBACK_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 4317;
@@ -136,6 +137,23 @@ async function handleApiRequest({ request, response, requestUrl, kernel, bodyLim
   if (segments.length === 2 && segments[0] === "api" && segments[1] === "project") {
     assertMethod(method, ["GET"]);
     sendJson(response, 200, await kernel.inspectProject());
+    return;
+  }
+
+  if (
+    segments.length === 2
+    && segments[0] === "api"
+    && segments[1] === "architecture-profile"
+  ) {
+    assertMethod(method, ["GET"]);
+    const profile = await kernel.inspectArchitectureProfile();
+    sendJson(response, 200, compileArchitectureProfileViewModel(profile));
+    return;
+  }
+
+  if (segments.length === 2 && segments[0] === "api" && segments[1] === "workbench") {
+    assertMethod(method, ["GET"]);
+    sendJson(response, 200, await kernel.inspectWorkbenchProjection());
     return;
   }
 

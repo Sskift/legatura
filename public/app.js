@@ -1,5 +1,16 @@
+import {
+  architectureProfileDimension,
+  receiveArchitectureProfileViewModel,
+  receiveWorkbenchProjection,
+  refreshAfterMutation,
+  selectWorkbenchAction,
+  selectWorkbenchAuthoringModules,
+} from "./workbench-adapter.js";
+
 const state = {
   project: null,
+  workbench: null,
+  architectureProfile: null,
   changes: [],
   selectedChangeId: null,
   selectedChange: null,
@@ -7,9 +18,17 @@ const state = {
   changesLoading: true,
   changeLoading: false,
   projectError: null,
+  workbenchError: null,
+  architectureProfileError: null,
   changesError: null,
   changeError: null,
   runningGateId: null,
+};
+
+const requestGeneration = {
+  workbench: 0,
+  architectureProfile: 0,
+  changeDetail: 0,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -218,7 +237,6 @@ function statusTone(status) {
     normalized.includes("ready") ||
     normalized.includes("success") ||
     normalized.includes("closed") ||
-    normalized === "healthy" ||
     normalized === "governed"
   ) return "success";
   if (
@@ -271,7 +289,6 @@ function statusLabel(status) {
     retired: "已退役",
     ready: "就绪",
     configured: "已配置",
-    healthy: "健康",
     blocked: "已阻断",
     governed: "已治理",
     provisional: "暂定",
@@ -408,6 +425,41 @@ async function loadProject() {
   }
 }
 
+async function loadWorkbench() {
+  const generation = ++requestGeneration.workbench;
+  state.workbenchError = null;
+  try {
+    const payload = await api("/api/workbench");
+    if (generation !== requestGeneration.workbench) return;
+    state.workbench = receiveWorkbenchProjection(payload);
+  } catch (error) {
+    if (generation !== requestGeneration.workbench) return;
+    state.workbenchError = error;
+    state.workbench = null;
+  } finally {
+    if (generation !== requestGeneration.workbench) return;
+    renderCreateModuleOptions();
+    renderChangeDetail();
+  }
+}
+
+async function loadArchitectureProfile() {
+  const generation = ++requestGeneration.architectureProfile;
+  state.architectureProfileError = null;
+  try {
+    const payload = await api("/api/architecture-profile");
+    if (generation !== requestGeneration.architectureProfile) return;
+    state.architectureProfile = receiveArchitectureProfileViewModel(payload);
+  } catch (error) {
+    if (generation !== requestGeneration.architectureProfile) return;
+    state.architectureProfileError = error;
+    state.architectureProfile = null;
+  } finally {
+    if (generation !== requestGeneration.architectureProfile) return;
+    renderProjectState();
+  }
+}
+
 async function loadChanges({ preserveSelection = true } = {}) {
   state.changesLoading = true;
   state.changesError = null;
@@ -449,22 +501,36 @@ async function loadChanges({ preserveSelection = true } = {}) {
 
 async function loadChangeDetail(id = state.selectedChangeId) {
   if (!id) return;
+  const generation = ++requestGeneration.changeDetail;
   state.changeLoading = true;
   state.changeError = null;
   renderChangeDetail();
   try {
     const payload = await api(`/api/changes/${encodeURIComponent(id)}`);
+    if (generation !== requestGeneration.changeDetail) return;
     state.selectedChange = unwrap(payload, ["change"]);
     if (!state.selectedChange || typeof state.selectedChange !== "object") {
       throw new Error("服务没有返回可读取的变更详情。");
     }
   } catch (error) {
+    if (generation !== requestGeneration.changeDetail) return;
     state.changeError = error;
     state.selectedChange = null;
   } finally {
+    if (generation !== requestGeneration.changeDetail) return;
     state.changeLoading = false;
     renderChangeDetail();
   }
+}
+
+function refreshCanonicalStateAfterMutation(options) {
+  return refreshAfterMutation({
+    loadChangeDetail,
+    loadChanges,
+    loadProject,
+    loadWorkbench,
+    loadArchitectureProfile,
+  }, options);
 }
 
 async function selectChange(id) {
@@ -604,24 +670,15 @@ function projectRelationships(project, modules) {
   return relationships;
 }
 
-function projectGaps(project) {
-  const gaps = firstPresent(
-    project.knowledgeGaps,
-    project.gaps,
-    project.knowledge?.gaps,
-    project.atlas?.knowledgeGaps,
-  );
-  return Array.isArray(gaps) ? gaps : [];
+function projectGaps() {
+  return architectureProfileDimension(state.architectureProfile, "knowledgeGaps");
 }
 
 function projectGates(project) {
-  const gates = firstPresent(project.gates, project.gateHealth?.gates, project.projectModel?.gates);
+  const gates = Array.isArray(project?.gates)
+    ? project.gates
+    : project?.projectModel?.gates;
   return Array.isArray(gates) ? gates : [];
-}
-
-function projectContracts(project = state.project) {
-  const contracts = firstPresent(project?.contracts, project?.projectModel?.contracts);
-  return Array.isArray(contracts) ? contracts : [];
 }
 
 function projectPlan(project = state.project) {
@@ -632,6 +689,11 @@ function activePlanOutcomes(project = state.project) {
   return asArray(projectPlan(project)?.outcomes).filter(
     (outcome) => normalizeStatus(outcome?.status) === "active",
   );
+}
+
+function atlasActivePlanOutcomes() {
+  return architectureProfileDimension(state.architectureProfile, "outcomes")
+    .filter((outcome) => outcome?.status === "active");
 }
 
 function planRefsRequired(project = state.project) {
@@ -680,10 +742,12 @@ function renderProject(project) {
   $("#project-avatar").textContent = name.trim().charAt(0).toUpperCase() || "P";
   const path = firstPresent(project.root, project.path, project.repoPath, project.repository?.path, project.repositoryRoot);
   $("#project-path").textContent = path ? String(path) : "项目路径未提供";
-  setPill(
-    $("#project-model-status"),
-    firstPresent(project.status, project.modelStatus, project.validation?.valid === true ? "healthy" : project.validation?.valid === false ? "failed" : null),
-  );
+  const modelStatus = $("#project-model-status");
+  const modelValid = project.validation?.valid;
+  modelStatus.hidden = typeof modelValid !== "boolean";
+  modelStatus.textContent = modelValid === true ? "模型有效" : modelValid === false ? "模型无效" : "";
+  if (typeof modelValid === "boolean") modelStatus.dataset.tone = modelValid ? "success" : "danger";
+  else delete modelStatus.dataset.tone;
 
   const updatedAt = firstPresent(project.updatedAt, project.scannedAt, project.generatedAt);
   const updatedElement = $("#project-updated");
@@ -697,7 +761,7 @@ function renderProject(project) {
   $("#footer-baseline").textContent = baseline.value === "未提供" ? "" : `baseline ${baseline.value}`;
 
   renderBoundary(project);
-  renderProjectGateHealth(project);
+  renderProjectGateConfiguration(project);
   renderDevelopmentPlan(project);
   renderModules(project);
   renderKnowledgeGaps(project);
@@ -706,41 +770,54 @@ function renderProject(project) {
   renderCreatePlanOptions(project);
 }
 
-function governedModules(project = state.project) {
-  return projectModules(project || {}).filter(
-    (module) => normalizeStatus(firstPresent(module.status, module.assurance, module.classification)) === "governed",
-  );
+function workbenchAuthoringModules() {
+  return selectWorkbenchAuthoringModules(state.workbench);
 }
 
-function renderCreateModuleOptions(project = state.project) {
+function selectableAuthoringModules() {
+  return workbenchAuthoringModules().filter((module) => module?.selectable === true);
+}
+
+function disabledReasonSummary(value) {
+  return Array.isArray(value) && value.length > 0 ? value.join(" · ") : "语义投影未授权";
+}
+
+function renderCreateModuleOptions() {
   const select = $("#new-change-module");
   if (!select) return;
   const previous = select.value;
-  const modules = governedModules(project);
+  const modules = workbenchAuthoringModules();
+  const selectableModules = selectableAuthoringModules();
   clear(select);
   select.append(
     createElement("option", {
       value: "",
-      text: modules.length ? "请选择主要修改区域" : "没有可用的已治理模块",
+      text: selectableModules.length ? "请选择主要修改区域" : "没有可用的受控模块",
     }),
   );
   for (const module of modules) {
-    const id = firstPresent(module.id, module.name);
+    const id = module?.id;
+    if (!id) continue;
+    const selectable = module.selectable === true;
     select.append(
       createElement("option", {
         value: String(id),
-        text: `${itemTitle(module, String(id))} · ${id}`,
+        text: `${module.name || id} · ${id}${selectable ? "" : ` · ${disabledReasonSummary(module.disabledReasonCodes)}`}`,
+        disabled: !selectable,
+        attributes: { title: selectable ? "" : disabledReasonSummary(module.disabledReasonCodes) },
       }),
     );
   }
-  if (modules.some((module) => String(firstPresent(module.id, module.name)) === previous)) {
+  if (selectableModules.some((module) => String(module.id) === previous)) {
     select.value = previous;
   }
-  select.disabled = modules.length === 0;
-  $("#new-change-module-help").textContent = modules.length
+  select.disabled = selectableModules.length === 0;
+  $("#new-change-module-help").textContent = selectableModules.length
     ? "一个 Change 只选择一个主要职责边界；跨模块影响会在编译后显式展开。"
-    : "项目模型中没有 Governed 模块，暂时无法创建受治理的变更。";
-  renderCreateClaimOptions(select.value, project);
+    : state.workbenchError
+      ? `Workbench 语义投影不可用：${errorMessage(state.workbenchError)}`
+      : "Kernel 没有授权可用于创建 Change 的模块。";
+  renderCreateClaimOptions(select.value);
 }
 
 function renderCreatePlanOptions(project = state.project) {
@@ -788,67 +865,56 @@ function renderCreatePlanOptions(project = state.project) {
       : "项目尚未声明可选的 active Outcome。";
 }
 
-function renderCreateClaimOptions(moduleId, project = state.project) {
+function renderCreateClaimOptions(moduleId) {
   const container = $("#new-change-known-claims");
   if (!container) return;
   clear(container);
-  if (!moduleId || !project) {
+  if (!moduleId) {
     container.append(createElement("div", { className: "claim-picker-empty", text: "先选择主要修改区域。" }));
     return;
   }
-  const module = projectModules(project).find(
-    (item) => String(firstPresent(item.id, item.name)) === String(moduleId),
-  );
-  const declaredContractIds = new Set(
-    asArray(module?.publicContracts)
-      .map((contract) => firstPresent(contract?.id, contract))
-      .filter(isPresent)
-      .map(String),
-  );
-  const contracts = projectContracts(project).filter((contract) => {
-    const owner = String(firstPresent(contract.owner?.module, contract.owner?.moduleId, contract.owner?.id, contract.owner, ""));
-    return owner === String(moduleId) || declaredContractIds.has(String(firstPresent(contract.id, contract.name)));
-  });
-  const gateClaimIds = new Set(
-    projectGates(project)
-      .filter((gate) => {
-        const targets = asArray(gate.appliesTo).map(String);
-        return targets.length === 0 || targets.includes(String(moduleId));
-      })
-      .flatMap((gate) => asArray(gate.commands).flatMap((command) => asArray(command?.claimRefs)))
-      .map(String),
-  );
-  const claims = contracts.flatMap((contract) =>
-    asArray(contract.claims).map((claim) => ({ claim, contract })),
-  );
+  const module = workbenchAuthoringModules().find((item) => String(item?.id) === String(moduleId));
+  const claims = Array.isArray(module?.claims) ? module.claims : [];
   if (claims.length === 0) {
     container.append(createElement("div", {
       className: "claim-picker-empty",
-      text: "这个模块尚未声明公开契约主张；请先发起 Project Model 修订。",
+      text: "Kernel 没有为这个模块投影可审查的契约主张。",
     }));
     return;
   }
-  for (const { claim, contract } of claims) {
-    const id = firstPresent(claim.id, claim.claimId);
-    const statement = toDisplayText(claim, ["statement", "description"]);
-    const hasGate = gateClaimIds.has(String(id));
+  for (const claim of claims) {
+    const id = claim?.id;
+    if (!id) continue;
+    const statement = String(claim.statement || id);
+    const selectable = claim.selectable === true;
+    const routes = Array.isArray(claim.acceptanceRoutes) ? claim.acceptanceRoutes : [];
+    const routeSummary = routes.map((route) => (
+      `${route.gateId}/${route.commandId} · ${shortIdentifier(route.routeDigest, 18)}`
+    )).join("；");
     const input = createElement("input", {
       type: "checkbox",
       name: "knownClaim",
       value: String(id),
-      disabled: !hasGate,
-      dataset: { statement, contractId: String(firstPresent(contract.id, contract.name, "")) },
+      disabled: !selectable,
+      dataset: {
+        statement,
+        contractId: String(claim.contractRef || ""),
+        routeRefs: routes.map((route) => route.routeRef).join(","),
+        routeDigests: routes.map((route) => route.routeDigest).join(","),
+      },
     });
     container.append(
       createElement("label", { className: "claim-choice" }, [
         input,
         createElement("span", {}, [
-          createElement("strong", { text: statement || String(id) }),
-          createElement("small", { text: `${firstPresent(contract.name, contract.id)} · ${id}` }),
+          createElement("strong", { text: statement }),
+          createElement("small", { text: `${claim.contractRef} · ${id}` }),
+          ...(routeSummary ? [createElement("small", { text: routeSummary })] : []),
         ]),
         createElement("span", {
-          className: `claim-oracle-state${hasGate ? " has-gate" : ""}`,
-          text: hasGate ? "已有门禁" : "需先建 Oracle",
+          className: `claim-oracle-state${selectable ? " has-gate" : ""}`,
+          text: selectable ? `${routes.length} 条精确路由` : disabledReasonSummary(claim.disabledReasonCodes),
+          attributes: { title: routeSummary || disabledReasonSummary(claim.disabledReasonCodes) },
         }),
       ]),
     );
@@ -892,30 +958,13 @@ function renderBoundary(project) {
   }
 }
 
-function renderProjectGateHealth(project) {
+function renderProjectGateConfiguration(project) {
   const gates = projectGates(project);
-  const health = firstPresent(project.gateHealth, project.health?.gates);
-  const status = firstPresent(
-    health?.status,
-    health?.state,
-    project.gateStatus,
-    project.validation?.valid === false ? "failed" : gates.length ? "configured" : null,
-    gates.length ? summarizeGateStatus(gates) : null,
-  );
-  const value = $("#gate-health-value");
-  value.dataset.tone = statusTone(status);
-  value.querySelector("strong").textContent = status ? statusLabel(status) : "尚未提供";
-  $("#gate-health-detail").textContent =
-    toDisplayText(firstPresent(health?.summary, health?.detail, health?.message)) ||
-    (gates.length ? `${gates.length} 项已声明门禁；运行结果随所选变更记录。` : "门禁结果尚未载入。");
-}
-
-function summarizeGateStatus(gates) {
-  const statuses = gates.map((gate) => statusTone(gate.status || gate.state || gate.result));
-  if (statuses.includes("danger")) return "failed";
-  if (statuses.includes("warning")) return "pending";
-  if (statuses.length > 0 && statuses.every((tone) => tone === "success")) return "passed";
-  return gates.length ? "pending" : null;
+  const value = $("#gate-configuration-value");
+  value.querySelector("strong").textContent = `${gates.length} 项已声明`;
+  $("#gate-configuration-detail").textContent = gates.length
+    ? "这里只显示 Project Model 的 Gate 配置数量；运行事实属于各个 Change。"
+    : "当前 Project Model 没有声明 Gate。";
 }
 
 function renderModules(project) {
@@ -995,8 +1044,23 @@ function renderItemList(container, items, options = {}) {
 function renderKnowledgeGaps(project) {
   const gaps = projectGaps(project);
   $("#gap-count").textContent = String(gaps.length);
-  $("#knowledge-gaps-empty").hidden = gaps.length > 0;
-  renderItemList($("#knowledge-gaps"), gaps, { fallbackTitle: "未命名缺口" });
+  const empty = $("#knowledge-gaps-empty");
+  empty.hidden = gaps.length > 0;
+  empty.textContent = state.architectureProfileError
+    ? `Architecture Profile 不可用：${errorMessage(state.architectureProfileError)}`
+    : "当前 Profile 没有登记的知识缺口。";
+  const exactProfileGaps = architectureProfileDimension(state.architectureProfile, "knowledgeGaps");
+  renderItemList(
+    $("#knowledge-gaps"),
+    state.architectureProfile
+      ? gaps.map((gap) => ({
+          title: gap.id,
+          description: gap.statement,
+          status: gap.status,
+        }))
+      : gaps,
+    { fallbackTitle: "未命名缺口" },
+  );
 }
 
 function renderProjectGates(project) {
@@ -1007,15 +1071,21 @@ function renderProjectGates(project) {
 
 function renderDevelopmentPlan(project) {
   const plan = projectPlan(project);
-  const outcomes = activePlanOutcomes(project);
+  const outcomes = atlasActivePlanOutcomes(project);
   $("#plan-active-count").textContent = `${outcomes.length} active`;
   $("#plan-north-star").textContent = toDisplayText(plan?.northStar) || "尚未声明长期 North Star。";
-  $("#active-plan-outcomes-empty").hidden = outcomes.length > 0;
+  const empty = $("#active-plan-outcomes-empty");
+  empty.hidden = outcomes.length > 0;
+  empty.textContent = state.architectureProfileError
+    ? `Architecture Profile 不可用：${errorMessage(state.architectureProfileError)}`
+    : "当前 Profile 没有 active Outcome。";
   renderItemList(
     $("#active-plan-outcomes"),
     outcomes.map((outcome) => ({
       title: outcome.id,
-      description: outcome.outcome,
+      description: state.architectureProfile
+        ? outcome.statement
+        : outcome.outcome,
       status: outcome.status,
     })),
     { fallbackTitle: "未命名 Outcome" },
@@ -1046,6 +1116,16 @@ function changeIntent(change) {
       change.intent,
     ),
   );
+}
+
+function workbenchChangeAction(kind, change = state.selectedChange) {
+  return selectWorkbenchAction(state.workbench, change, kind);
+}
+
+function projectWorkbenchAction(button, action) {
+  const enabled = action?.enabled === true;
+  button.disabled = !enabled;
+  button.title = enabled ? "" : disabledReasonSummary(action?.disabledReasonCodes);
 }
 
 function renderChangeList() {
@@ -1121,7 +1201,7 @@ function renderSelectedChange(change) {
   renderVerificationObligations(change);
 
   const currentStatus = normalizeStatus(firstPresent(change.status, change.state, change.phase));
-  elements.compileChange.disabled = change.canCompile === false || ["accepted", "integrated", "rejected"].includes(currentStatus);
+  projectWorkbenchAction(elements.compileChange, workbenchChangeAction("compile", change));
   elements.compileChange.textContent = currentStatus === "proposed" || currentStatus === "draft" ? "编译变更" : "重新编译";
 }
 
@@ -1257,16 +1337,14 @@ function renderVerificationObligations(change) {
   obligations.forEach((obligation, index) => {
     const claimId = firstPresent(obligation.claimId, obligation.claim?.id, obligation.id);
     const claim = asArray(change.claims).find((item) => String(item?.id) === String(claimId));
-    const coveredClaimIds = new Set(asArray(change.readiness?.coverage?.coveredClaimIds).map(String));
-    const derivedStatus = coveredClaimIds.has(String(claimId)) ? "passed" : "pending";
-    const status = firstPresent(obligation.status, obligation.state, obligation.result, derivedStatus);
+    const status = firstPresent(obligation.status, obligation.state, obligation.result);
     const oracle = toDisplayText(firstPresent(obligation.oracle, obligation.evidenceRequired, obligation.method));
     const risk = toDisplayText(firstPresent(obligation.risk, obligation.riskLevel));
     container.append(
       createElement("div", { className: "obligation-item", dataset: { tone: statusTone(status) } }, [
         createElement("span", {
           className: "obligation-mark",
-          text: statusTone(status) === "success" ? "✓" : String(index + 1),
+          text: status && statusTone(status) === "success" ? "✓" : String(index + 1),
         }),
         createElement("div", { className: "obligation-copy" }, [
           createElement("strong", {
@@ -1296,81 +1374,46 @@ function renderReview(change) {
   renderAcceptance(change);
 }
 
-function evidenceData(change) {
-  const raw = firstPresent(change.evidence, change.assurance?.evidence, change.review?.evidence);
-  if (Array.isArray(raw)) return { records: raw, dimensions: [], overall: null };
-  if (!raw || typeof raw !== "object") return { records: [], dimensions: [], overall: null };
-  const dimensions = firstPresent(raw.dimensions, raw.strength?.dimensions, change.evidenceStrength?.dimensions);
-  const records = firstPresent(raw.records, raw.items, raw.results, raw.observations);
+function evidenceRecords(change) {
+  return Array.isArray(change?.evidence) ? change.evidence : [];
+}
+
+function evidenceCurrency(change, evidenceId) {
+  const currency = change?.observation?.evidenceCurrency;
+  if (!currency || !evidenceId) return null;
+  if (Array.isArray(currency.invalidIds) && currency.invalidIds.includes(evidenceId)) return "invalid";
+  if (Array.isArray(currency.staleIds) && currency.staleIds.includes(evidenceId)) return "stale";
+  if (Array.isArray(currency.currentIds) && currency.currentIds.includes(evidenceId)) return "current";
+  return null;
+}
+
+function evidenceCurrencyLabel(currency) {
   return {
-    dimensions: Array.isArray(dimensions) ? dimensions : normalizeDimensionObject(dimensions),
-    records: Array.isArray(records) ? records : [],
-    overall: firstPresent(raw.overall, raw.status, raw.strength?.overall, change.evidenceStrength?.overall),
-  };
+    current: "当前证据",
+    stale: "证据已过期",
+    invalid: "证据无效",
+    "sealed-historical": "封存历史证据",
+  }[currency] || currency;
 }
 
-function normalizeDimensionObject(dimensions) {
-  if (!dimensions || typeof dimensions !== "object") return [];
-  return Object.entries(dimensions).map(([id, value]) =>
-    typeof value === "object" ? { id, ...value } : { id, value },
-  );
-}
-
-function scoreValue(dimension) {
-  const raw = firstPresent(dimension.score, dimension.value, dimension.rating);
-  if (typeof raw !== "number" || Number.isNaN(raw)) return null;
-  return Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
-}
-
-function dimensionLabel(dimension) {
-  return firstPresent(dimension.label, dimension.name, dimension.title, dimension.id)
-    ? humanizeKey(String(firstPresent(dimension.label, dimension.name, dimension.title, dimension.id)))
-    : "证据维度";
+function evidenceCurrencyTone(currency) {
+  if (currency === "invalid") return "danger";
+  if (currency === "stale") return "warning";
+  return "neutral";
 }
 
 function renderEvidence(change) {
-  const evidence = evidenceData(change);
-  const dimensions = $("#evidence-dimensions");
+  const evidence = evidenceRecords(change);
   const records = $("#evidence-records");
-  clear(dimensions);
   clear(records);
-  setPill($("#evidence-overall"), evidence.overall);
-  const empty = evidence.dimensions.length === 0 && evidence.records.length === 0;
-  $("#evidence-empty").hidden = !empty;
+  $("#evidence-empty").hidden = evidence.length > 0;
 
-  for (const dimension of evidence.dimensions) {
-    const score = scoreValue(dimension);
-    const level = firstPresent(dimension.level, dimension.status, dimension.rating);
-    const detail = toDisplayText(firstPresent(dimension.detail, dimension.description));
-    const track = createElement("div", { className: "evidence-track" });
-    if (score !== null) track.append(createElement("span", { attributes: { style: `width:${score}%` } }));
-    else track.style.opacity = "0.35";
-    dimensions.append(
-      createElement("div", { className: "evidence-dimension" }, [
-        createElement("div", { className: "evidence-dimension-label" }, [
-          createElement("strong", { text: dimensionLabel(dimension) }),
-          ...(detail ? [createElement("span", { text: detail })] : []),
-        ]),
-        track,
-        createElement("span", {
-          className: "evidence-level",
-          text: level ? statusLabel(level) : score !== null ? `${Math.round(score)}/100` : "未评估",
-        }),
-      ]),
-    );
-  }
-
-  for (const record of evidence.records) {
-    const evidenceId = String(firstPresent(record.id, record.evidenceId, ""));
-    const coverage = change.readiness?.coverage ?? {};
-    const untrusted = asArray(coverage.untrustedEvidenceIds).map(String).includes(evidenceId);
-    const stale = asArray(coverage.staleEvidenceIds).map(String).includes(evidenceId);
-    const mismatched = asArray(coverage.mismatchedClaimEvidenceIds).map(String).includes(evidenceId);
-    const status = untrusted
-      ? "未被内核采信"
-      : stale ? "已过期" : mismatched ? "主张语义不匹配"
-        : firstPresent(record.status, record.result, record.outcome, record.observation?.status);
-    const statusDisplayTone = untrusted || stale || mismatched ? "warning" : statusTone(status);
+  for (const record of evidence) {
+    const evidenceId = typeof record?.id === "string" ? record.id : "";
+    const currency = evidenceCurrency(change, evidenceId);
+    const observationStatus = typeof record?.observation?.status === "string"
+      ? record.observation.status
+      : null;
     const dimensions = [
       ["Claim", record.claim],
       ["Oracle", record.oracle],
@@ -1391,13 +1434,23 @@ function renderEvidence(change) {
             ]),
           )),
         ]),
-        ...(status
-          ? [createElement("span", { className: "status-pill", text: statusLabel(status), dataset: { tone: statusDisplayTone } })]
-          : []),
+        ...(currency
+          ? [createElement("span", {
+              className: "status-pill",
+              text: evidenceCurrencyLabel(currency),
+              dataset: { tone: evidenceCurrencyTone(currency) },
+            })]
+          : observationStatus
+            ? [createElement("span", {
+                className: "status-pill",
+                text: `Observation · ${statusLabel(observationStatus)}`,
+                dataset: { tone: statusTone(observationStatus) },
+              })]
+            : []),
       ]),
     );
   }
-  records.hidden = evidence.records.length === 0;
+  records.hidden = evidence.length === 0;
 }
 
 function summarizeStructured(value) {
@@ -1527,49 +1580,45 @@ function renderDecisions(change) {
   }
 }
 
-function changeGates(change) {
-  const configured = asArray(firstPresent(change.gates, change.verificationGates, change.review?.gates));
-  const projectConfigured = asArray(state.project?.gates);
-  const runs = [
-    ...asArray(change.gateRuns),
-    ...asArray(change.integrationAssurance?.gateRuns),
-  ];
-  const byId = new Map();
-  for (const gate of [...projectConfigured, ...configured]) {
-    const id = firstPresent(gate?.id, gate?.gateId, gate?.name);
-    if (id) byId.set(String(id), { ...gate });
-  }
-  for (const run of runs) {
-    const id = firstPresent(run?.gateId, run?.id, run?.name);
-    if (id === "project-model") continue;
-    if (id) byId.set(String(id), { ...(byId.get(String(id)) || {}), ...run, id });
-  }
-  return [...byId.values()];
+function localGateObservation(change, gateId) {
+  const runs = Array.isArray(change?.gateRuns) ? change.gateRuns : [];
+  return runs.find((run) => String(run?.gateId) === String(gateId)) ?? null;
 }
 
 function renderChangeGates(change) {
-  const gates = changeGates(change);
+  const gates = workbenchChangeAction("gates", change);
   const container = $("#change-gates");
-  const lifecycle = normalizeStatus(firstPresent(change.state, change.status));
-  const integrationGateIds = new Set(asArray(change.verificationPlan?.integrationGateIds).map(String));
   clear(container);
-  for (const gate of gates) {
-    const id = firstPresent(gate.id, gate.gateId, gate.name);
+  for (const gate of Array.isArray(gates) ? gates : []) {
+    const id = gate?.gateId;
     if (!id) continue;
-    const status = firstPresent(gate.status, gate.state, gate.result);
+    const observation = localGateObservation(change, id);
+    const status = typeof observation?.status === "string" ? observation.status : null;
+    const annotations = Array.isArray(gate.claimRouteAnnotations) ? gate.claimRouteAnnotations : [];
+    const annotationSummary = annotations.map((annotation) => (
+      `${annotation.sourceClaimRef}:${annotation.gateId}/${annotation.commandId} · ${shortIdentifier(annotation.routeDigest, 18)}`
+    )).join("；");
     const button = createElement("button", {
       className: "gate-action-button",
       type: "button",
-      disabled: gate.runnable === false
-        || state.runningGateId === String(id)
-        || lifecycle === "integrated"
-        || (lifecycle === "accepted" && !integrationGateIds.has(String(id))),
+      disabled: gate.enabled !== true || state.runningGateId === String(id),
       text: state.runningGateId === String(id)
         ? "运行中…"
-        : `${statusTone(status) === "success" ? "重跑" : "运行"} ${itemTitle(gate, "门禁")}`,
+        : `${status ? "重跑" : "运行"} ${gate.name || id}`,
       onclick: () => runGate(id, button),
+      dataset: {
+        gateId: String(id),
+        selectedCommandIds: Array.isArray(gate.selectedCommandIds) ? gate.selectedCommandIds.join(",") : "",
+        routeDigests: annotations.map((annotation) => annotation.routeDigest).join(","),
+      },
+      attributes: {
+        title: [
+          ...(status ? [`Observation：${statusLabel(status)}`] : []),
+          ...(gate.enabled === true ? [] : [disabledReasonSummary(gate.disabledReasonCodes)]),
+          ...(annotationSummary ? [annotationSummary] : []),
+        ].join("；"),
+      },
     });
-    if (status) button.title = `当前状态：${statusLabel(status)}`;
     container.append(button);
   }
 }
@@ -1584,9 +1633,10 @@ function acceptanceData(change) {
 function renderAcceptance(change) {
   const acceptance = acceptanceData(change);
   const status = firstPresent(acceptance.status, change.status, change.state);
-  const lifecycle = normalizeStatus(firstPresent(change.state, change.status, status));
-  const accepted = ["accepted", "integrated"].includes(lifecycle);
-  const allowed = acceptance.allowed !== false && change.canAccept !== false && lifecycle === "evidence-ready" && !accepted;
+  const observedState = normalizeStatus(firstPresent(change.state, change.status, status));
+  const accepted = ["accepted", "integrated"].includes(observedState);
+  const action = workbenchChangeAction("accept", change);
+  const allowed = action?.enabled === true;
   const title = $("#acceptance-title");
   const detail = $("#acceptance-detail");
   const seal = $("#acceptance-seal");
@@ -1598,26 +1648,33 @@ function renderAcceptance(change) {
     seal.textContent = "✓";
     elements.acceptChange.textContent = "已接纳";
     elements.acceptChange.disabled = true;
+    elements.acceptChange.title = "";
   } else {
     title.textContent = allowed ? "准备接纳这个精确变更" : "当前还不能接纳";
     detail.textContent =
       toDisplayText(firstPresent(acceptance.reason, acceptance.detail, change.acceptanceBlocker)) ||
-      (lifecycle === "evidence-ready"
+      (allowed
         ? "接纳会绑定当前基线、变更内容、证据与决策。内容变化后需要重新验证。"
-        : "先完成证明义务与必要门禁，变更进入 EvidenceReady 后才能接纳。");
+        : disabledReasonSummary(action?.disabledReasonCodes));
     seal.textContent = "A";
     elements.acceptChange.textContent = "接纳变更包";
     elements.acceptChange.disabled = !allowed;
+    elements.acceptChange.title = allowed ? "" : disabledReasonSummary(action?.disabledReasonCodes);
   }
 }
 
 async function compileSelectedChange() {
   const id = state.selectedChangeId;
   if (!id) return;
+  const action = workbenchChangeAction("compile", state.selectedChange);
+  if (action?.enabled !== true) {
+    toast(disabledReasonSummary(action?.disabledReasonCodes), "danger");
+    return;
+  }
   setBusy(elements.compileChange, true, "正在编译");
   try {
     await api(`/api/changes/${encodeURIComponent(id)}/compile`, { method: "POST", body: "{}" });
-    await Promise.all([loadChangeDetail(id), loadChanges({ preserveSelection: true })]);
+    await refreshCanonicalStateAfterMutation({ detailId: id });
     toast("变更已编译，上下文与证明义务已刷新。", "success");
   } catch (error) {
     toast(errorMessage(error), "danger");
@@ -1630,6 +1687,13 @@ async function compileSelectedChange() {
 async function runGate(gateId, button) {
   const id = state.selectedChangeId;
   if (!id || !gateId) return;
+  const gateAction = workbenchChangeAction("gates", state.selectedChange)?.find(
+    (gate) => String(gate?.gateId) === String(gateId),
+  );
+  if (gateAction?.enabled !== true) {
+    toast(disabledReasonSummary(gateAction?.disabledReasonCodes), "danger");
+    return;
+  }
   const gateLabel = button.textContent.replace(/^(运行|重跑)\s+/u, "") || String(gateId);
   state.runningGateId = String(gateId);
   button.disabled = true;
@@ -1639,7 +1703,7 @@ async function runGate(gateId, button) {
       method: "POST",
       body: "{}",
     });
-    await loadChangeDetail(id);
+    await refreshCanonicalStateAfterMutation({ detailId: id });
     if (normalizeStatus(result?.status) === "passed" && result?.blocked !== true) {
       toast(`门禁“${gateLabel}”已通过。`, "success");
     } else {
@@ -1653,120 +1717,24 @@ async function runGate(gateId, button) {
   }
 }
 
-function knowledgeClosureComplete(change = state.selectedChange) {
-  const closure = firstPresent(change?.knowledgeClosure, change?.closure);
-  if (!closure || typeof closure !== "object" || Array.isArray(closure)) return false;
-  if (normalizeStatus(closure.status) !== "complete") return false;
-  if (closure.noNewKnowledge === true) return Boolean(toDisplayText(closure.rationale));
-  const entries = asArray(firstPresent(closure.entries, closure.dispositions, closure.items));
-  if (entries.length === 0) return false;
-  return entries.every((entry) => {
-    const kind = normalizeStatus(firstPresent(entry?.kind, entry?.classification));
-    const refs = asArray(entry?.refs).filter(isPresent);
-    return ["model-amendment", "model-gap", "ephemeral"].includes(kind)
-      && (refs.length > 0 || Boolean(toDisplayText(entry?.statement)))
-      && Boolean(toDisplayText(entry?.rationale));
-  });
-}
-
-function decisionAuthorities(project = state.project, change = state.selectedChange) {
-  const governance = change?.governanceBaseline ?? project ?? {};
-  const selectedOutcomeIds = new Set(asArray(change?.planRefs).map((ref) => String(ref)));
-  const usesIntegrityOutcome = asArray(projectPlan(governance)?.outcomes).some((outcome) => (
-    selectedOutcomeIds.has(String(outcome?.id)) && outcome?.kind === "integrity-maintenance"
-  ));
-  if (change?.changeKind === "plan-amendment" || usesIntegrityOutcome) {
-    const planAuthority = toDisplayText(projectPlan(governance)?.authority);
-    return planAuthority ? [planAuthority] : [];
-  }
-  const module = projectModules(governance).find(
-    (item) => String(firstPresent(item.id, item.name)) === String(change?.primaryModule),
-  );
-  const moduleAuthority = firstPresent(module?.decisionAuthority, module?.authority);
-  if (moduleAuthority) return [toDisplayText(moduleAuthority)];
-  const declared = firstPresent(
-    governance?.projectDocument?.authorities?.decision,
-    governance?.project?.authorities?.decision,
-    governance?.authorities?.decision,
-  );
-  return [...new Set(asArray(declared).map((authority) => toDisplayText(authority, ["id", "name"])).filter(Boolean))];
-}
-
-function modelAmendmentRefs(change = state.selectedChange) {
-  const closure = firstPresent(change?.knowledgeClosure, change?.closure);
-  if (!closure || typeof closure !== "object") return [];
-  const entries = asArray(firstPresent(closure.entries, closure.dispositions, closure.items));
-  return [...new Set(entries.flatMap((entry) => {
-    const kind = normalizeStatus(firstPresent(entry?.kind, entry?.classification, entry?.type));
-    if (kind !== "model-amendment") return [];
-    return asArray(firstPresent(entry.refs, entry.references, entry.amendmentRefs))
-      .map((ref) => toDisplayText(ref))
-      .filter(Boolean);
-  }))];
-}
-
-function requiredModelAmendmentRefs(change = state.selectedChange) {
-  const observed = asArray(change?.scopeAnalysis?.modelAmendmentPaths)
-    .map((ref) => toDisplayText(ref))
-    .filter(Boolean);
-  return [...new Set([...observed, ...modelAmendmentRefs(change)])];
-}
-
-function populateAuthorityOptions() {
-  const select = $("#accept-authority");
-  const authorities = decisionAuthorities();
-  const existing = firstPresent(state.selectedChange?.authorityDecision?.authority, select.value);
-  clear(select);
-  select.append(createElement("option", { value: "", text: "请选择有权作出决定的职责" }));
-  for (const authority of authorities) {
-    select.append(createElement("option", { value: authority, text: authority }));
-  }
-  if (existing && authorities.includes(String(existing))) select.value = String(existing);
-  else if (authorities.length === 1) select.value = authorities[0];
-  select.disabled = authorities.length === 0;
-}
-
-function updateAmendmentField() {
-  const normative = $("#accept-decision-type").value === "normative-amendment";
-  $("#accept-amendment-field").hidden = !normative;
-  $("#accept-amendment-refs").required = normative;
-}
-
 function openAcceptDialog() {
   if (!state.selectedChange) return;
+  const action = workbenchChangeAction("accept", state.selectedChange);
+  if (action?.enabled !== true) {
+    toast(disabledReasonSummary(action?.disabledReasonCodes), "danger");
+    return;
+  }
   elements.acceptError.hidden = true;
   elements.acceptError.textContent = "";
   $("#accept-dialog-change").textContent = changeTitle(state.selectedChange);
-  const closureComplete = knowledgeClosureComplete();
-  const unresolvedModelClosure = !closureComplete && requiredModelAmendmentRefs().length > 0;
-  $("#accept-closure-fields").hidden = closureComplete;
-  $("#accept-closure-summary").required = !closureComplete;
-  populateAuthorityOptions();
+  projectWorkbenchAction(elements.submitAccept, action);
 
   const existingDecision = state.selectedChange.authorityDecision || {};
-  const requiredAmendments = requiredModelAmendmentRefs();
-  $("#accept-decision-type").value = ["case-decision", "normative-amendment"].includes(existingDecision.decisionType)
-    ? existingDecision.decisionType
-    : requiredAmendments.length > 0 ? "normative-amendment" : "case-decision";
+  $("#accept-authority").value = existingDecision.authority || "";
+  $("#accept-decision-type").value = existingDecision.decisionType || "case-decision";
   $("#accept-rationale").value = existingDecision.rationale || "";
-  $("#accept-amendment-refs").value = firstPresent(
-    asArray(existingDecision.amendmentRefs).join("\n"),
-    requiredAmendments.join("\n"),
-  ) || "";
+  $("#accept-amendment-refs").value = asArray(existingDecision.amendmentRefs).join("\n");
   $("#accept-confirmation").checked = false;
-  updateAmendmentField();
-
-  if (unresolvedModelClosure) {
-    elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "检测到 Project Model 变更，但 Knowledge Closure 尚未引用其版本化归宿；请先补全模型记录并重新编译。";
-    elements.submitAccept.disabled = true;
-  } else if (decisionAuthorities().length === 0) {
-    elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "Project Model 没有为这个变更声明 Decision Authority，暂时无法接纳。";
-    elements.submitAccept.disabled = true;
-  } else {
-    elements.submitAccept.disabled = false;
-  }
   if (typeof elements.acceptDialog.showModal === "function") elements.acceptDialog.showModal();
   else elements.acceptDialog.setAttribute("open", "");
 }
@@ -1787,51 +1755,16 @@ async function acceptSelectedChange(event) {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean);
-  const closureSummary = $("#accept-closure-summary").value.trim();
-  const closureKind = $("#accept-closure-kind").value;
 
-  if (!authority || !rationale || !$("#accept-confirmation").checked) {
+  if (!authority || !decisionType || !rationale || !$("#accept-confirmation").checked) {
     elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "请选择决策职责、填写决定理由，并确认接纳范围。";
-    return;
-  }
-  if (decisionType === "normative-amendment" && amendmentRefs.length === 0) {
-    elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "长期规范修订必须引用至少一个 Model Amendment。";
-    return;
-  }
-  const missingAmendments = requiredModelAmendmentRefs().filter((ref) => !amendmentRefs.includes(ref));
-  if (decisionType === "normative-amendment" && missingAmendments.length > 0) {
-    elements.acceptError.hidden = false;
-    elements.acceptError.textContent = `规范修订引用缺少 ${missingAmendments.length} 个实际变更文件。`;
-    return;
-  }
-  if (!knowledgeClosureComplete() && !closureSummary) {
-    elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "请说明本次新知识如何归档。";
+    elements.acceptError.textContent = "请填写决策职责、决定类型与理由，并确认接纳范围。Kernel 会校验其治理权限。";
     return;
   }
 
   elements.acceptError.hidden = true;
   setBusy(elements.submitAccept, true, "正在接纳");
   try {
-    if (!knowledgeClosureComplete()) {
-      const knowledgeClosure = closureKind === "ephemeral"
-        ? { status: "complete", noNewKnowledge: true, rationale: closureSummary }
-        : {
-            status: "complete",
-            entries: [{
-              kind: closureKind,
-              statement: closureSummary,
-              rationale: closureSummary,
-              ...(closureKind === "model-amendment" && amendmentRefs.length ? { refs: amendmentRefs } : {}),
-            }],
-          };
-      await api(`/api/changes/${encodeURIComponent(id)}/compile`, {
-        method: "POST",
-        body: JSON.stringify({ knowledgeClosure }),
-      });
-    }
     await api(`/api/changes/${encodeURIComponent(id)}/accept`, {
       method: "POST",
       body: JSON.stringify({
@@ -1846,14 +1779,18 @@ async function acceptSelectedChange(event) {
       }),
     });
     closeAcceptDialog();
-    await Promise.all([loadChangeDetail(id), loadChanges({ preserveSelection: true }), loadProject()]);
+    await refreshCanonicalStateAfterMutation({ detailId: id, includeProject: true });
     toast("变更包已接纳。", "success");
   } catch (error) {
     elements.acceptError.hidden = false;
     elements.acceptError.textContent = errorMessage(error);
+    await refreshCanonicalStateAfterMutation({ detailId: id, includeProject: true });
   } finally {
     setBusy(elements.submitAccept, false);
-    if (decisionAuthorities().length === 0) elements.submitAccept.disabled = true;
+    projectWorkbenchAction(
+      elements.submitAccept,
+      workbenchChangeAction("accept", state.selectedChange),
+    );
     if (state.selectedChange) renderAcceptance(state.selectedChange);
   }
 }
@@ -1863,12 +1800,14 @@ function openCreateDialog() {
   elements.createError.textContent = "";
   renderCreateModuleOptions();
   renderCreatePlanOptions();
-  const modulesAvailable = governedModules().length > 0;
+  const modulesAvailable = selectableAuthoringModules().length > 0;
   const planAvailable = !outcomeRequired() || selectablePlanOutcomes().length > 0;
   elements.submitCreate.disabled = !modulesAvailable || !planAvailable;
   if (!modulesAvailable) {
     elements.createError.hidden = false;
-    elements.createError.textContent = "当前项目没有可用于变更的 Governed 模块。请先完善 Project Model。";
+    elements.createError.textContent = state.workbenchError
+      ? `Workbench 语义投影不可用：${errorMessage(state.workbenchError)}`
+      : "Kernel 当前没有授权可用于创建 Change 的模块。";
   } else if (!planAvailable) {
     elements.createError.hidden = false;
     elements.createError.textContent = "当前计划策略要求对齐，但没有 active Outcome。请先修订 Development Plan。";
@@ -1974,7 +1913,7 @@ async function createChange(event) {
     closeCreateDialog();
     elements.createForm.reset();
     renderCreatePlanOptions();
-    await loadChanges({ preserveSelection: false });
+    await refreshCanonicalStateAfterMutation({ preserveSelection: false });
     if (createdId) await selectChange(createdId);
     document.querySelector("#workspace").scrollIntoView({ behavior: "smooth", block: "start" });
     toast("变更已创建，可以开始编译。", "success");
@@ -1983,7 +1922,7 @@ async function createChange(event) {
     elements.createError.textContent = errorMessage(error);
   } finally {
     setBusy(elements.submitCreate, false);
-    if (governedModules().length === 0 || (outcomeRequired() && selectablePlanOutcomes().length === 0)) {
+    if (selectableAuthoringModules().length === 0 || (outcomeRequired() && selectablePlanOutcomes().length === 0)) {
       elements.submitCreate.disabled = true;
     }
   }
@@ -2001,24 +1940,33 @@ function wireEvents() {
   });
   $("#close-accept-change").addEventListener("click", closeAcceptDialog);
   $("#cancel-accept-change").addEventListener("click", closeAcceptDialog);
-  $("#accept-decision-type").addEventListener("change", updateAmendmentField);
   $("#new-change-module").addEventListener("change", (event) => {
     renderCreateClaimOptions(event.target.value);
   });
   $("#new-change-kind").addEventListener("change", () => {
     renderCreatePlanOptions();
-    elements.submitCreate.disabled = governedModules().length === 0
+    elements.submitCreate.disabled = selectableAuthoringModules().length === 0
       || (outcomeRequired() && selectablePlanOutcomes().length === 0);
   });
   elements.acceptForm.addEventListener("submit", acceptSelectedChange);
   elements.acceptDialog.addEventListener("click", (event) => {
     if (event.target === elements.acceptDialog) closeAcceptDialog();
   });
-  $("#refresh-project").addEventListener("click", loadProject);
-  $("#retry-project").addEventListener("click", loadProject);
-  $("#refresh-changes").addEventListener("click", () => loadChanges({ preserveSelection: true }));
-  $("#retry-changes").addEventListener("click", () => loadChanges({ preserveSelection: true }));
-  $("#retry-change-detail").addEventListener("click", () => loadChangeDetail());
+  $("#refresh-project").addEventListener("click", () => {
+    void Promise.allSettled([loadProject(), loadWorkbench(), loadArchitectureProfile()]);
+  });
+  $("#retry-project").addEventListener("click", () => {
+    void Promise.allSettled([loadProject(), loadWorkbench(), loadArchitectureProfile()]);
+  });
+  $("#refresh-changes").addEventListener("click", () => {
+    void Promise.allSettled([loadChanges({ preserveSelection: true }), loadWorkbench()]);
+  });
+  $("#retry-changes").addEventListener("click", () => {
+    void Promise.allSettled([loadChanges({ preserveSelection: true }), loadWorkbench()]);
+  });
+  $("#retry-change-detail").addEventListener("click", () => {
+    void Promise.allSettled([loadChangeDetail(), loadWorkbench()]);
+  });
   elements.compileChange.addEventListener("click", compileSelectedChange);
   elements.acceptChange.addEventListener("click", openAcceptDialog);
 }
@@ -2043,7 +1991,12 @@ async function initialize() {
   wireEvents();
   observeSections();
   setConnection("loading", "正在连接");
-  const results = await Promise.allSettled([loadProject(), loadChanges({ preserveSelection: false })]);
+  const results = await Promise.allSettled([
+    loadProject(),
+    loadWorkbench(),
+    loadArchitectureProfile(),
+    loadChanges({ preserveSelection: false }),
+  ]);
   if (results.every((result) => result.status === "rejected") || (state.projectError && state.changesError)) {
     setConnection("error", "本地服务不可用");
   }

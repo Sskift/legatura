@@ -731,14 +731,14 @@ h1,
   font-size: 16px;
 }
 
-.gate-health-value {
+.gate-configuration-value {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
 }
 
-.gate-health-value::before {
+.gate-configuration-value::before {
   width: 9px;
   height: 9px;
   border-radius: 50%;
@@ -747,22 +747,7 @@ h1,
   content: "";
 }
 
-.gate-health-value[data-tone="success"]::before {
-  background: var(--green);
-  box-shadow: 0 0 0 4px var(--green-soft);
-}
-
-.gate-health-value[data-tone="warning"]::before {
-  background: var(--amber);
-  box-shadow: 0 0 0 4px var(--amber-soft);
-}
-
-.gate-health-value[data-tone="danger"]::before {
-  background: var(--red);
-  box-shadow: 0 0 0 4px var(--red-soft);
-}
-
-.gate-health-value strong {
+.gate-configuration-value strong {
   font-size: 18px;
 }
 
@@ -1515,51 +1500,6 @@ h1,
   min-height: 390px;
 }
 
-.evidence-dimensions {
-  display: grid;
-  gap: 14px;
-}
-
-.evidence-dimension {
-  display: grid;
-  grid-template-columns: 150px minmax(80px, 1fr) 74px;
-  align-items: center;
-  gap: 12px;
-}
-
-.evidence-dimension-label strong {
-  display: block;
-  font-size: 10px;
-}
-
-.evidence-dimension-label span {
-  display: block;
-  margin-top: 1px;
-  color: var(--muted);
-  font-size: 8px;
-}
-
-.evidence-track {
-  height: 6px;
-  overflow: hidden;
-  border-radius: 99px;
-  background: #e9ece8;
-}
-
-.evidence-track span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--green);
-}
-
-.evidence-level {
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-  text-align: right;
-}
-
 .evidence-records {
   display: grid;
   gap: 8px;
@@ -1920,19 +1860,21 @@ h1,
 }
 
 .claim-choice small {
+  display: block;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 7px;
 }
 
 .claim-oracle-state {
+  max-width: 190px;
   padding: 3px 6px;
   border-radius: 99px;
   background: var(--amber-soft);
   color: var(--amber);
   font-size: 7px;
   font-weight: 750;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .claim-oracle-state.has-gate {
@@ -2248,11 +2190,6 @@ h1,
 
   .context-cell:last-child {
     border-bottom: 0;
-  }
-
-  .evidence-dimension {
-    grid-template-columns: 110px minmax(60px, 1fr) 54px;
-    gap: 8px;
   }
 
   .evidence-record-details {

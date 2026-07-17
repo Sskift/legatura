@@ -120,12 +120,12 @@
               <article class="summary-card gate-summary-card">
                 <div class="card-label">
                   <span class="label-icon label-icon-amber" aria-hidden="true">G</span>
-                  Gate Health
+                  Gate Configuration
                 </div>
-                <div class="gate-health-value" id="gate-health-value">
+                <div class="gate-configuration-value" id="gate-configuration-value">
                   <strong>—</strong>
                 </div>
-                <p id="gate-health-detail">门禁结果尚未载入。</p>
+                <p id="gate-configuration-detail">Gate 配置尚未载入。</p>
               </article>
             </div>
 
@@ -372,11 +372,9 @@
                 <div class="panel-heading">
                   <div>
                     <p class="panel-kicker">Evidence</p>
-                    <h3>证据强度</h3>
+                    <h3>证据事实</h3>
                   </div>
-                  <span class="status-pill" id="evidence-overall" hidden></span>
                 </div>
-                <div class="evidence-dimensions" id="evidence-dimensions"></div>
                 <div id="evidence-empty" class="inline-empty" hidden>
                   当前还没有可审查的证据。
                 </div>
@@ -531,41 +529,20 @@
         <div class="dialog-header">
           <div>
             <p class="eyebrow">Accept Change Package</p>
-            <h2 id="accept-dialog-title">完成知识归档与授权</h2>
+            <h2 id="accept-dialog-title">提交精确授权决定</h2>
           </div>
           <button class="icon-button dialog-close" id="close-accept-change" value="cancel" type="button" aria-label="关闭">×</button>
         </div>
         <p class="dialog-intro" id="accept-dialog-change"></p>
 
-        <div id="accept-closure-fields">
-          <label class="field">
-            <span>本次发现如何归档 <small>Knowledge Closure</small></span>
-            <select id="accept-closure-kind" name="closureKind">
-              <option value="ephemeral">没有需要长期写回的新知识</option>
-              <option value="model-amendment" disabled>项目模型修订（需先写入版本化文件）</option>
-              <option value="model-gap" disabled>模型缺口（需先写入 knowledge-gaps.json）</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>归档说明 <small>必填</small></span>
-            <textarea id="accept-closure-summary" name="closureSummary" rows="3" placeholder="说明哪些知识被写回、登记为缺口，或为什么仅保留为执行记录。"></textarea>
-          </label>
-        </div>
-
         <div class="field-pair">
           <label class="field">
             <span>决策职责 <small>Decision Authority</small></span>
-            <select id="accept-authority" name="authority" required>
-              <option value="">请选择有权作出决定的职责</option>
-            </select>
+            <input id="accept-authority" name="authority" required placeholder="输入 Project Model 声明的 authority id" />
           </label>
           <label class="field">
             <span>决定类型 <small>作用范围</small></span>
-            <select id="accept-decision-type" name="decisionType" required>
-              <option value="case-decision">仅对当前变更有效</option>
-              <option value="normative-amendment">修改长期项目规范</option>
-              <option value="waiver" disabled>临时豁免（MVP 暂不支持）</option>
-            </select>
+            <input id="accept-decision-type" name="decisionType" required value="case-decision" placeholder="例如 case-decision" />
           </label>
         </div>
 
@@ -574,10 +551,12 @@
           <textarea id="accept-rationale" name="rationale" rows="3" required placeholder="说明为什么现有证据足以支持接纳，以及你接受了哪些剩余不确定性。"></textarea>
         </label>
 
-        <label class="field" id="accept-amendment-field" hidden>
-          <span>规范修订引用 <small>每行一项</small></span>
+        <label class="field" id="accept-amendment-field">
+          <span>规范修订引用 <small>可选，每行一项</small></span>
           <textarea id="accept-amendment-refs" name="amendmentRefs" rows="3" placeholder="引用 Knowledge Closure 中的 Model Amendment，或填写将被更新的规范对象。"></textarea>
         </label>
+
+        <p class="dialog-intro">Workbench 只提交你填写的决定；Authority、Decision Type、Knowledge Closure 与 Amendment 约束由 Kernel 精确校验。</p>
 
         <label class="confirmation-check">
           <input id="accept-confirmation" type="checkbox" required />

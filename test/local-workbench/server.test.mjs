@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { createServer, LOOPBACK_HOST } from "../../src/server.mjs";
+import { compileArchitectureProfileViewModel } from "../../src/workbench-view-model.mjs";
 
 test("serves public assets and the complete Change API on loopback", async (t) => {
   const publicDir = await mkdtemp(path.join(os.tmpdir(), "legatura-public-"));
@@ -13,10 +15,39 @@ test("serves public assets and the complete Change API on loopback", async (t) =
 
   const calls = [];
   const change = { id: "change-1", title: "Bound the change", status: "framed" };
+  const architectureProfile = architectureProfileFixture();
+  const architectureProfileViewModel = compileArchitectureProfileViewModel(architectureProfile);
+  const workbenchProjection = {
+    schemaVersion: 1,
+    source: architectureProfile.source,
+    authoring: {
+      modules: [{
+        moduleRef: "core",
+        selectableClaims: [{ claimRef: "claim-1", routeRefs: ["route-1"] }]
+      }]
+    },
+    changes: [{
+      changeRef: "change-1",
+      actions: [{
+        actionRef: "accept",
+        enabled: false,
+        workbenchDisabledReasonCodes: ["CHANGE_NOT_EVIDENCE_READY"]
+      }]
+    }],
+    projectionDigest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  };
   const kernel = {
     async inspectProject() {
       calls.push(["inspectProject"]);
       return { name: "fixture", validation: { valid: true } };
+    },
+    async inspectArchitectureProfile() {
+      calls.push(["inspectArchitectureProfile"]);
+      return architectureProfile;
+    },
+    async inspectWorkbenchProjection() {
+      calls.push(["inspectWorkbenchProjection"]);
+      return workbenchProjection;
     },
     async listChanges() {
       calls.push(["listChanges"]);
@@ -60,6 +91,11 @@ test("serves public assets and the complete Change API on loopback", async (t) =
     name: "fixture",
     validation: { valid: true }
   });
+  assert.deepEqual(
+    await getJson(`${address.url}/api/architecture-profile`),
+    architectureProfileViewModel
+  );
+  assert.deepEqual(await getJson(`${address.url}/api/workbench`), workbenchProjection);
   assert.deepEqual(await getJson(`${address.url}/api/changes`), [change]);
 
   const created = await requestJson(`${address.url}/api/changes`, "POST", {
@@ -97,6 +133,8 @@ test("serves public assets and the complete Change API on loopback", async (t) =
 
   assert.deepEqual(calls, [
     ["inspectProject"],
+    ["inspectArchitectureProfile"],
+    ["inspectWorkbenchProjection"],
     ["listChanges"],
     ["createChange", { title: "Created through HTTP", intent: "Keep intent explicit" }],
     ["getChange", "change-1"],
@@ -192,4 +230,49 @@ async function requestJson(url, method, body) {
     body: JSON.stringify(body)
   });
   return { response, body: await response.json() };
+}
+
+function architectureProfileFixture() {
+  const content = {
+    schemaVersion: 1,
+    source: {
+      snapshotDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      projectModelDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      gitContentDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      changeStoreDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    entities: Object.fromEntries([
+      "stages",
+      "outcomes",
+      "criteria",
+      "modules",
+      "areas",
+      "contracts",
+      "changes",
+      "claims",
+      "gates",
+      "routes",
+      "evidence",
+      "residuals",
+      "gaps"
+    ].map((key) => [key, []])),
+    relations: Object.fromEntries([
+      "outcomeCriteria",
+      "outcomeClaims",
+      "outcomeGaps",
+      "criterionClaims",
+      "criterionGaps",
+      "gapProofClaims",
+      "gapAffects",
+      "contributions",
+      "contributionClaims",
+      "claimGateRoutes",
+      "routeModules",
+      "routeResiduals",
+      "currentEvidenceClaimAssociations",
+      "historicalEvidenceClaimAssociations",
+      "evidenceResiduals"
+    ].map((key) => [key, []]))
+  };
+  return { ...content, profileDigest: canonicalDigest(content) };
 }
