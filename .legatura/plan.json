@@ -237,7 +237,7 @@
     {
       "id": "LGT-011",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "Project Model compiles every tracked repository path to exactly one Module write owner or one explicit ungoverned disposition, rejects latent and concrete ambiguous ownership, and Change Kernel binds Context Capsule plus touched or prospective path enforcement to that exact result.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1099,6 +1099,51 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-011-T2",
+      "outcomeRef": "LGT-011",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "Prior sealed Assurance Runtime, Project Model, and Change Kernel Packages now cover both frozen LGT-011 Criteria and close the predeclared ownership Gap through its exact proof Claim without using this Plan Amendment as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt011-observe-exact-tracked-paths",
+          "acceptanceDigest": "sha256:7cba77f31d609c4e76e22a7f828950bdbe76fe26727eb4635228a2cbbf232e14"
+        },
+        {
+          "changeId": "lgt011-enforce-and-prove-path-ownership",
+          "acceptanceDigest": "sha256:5793ef91cedfc3e8db76ef9b8ca6e5614aee14e6336c639dd479ef25b1a2b742"
+        },
+        {
+          "changeId": "lgt011-reject-falsy-path-governance-bootstrap",
+          "acceptanceDigest": "sha256:573b8e175aec796772b97c6feb071007e2655ffbb9bbb7fd6a21895bc562b3dd"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-011-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Assurance Runtime Package directly proves one bounded canonical tracked-path observation, while the accepted Project Model Package directly proves total assignment, all three conflict relations, malformed policy rejection, and missing-assignment failure through the fixed ownership Gate.",
+            "residualUncertainty": "The ownership grammar intentionally supports exact paths and literal recursive prefixes rather than general glob intersection; cross-platform Git command and encoding behavior remains the separate subprocess-boundary-not-characterized Gap."
+          }
+        },
+        {
+          "criterionRef": "LGT-011-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Project Model Package directly proves opaque source-bound Context projection and fail-closed product attacks, while the accepted Kernel Package directly proves the same product and orthogonal write decisions are reused across create, compile, Gate, and acceptance boundaries with frozen/current drift rejection.",
+            "residualUncertainty": "Filesystem capability enforcement and remote worker execution remain later Outcomes, and Accepted history portability across clones remains the accepted-history-not-portable Gap."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "module-path-ownership-not-machine-audited",
+          "rationale": "The fixed Project Model ownership Gate in the prior sealed proof Package directly covers the Gap's exact proof Claim and its durable resolution."
+        }
+      ]
     }
   ],
   "changeRules": {

@@ -3,12 +3,20 @@
   "gaps": [
     {
       "id": "module-path-ownership-not-machine-audited",
-      "status": "open",
+      "status": "closed",
       "affects": ["project-model"],
       "owner": "governance-maintainer",
       "statement": "Project Model does not yet reject latent and concrete Module owner or ungoverned disposition conflicts, prove total tracked-path classification, or bind Context Capsule write scope to the resulting opaque ownership product.",
       "proofClaimRefs": ["module-path-ownership-proof-rejects-coverage-and-binding-attacks"],
-      "expansionTrigger": "Before automatic worker write capabilities are enabled."
+      "expansionTrigger": "Before automatic worker write capabilities are enabled.",
+      "resolution": "Project Model now compiles one opaque exact-Model-and-tracked-path-facts-bound ownership product, rejects incomplete or conflicting tracked-path coverage and malformed ownership policy, and projects the same authoritative and caller-narrowed write decisions into Context Capsule and Kernel lifecycle enforcement.",
+      "closedBy": [
+        {
+          "changeId": "lgt011-enforce-and-prove-path-ownership",
+          "acceptanceDigest": "sha256:5793ef91cedfc3e8db76ef9b8ca6e5614aee14e6336c639dd479ef25b1a2b742"
+        }
+      ],
+      "reopenTrigger": "Reopen if tracked-path assignment can be incomplete or ambiguous, ownership or disposition policy can bypass the restricted selector grammar, the opaque product can be forged or reused across source drift, or Context and Kernel write decisions stop consuming the same product."
     },
     {
       "id": "minimum-selection-is-not-claim-sensitive",
