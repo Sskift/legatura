@@ -1276,8 +1276,10 @@ function validatePlanStages(plan, outcomeIndex, allowedStatuses, errors, locatio
       .map(readReference)
       .map((outcomeId) => outcomeIndex.get(outcomeId)?.status)
       .filter(Boolean);
+    const hasOutcomeHandoff = outcomeStatuses.includes("achieved")
+      && outcomeStatuses.some((status) => ["planned", "conditional"].includes(status));
     const statusMatches = stage.status === "active"
-      ? outcomeStatuses.includes("active")
+      ? outcomeStatuses.includes("active") || hasOutcomeHandoff
       : outcomeStatuses.length > 0 && outcomeStatuses.every((status) => status === stage.status);
     if (!statusMatches) {
       errors.push(issue(

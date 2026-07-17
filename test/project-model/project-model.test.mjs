@@ -291,6 +291,37 @@ test("Project Model accepts owned dependencies and rejects dangling governance r
   ));
   assert.ok(unsatisfiedErrors.some((error) => error.code === "plan.outcome.dependency.cycle"));
 
+  for (const futureStatus of ["planned", "conditional"]) {
+    const outcomeHandoff = baseModel();
+    outcomeHandoff.plan.stages.push({
+      id: "S2",
+      name: "Outcome Handoff Stage",
+      status: "active",
+      outcomeRefs: ["LGT-002", "LGT-003"]
+    });
+    outcomeHandoff.plan.outcomes.push({
+      id: "LGT-002",
+      stage: "S2",
+      status: "achieved",
+      outcome: "The earlier Stage Outcome has been achieved.",
+      dependsOn: [],
+      acceptance: { exitCriteria: ["The earlier Outcome proof is sealed."] }
+    }, {
+      id: "LGT-003",
+      stage: "S2",
+      status: futureStatus,
+      outcome: "The next Stage Outcome remains future work.",
+      dependsOn: ["LGT-002"],
+      acceptance: { exitCriteria: ["The next Outcome is activated in a later amendment."] }
+    });
+    assert.equal(validateProjectModel(outcomeHandoff).valid, true);
+
+    outcomeHandoff.plan.outcomes.find((outcome) => outcome.id === "LGT-002").status = futureStatus;
+    assert.ok(validateProjectModel(outcomeHandoff).errors.some(
+      (error) => error.code === "plan.stage.status.mismatch"
+    ));
+  }
+
   const directory = await mkdtemp(path.join(tmpdir(), "legatura-project-model-"));
   try {
     await mkdir(path.join(directory, ".legatura"));
