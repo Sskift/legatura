@@ -402,7 +402,7 @@
       "stage": "S2",
       "status": "planned",
       "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
-      "dependsOn": ["LGT-011", "LGT-013", "LGT-017"],
+      "dependsOn": ["LGT-011", "LGT-013", "LGT-018"],
       "acceptance": {
         "claimRefs": [],
         "gapRefs": ["worker-and-identity-trust-opaque"],
@@ -784,7 +784,43 @@
       "authority": "governance-maintainer"
     }
   },
-  "outcomeRevisions": [],
+  "outcomeRevisions": [
+    {
+      "id": "LGT-020-R1",
+      "outcomeRef": "LGT-020",
+      "amendmentChangeId": "lgt020-revise-retired-dependency",
+      "governanceBaselineDigest": "sha256:ec1f87e9ad7f82ababda9bef5d4270b8f1d9b651a5d4a73b51933aaa4460256c",
+      "previousDefinition": {
+        "id": "LGT-020",
+        "stage": "S2",
+        "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
+        "dependsOn": ["LGT-011", "LGT-013", "LGT-017"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "A deterministic conformance harness rejects lifecycle, capability, expansion, or report semantics that violate the Interface.",
+            "Provider-specific details are absent from the Kernel-facing Work Specification, Worker Report, and Execution Record.",
+            "Worker inputs, capabilities, expansions, observations, and outputs are durably represented."
+          ],
+          "claimRefs": [],
+          "gapRefs": ["worker-and-identity-trust-opaque"]
+        },
+        "nonGoals": [
+          "Provider-specific transcript storage",
+          "Proving adapter independence; that belongs to LGT-023",
+          "Worker scheduling"
+        ]
+      },
+      "previousDefinitionDigest": "sha256:6d777872ca9304360965f63657030408f231c9d1f3140b64b371badcbed2a0ac",
+      "currentDefinitionDigest": "sha256:d5a80d94c75a62449aa449aa7a836fda62666886427339e31cb1113cf3450794",
+      "changedFields": ["dependsOn"],
+      "rationale": "Replace retired incomplete predecessor LGT-017 with its achieved append-only revision successor LGT-018 before Worker Execution planning begins.",
+      "requiredAuthorityRef": "governance-maintainer"
+    }
+  ],
   "outcomeTransitions": [
     {
       "id": "LGT-010-T1",
