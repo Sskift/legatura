@@ -522,7 +522,7 @@
     {
       "id": "LGT-025",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "Workbench creation and Architecture Profile surfaces consume content-verified Kernel projections whose final Claim eligibility and orthogonal assurance facts are never reconstructed or collapsed in the browser.",
       "dependsOn": ["LGT-018", "LGT-019"],
       "acceptance": {
@@ -1529,6 +1529,47 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-025-T2",
+      "outcomeRef": "LGT-025",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "The prior sealed Change Kernel and Local Workbench Packages now cover both frozen LGT-025 Criteria and close the Workbench projection-integrity Gap through its two exact proof Claims without using this Plan Amendment as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt025-compile-terminal-authoring-selection",
+          "acceptanceDigest": "sha256:d5112cbb06780af048a25a7f1b4846cd39e1d017bd4e12387cabcebf56f16a80"
+        },
+        {
+          "changeId": "lgt025-adopt-browser-projection-integrity-v2",
+          "acceptanceDigest": "sha256:0ca633dde5b1c80887c7ff7f83f2a1851b3195cc62a86b65db2d1374d4c8c68a"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-025-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Change Kernel Package directly proves one stabilized Workbench snapshot emits a complete bounded claimSelectionRoutes product keyed by exact Change kind, selected Outcome or null, and Module; every visible Claim appears once with final selectable state and ordered closed reasons derived from the same compiler-owned Plan and Project Model route products, while raw protected-Claim sets are withheld from adapters.",
+            "residualUncertainty": "The projection remains bounded to one local single-writer snapshot; authenticated multi-writer history and remote worker identity remain the separate accepted-history-not-portable and worker-and-identity-trust-opaque Gaps."
+          }
+        },
+        {
+          "criterionRef": "LGT-025-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Local Workbench Package directly proves browser receivers snapshot JSON, recompute canonical SHA-256 content digests before state adoption, reject stale mutations, resealed aggregate-assurance injection, malformed or incomplete Claim-selection routes, and disabled-reason vocabulary drift, and return the exact frozen Kernel Claim-option collection without reconstructing eligibility.",
+            "residualUncertainty": "The content digest detects corruption inside the same-origin loopback boundary but is deliberately not a signature, server identity, remote authentication mechanism, or pixel-perfect cross-browser visual proof."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "workbench-projection-integrity-not-closed",
+          "rationale": "The prior sealed Kernel and Local Workbench Packages directly cover the Gap's exact terminal-selection and browser content-verification proof Claims, including missing, duplicate, malformed, stale-digest, resealed-aggregate, and vocabulary-drift attacks."
+        }
+      ]
     }
   ],
   "changeRules": {

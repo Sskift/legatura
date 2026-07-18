@@ -290,7 +290,7 @@
     },
     {
       "id": "workbench-projection-integrity-not-closed",
-      "status": "open",
+      "status": "closed",
       "affects": ["change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The Kernel projects generic Module Claim eligibility plus protected Claims by Outcome, so the browser still intersects them into final integrity-repair eligibility; browser receivers check digest shape without verifying projection content; and the governed disabled-reason vocabulary is behind the runtime closed set. The trusted loopback server still revalidates every mutation and the pure server Profile compiler rejects aggregate assurance, so this residual is projection integrity rather than an acceptance-authority bypass.",
@@ -298,7 +298,19 @@
         "workbench-authoring-claim-options-are-kernel-final",
         "workbench-browser-verifies-and-projects-kernel-content"
       ],
-      "expansionTrigger": "Before LGT-016 is activated or any Workbench creation or Architecture Profile browser surface expands."
+      "expansionTrigger": "Before LGT-016 is activated or any Workbench creation or Architecture Profile browser surface expands.",
+      "resolution": "Change Kernel now emits one bounded terminal Claim-selection product from the same stabilized composite snapshot, Plan authoring policy, and Project Model Claim-route product that govern Change creation; browser adapters receive only exact lookup routes, independently verify canonical Workbench and Profile content digests, reject aggregate assurance and malformed projection attacks, and never reconstruct protected-Claim or eligibility policy.",
+      "closedBy": [
+        {
+          "changeId": "lgt025-compile-terminal-authoring-selection",
+          "acceptanceDigest": "sha256:d5112cbb06780af048a25a7f1b4846cd39e1d017bd4e12387cabcebf56f16a80"
+        },
+        {
+          "changeId": "lgt025-adopt-browser-projection-integrity-v2",
+          "acceptanceDigest": "sha256:0ca633dde5b1c80887c7ff7f83f2a1851b3195cc62a86b65db2d1374d4c8c68a"
+        }
+      ],
+      "reopenTrigger": "Reopen if adapters regain raw protected-Claim sets or combine Plan, Contract, Gate, lifecycle, or Module facts into eligibility; if any browser projection becomes state without exact canonical content verification; if malformed route or disabled-reason vocabularies are accepted; or if Profile surfaces introduce aggregate confidence, score, percentage, health, readiness, or green-light conclusions."
     },
     {
       "id": "planned-outcome-refinement-not-supported",
