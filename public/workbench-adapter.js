@@ -50,18 +50,31 @@ export function receiveWorkbenchProjection(value) {
   requireRecord(value, "Workbench projection");
   requireExactKeys(
     value,
-    ["schemaVersion", "source", "authoring", "changes", "projectionDigest"],
+    ["schemaVersion", "source", "selection", "authoring", "changes", "projectionDigest"],
     "Workbench projection",
   );
-  if (value.schemaVersion !== 1) throw invalidProjection("Workbench projection schemaVersion");
+  if (value.schemaVersion !== 2) throw invalidProjection("Workbench projection schemaVersion");
   requireDigest(value.projectionDigest, "Workbench projection digest");
   requireRecord(value.source, "Workbench source");
   for (const digest of Object.values(value.source)) {
     requireDigest(digest, "Workbench sourceRef");
   }
+  requireRecord(value.selection, "Workbench selection");
+  requireExactKeys(value.selection, ["changeRef"], "Workbench selection");
+  if (value.selection.changeRef !== null
+    && (typeof value.selection.changeRef !== "string" || value.selection.changeRef.length === 0)) {
+    throw invalidProjection("Workbench selection changeRef");
+  }
   requireRecord(value.authoring, "Workbench authoring");
   if (!Array.isArray(value.authoring.modules) || !Array.isArray(value.changes)) {
     throw invalidProjection("Workbench canonical collections");
+  }
+  if (value.selection.changeRef === null && value.changes.length !== 0) {
+    throw invalidProjection("Workbench authoring-only selection");
+  }
+  if (value.selection.changeRef !== null
+    && (value.changes.length !== 1 || value.changes[0]?.id !== value.selection.changeRef)) {
+    throw invalidProjection("Workbench selected Change projection");
   }
   return value;
 }

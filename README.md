@@ -8,7 +8,7 @@ The MVP is deliberately narrow and runnable:
 
 - load and validate a repository's existing `.legatura` Project Model;
 - bind ordinary Changes to active Outcomes in a versioned Development Plan;
-- show a Project Atlas, assurance boundary, knowledge gaps, and gate health;
+- show a Project Atlas, assurance boundary, knowledge gaps, exact Gate routes, and Evidence currency;
 - create and compile a Change into a Context Capsule, Impact Set, and Verification Obligations;
 - run declared minimum gates and preserve structured evidence;
 - require Knowledge Closure and an authority decision before producing an Accepted Change Package.
@@ -78,9 +78,9 @@ The assurance boundary has three honest states:
 
 Project Model files are normative. Changing them is itself a Change and requires a `normative-amendment` decision naming every amended file.
 
-The Development Plan is not a task backlog. A normal Change must reference an already active Outcome from its frozen Governance Baseline; a planned Outcome is activated by an earlier `plan-amendment` Change that can modify only `.legatura/**`, references no Outcome, and cannot carry implementation. Existing Outcome ids and statements are permanent; achieved or retired state cannot be reopened, and achieved acceptance records cannot be rewritten. Other planned details evolve only through separately reviewed amendments. `LGT-099` is a standing integrity path, but the compiler accepts it only for a supported repair kind that binds a protected Claim to complete failed Evidence, and Plan authority must review it—it is not a feature escape hatch.
+The Development Plan is not a task backlog. A normal Change must reference an already active Outcome from its frozen Governance Baseline; a planned Outcome is activated by an earlier `plan-amendment` Change that can modify only `.legatura/**`, references no Outcome, and cannot carry implementation. Outcome ids are permanent. A planned or conditional definition can change only through an earlier append-only Revision; activation freezes the complete normalized definition, and active, achieved, or retired semantics cannot be rewritten. Terminal history and achieved acceptance records remain immutable. `LGT-099` is a standing integrity path, but the compiler accepts it only for a supported repair kind that binds a protected Claim to complete failed Evidence, and Plan authority must review it—it is not a feature escape hatch.
 
-The current bootstrap enforces referential alignment, active status, frozen-plan binding, amendment isolation, exact Contract-visible Claim-to-Criterion Outcome Contributions, non-progress exceptions bound to Plan authority, acceptance-time rederivation, exact integrity Evidence, and Evidence-bound Outcome Transitions. A Contribution proves reviewable relevance, not that an exit Criterion is satisfied. A Transition separately binds a Candidate-frozen catalog of prior sealed Accepted Packages, exact Gate Evidence, Knowledge Gap dispositions, and Plan-authority assessments, then re-resolves those facts before Gates and acceptance. The remaining LGT-010 limit is the explicit `architecture-acceptance-profile-not-projected` Knowledge Gap; the local single-writer Store is also not authenticated multi-writer history.
+The current bootstrap enforces referential alignment, active status, frozen-plan binding, amendment isolation, append-only planned-definition Revisions, exact Contract-visible Claim-to-Criterion Outcome Contributions, non-progress exceptions bound to Plan authority, acceptance-time rederivation, exact integrity Evidence, and Evidence-bound Outcome Transitions. A Contribution proves reviewable relevance, not that an exit Criterion is satisfied. A Transition separately binds a Candidate-frozen catalog of prior sealed Accepted Packages, exact Gate Evidence, Knowledge Gap dispositions, and Plan-authority assessments, then re-resolves those facts before Gates and acceptance. LGT-010 is achieved. LGT-014 is replacing full-history Profile reads with authenticated, snapshot-bound windows and a DOM-level adapter proof; the local single-writer Store remains neither portable Accepted history nor authenticated multi-writer history.
 
 ## Evidence, not test volume
 
@@ -93,7 +93,7 @@ A passing command is not automatically evidence for every claim. Evidence is usa
 - discriminatory power: what plausible failure it would reject;
 - residual uncertainty that remains after it passes.
 
-Minimum gates answer “what is the smallest high-confidence check for this exact Change?” Commands are selected by primary Module, while unscoped commands apply everywhere. Full gates answer “is the integrated or release candidate healthy as a whole?” Policy may require the former before acceptance and the latter before integration.
+Minimum Gates answer “what is the smallest declared check that can discriminate the failures relevant to this Change?” The current MVP selects commands primarily by Module, while exact Claim routes determine which Evidence can support each obligation; claim-sensitive command pruning remains the explicit LGT-015 work. Full Gates answer “does the integrated or release candidate satisfy the declared repository-wide checks?” Policy may require the former before acceptance and the latter before integration.
 
 Permanent tests are admitted by plausible failure and Contract Claim—not by feature count or coverage targets. The placement, replacement, and deletion rules are normative in [TESTING.md](TESTING.md).
 

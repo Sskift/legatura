@@ -574,6 +574,38 @@ h1,
   font-size: 10px;
 }
 
+.profile-window-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -10px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.profile-window-controls > div {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-window-label {
+  color: var(--ink-soft);
+  font-weight: 760;
+}
+
+.profile-window-error {
+  color: var(--red);
+  overflow-wrap: anywhere;
+}
+
 .summary-grid {
   display: grid;
   grid-template-columns: 1.05fr 1.35fr 0.85fr;
@@ -2142,9 +2174,14 @@ h1,
   }
 
   .project-identity,
+  .profile-window-controls,
   .change-header {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .profile-window-controls .button {
+    width: 100%;
   }
 
   .project-updated {

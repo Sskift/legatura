@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createKernel } from "./core/index.mjs";
-import { compileArchitectureProfileViewModel } from "./workbench-view-model.mjs";
+import { compileArchitectureProfileWindowViewModel } from "./workbench-view-model.mjs";
 
 export const LOOPBACK_HOST = "127.0.0.1";
 export const DEFAULT_PORT = 4317;
@@ -146,14 +146,16 @@ async function handleApiRequest({ request, response, requestUrl, kernel, bodyLim
     && segments[1] === "architecture-profile"
   ) {
     assertMethod(method, ["GET"]);
-    const profile = await kernel.inspectArchitectureProfile();
-    sendJson(response, 200, compileArchitectureProfileViewModel(profile));
+    const query = readArchitectureProfileWindowQuery(requestUrl.searchParams);
+    const profileWindow = await kernel.inspectArchitectureProfileWindow(query);
+    sendJson(response, 200, compileArchitectureProfileWindowViewModel(profileWindow));
     return;
   }
 
   if (segments.length === 2 && segments[0] === "api" && segments[1] === "workbench") {
     assertMethod(method, ["GET"]);
-    sendJson(response, 200, await kernel.inspectWorkbenchProjection());
+    const query = readWorkbenchProjectionQuery(requestUrl.searchParams);
+    sendJson(response, 200, await kernel.inspectWorkbenchProjection(query));
     return;
   }
 
@@ -298,6 +300,82 @@ function requireIdentifier(value, label) {
     throw new HttpError(400, "INVALID_IDENTIFIER", `A valid ${label} is required.`);
   }
   return value;
+}
+
+function readArchitectureProfileWindowQuery(searchParams) {
+  const fields = readStrictQuery(searchParams, ["limit", "cursor"], {
+    code: "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+    label: "Architecture Profile window query"
+  });
+  if (Object.hasOwn(fields, "cursor")) {
+    if (Object.keys(fields).length !== 1) {
+      throw new HttpError(
+        400,
+        "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+        "Architecture Profile continuation cannot be combined with a limit."
+      );
+    }
+    if (fields.cursor.length === 0 || Buffer.byteLength(fields.cursor, "utf8") > 2 * 1024) {
+      throw new HttpError(
+        400,
+        "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+        "Architecture Profile continuation must be a bounded non-empty cursor."
+      );
+    }
+    return { cursor: fields.cursor };
+  }
+  if (!Object.hasOwn(fields, "limit")) return {};
+  if (!/^[1-9]\d*$/u.test(fields.limit)) {
+    throw new HttpError(
+      400,
+      "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+      "Architecture Profile window limit must be an integer from 1 through 32."
+    );
+  }
+  const limit = Number(fields.limit);
+  if (!Number.isSafeInteger(limit) || limit > 32) {
+    throw new HttpError(
+      400,
+      "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+      "Architecture Profile window limit must be an integer from 1 through 32."
+    );
+  }
+  return { limit };
+}
+
+function readWorkbenchProjectionQuery(searchParams) {
+  const fields = readStrictQuery(searchParams, ["changeRef"], {
+    code: "WORKBENCH_PROJECTION_INPUT_INVALID",
+    label: "Workbench projection query"
+  });
+  if (!Object.hasOwn(fields, "changeRef")) return {};
+  if (fields.changeRef.length === 0 || Buffer.byteLength(fields.changeRef, "utf8") > 128) {
+    throw new HttpError(
+      400,
+      "WORKBENCH_PROJECTION_INPUT_INVALID",
+      "Workbench projection changeRef must be a bounded non-empty Change id."
+    );
+  }
+  return { changeRef: fields.changeRef };
+}
+
+function readStrictQuery(searchParams, allowedFields, { code, label }) {
+  const allowed = new Set(allowedFields);
+  const fields = {};
+  for (const [key, value] of searchParams) {
+    if (!allowed.has(key)) {
+      throw new HttpError(400, code, `${label} contains unsupported fields.`, {
+        field: key
+      });
+    }
+    if (Object.hasOwn(fields, key)) {
+      throw new HttpError(400, code, `${label} cannot repeat fields.`, {
+        field: key
+      });
+    }
+    fields[key] = value;
+  }
+  return fields;
 }
 
 function assertMethod(actual, allowed) {

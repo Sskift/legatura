@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { parseArgs, runCli } from "../../src/cli.mjs";
-import { compileArchitectureProfileViewModel } from "../../src/workbench-view-model.mjs";
+import { compileArchitectureProfileWindowViewModel } from "../../src/workbench-view-model.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,16 +41,28 @@ test("parses supported commands and rejects ambiguous input", () => {
   );
 });
 
-test("inspect emits the exact Profile view model or an orthogonal dimension summary", async () => {
-  const profile = architectureProfileFixture();
-  const expected = compileArchitectureProfileViewModel(profile);
+test("inspect streams exact Profile windows or bounded orthogonal dimension summaries", async () => {
+  const firstWindow = architectureProfileWindowFixture({
+    changeIds: ["change-1"],
+    hasMore: true,
+    cursor: "opaque-next-window"
+  });
+  const secondWindow = architectureProfileWindowFixture({
+    changeIds: ["change-2"],
+    offset: 1
+  });
+  const expectedFirst = compileArchitectureProfileWindowViewModel(firstWindow);
+  const expectedSecond = compileArchitectureProfileWindowViewModel(secondWindow);
   const calls = [];
+  let instance = 0;
   const kernelFactory = ({ repoPath }) => {
-    calls.push(["kernelFactory", repoPath]);
+    instance += 1;
+    const instanceId = instance;
+    calls.push(["kernelFactory", repoPath, instanceId]);
     return {
-      async inspectArchitectureProfile() {
-        calls.push(["inspectArchitectureProfile"]);
-        return profile;
+      async inspectArchitectureProfileWindow(input) {
+        calls.push(["inspectArchitectureProfileWindow", instanceId, input]);
+        return Object.hasOwn(input, "cursor") ? secondWindow : firstWindow;
       }
     };
   };
@@ -61,17 +73,45 @@ test("inspect emits the exact Profile view model or an orthogonal dimension summ
     jsonIo.io,
     { kernelFactory }
   );
-  assert.deepEqual(JSON.parse(jsonIo.stdout()), expected);
-  assert.deepEqual(result.architectureProfile, expected);
+  assert.deepEqual(JSON.parse(jsonIo.stdout()), {
+    schemaVersion: 1,
+    kind: "architecture-profile-window-stream",
+    windows: [expectedFirst, expectedSecond],
+    windowCount: 2
+  });
+  assert.deepEqual(result, {
+    status: "inspected",
+    repoPath: "/resolved/repo",
+    windowCount: 2,
+    lastWindowDigest: expectedSecond.windowDigest
+  });
+  assert.equal(Object.hasOwn(result, "architectureProfile"), false);
 
   const textIo = fixtureIo();
   await runCli(["inspect", "/repo"], textIo.io, { kernelFactory });
   assert.equal(textIo.stdout(), [
-    `Architecture Profile: ${expected.profileRef}`,
-    `Snapshot: ${expected.sourceRefs.snapshotDigest}`,
-    `Project Model: ${expected.sourceRefs.projectModelDigest}`,
-    `Git content: ${expected.sourceRefs.gitContentDigest}`,
-    `Change Store: ${expected.sourceRefs.changeStoreDigest}`,
+    "Architecture Profile window 1",
+    `Profile: ${expectedFirst.page.profileRef}`,
+    "Window: offset 0, returned 1, limit 1, has more yes",
+    `Snapshot: ${expectedFirst.source.snapshotDigest}`,
+    `Project Model: ${expectedFirst.source.projectModelDigest}`,
+    `Git content: ${expectedFirst.source.gitContentDigest}`,
+    `Change Store: ${expectedFirst.source.changeStoreDigest}`,
+    "Orthogonal dimensions:",
+    "  Outcomes: 0",
+    "  Criteria: 0",
+    "  Claims: 0",
+    "  Gates: 0",
+    "  Evidence: 0",
+    "  Residual uncertainty: 0",
+    "  Knowledge gaps: 0",
+    "Architecture Profile window 2",
+    `Profile: ${expectedSecond.page.profileRef}`,
+    "Window: offset 1, returned 1, limit 1, has more no",
+    `Snapshot: ${expectedSecond.source.snapshotDigest}`,
+    `Project Model: ${expectedSecond.source.projectModelDigest}`,
+    `Git content: ${expectedSecond.source.gitContentDigest}`,
+    `Change Store: ${expectedSecond.source.changeStoreDigest}`,
     "Orthogonal dimensions:",
     "  Outcomes: 0",
     "  Criteria: 0",
@@ -87,10 +127,12 @@ test("inspect emits the exact Profile view model or an orthogonal dimension summ
     /overall|score|percent|confidence|health|readiness|green.?light|total/iu
   );
   assert.deepEqual(calls, [
-    ["kernelFactory", "/resolved/repo"],
-    ["inspectArchitectureProfile"],
-    ["kernelFactory", "/resolved/repo"],
-    ["inspectArchitectureProfile"]
+    ["kernelFactory", "/resolved/repo", 1],
+    ["inspectArchitectureProfileWindow", 1, {}],
+    ["inspectArchitectureProfileWindow", 1, { cursor: "opaque-next-window" }],
+    ["kernelFactory", "/resolved/repo", 2],
+    ["inspectArchitectureProfileWindow", 2, {}],
+    ["inspectArchitectureProfileWindow", 2, { cursor: "opaque-next-window" }]
   ]);
 });
 
@@ -140,7 +182,42 @@ function fixtureIo() {
   };
 }
 
-function architectureProfileFixture() {
+function architectureProfileWindowFixture({
+  changeIds,
+  offset = 0,
+  limit = 1,
+  hasMore = false,
+  cursor
+}) {
+  const page = architectureProfileFixture(changeIds);
+  const content = {
+    schemaVersion: 1,
+    proofVersion: 1,
+    kind: "architecture-profile-window",
+    source: page.source,
+    window: {
+      ordering: "change-id-v1",
+      offset,
+      limit,
+      returned: changeIds.length,
+      hasMore,
+      recordRefs: changeIds.map((id) => ({ id }))
+    },
+    page
+  };
+  return {
+    ...content,
+    windowDigest: canonicalDigest(content),
+    continuation: hasMore
+      ? {
+          cursor,
+          expiresAt: "2026-07-18T12:05:00.000Z"
+        }
+      : null
+  };
+}
+
+function architectureProfileFixture(changeIds = []) {
   const content = {
     schemaVersion: 1,
     source: {
@@ -149,7 +226,8 @@ function architectureProfileFixture() {
       gitContentDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       changeStoreDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     },
-    entities: Object.fromEntries([
+    entities: {
+      ...Object.fromEntries([
       "stages",
       "outcomes",
       "criteria",
@@ -163,7 +241,9 @@ function architectureProfileFixture() {
       "evidence",
       "residuals",
       "gaps"
-    ].map((key) => [key, []])),
+      ].map((key) => [key, []])),
+      changes: changeIds.map((id) => ({ id }))
+    },
     relations: Object.fromEntries([
       "outcomeCriteria",
       "outcomeClaims",

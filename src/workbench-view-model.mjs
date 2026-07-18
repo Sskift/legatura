@@ -53,6 +53,20 @@ const SOURCE_REF_FIELDS = Object.freeze([
   "changeStoreDigest"
 ]);
 
+const ARCHITECTURE_PROFILE_WINDOW_FIELDS = Object.freeze([
+  "schemaVersion",
+  "proofVersion",
+  "kind",
+  "source",
+  "window",
+  "page",
+  "windowDigest",
+  "continuation"
+]);
+
+const ARCHITECTURE_PROFILE_WINDOW_METADATA_BYTES = 16 * 1024;
+const ARCHITECTURE_PROFILE_WINDOW_RECORD_LIMIT = 32;
+
 const FORBIDDEN_KEYS = new Set([
   "acceptedpackage",
   "body",
@@ -85,6 +99,13 @@ export const ARCHITECTURE_PROFILE_VIEW_MODEL_LIMITS = Object.freeze({
   relations: 65536,
   depth: 64,
   textBytes: 16 * 1024
+});
+
+export const ARCHITECTURE_PROFILE_WINDOW_VIEW_MODEL_LIMITS = Object.freeze({
+  inputBytes: ARCHITECTURE_PROFILE_LIMITS.profileBytes,
+  outputBytes: ARCHITECTURE_PROFILE_VIEW_MODEL_LIMITS.outputBytes
+    + ARCHITECTURE_PROFILE_WINDOW_METADATA_BYTES,
+  records: ARCHITECTURE_PROFILE_WINDOW_RECORD_LIMIT
 });
 
 /**
@@ -139,6 +160,199 @@ export function compileArchitectureProfileViewModel(profile) {
     throw limitError("outputBytes", observedBytes, "viewModel");
   }
   return result;
+}
+
+/**
+ * Project one bounded Kernel Profile window without interpreting its opaque
+ * continuation. The page projection remains the sole owner of Profile graph
+ * semantics; this envelope only proves source, window, and pagination shape.
+ */
+export function compileArchitectureProfileWindowViewModel(profileWindow) {
+  preflightPlainJson(profileWindow, {
+    byteLimit: ARCHITECTURE_PROFILE_WINDOW_VIEW_MODEL_LIMITS.inputBytes,
+    root: "window"
+  });
+  assertProfileWindowShape(profileWindow);
+
+  const safeWindow = JSON.parse(JSON.stringify(profileWindow));
+  const page = compileArchitectureProfileViewModel(safeWindow.page);
+  assertMatchingSource(safeWindow.source, safeWindow.page.source);
+  assertMatchingWindowChanges(safeWindow.window.recordRefs, safeWindow.page.entities.changes);
+
+  const {
+    windowDigest,
+    continuation,
+    ...semanticWindow
+  } = safeWindow;
+  const expectedWindowDigest = canonicalDigest(semanticWindow);
+  if (windowDigest !== expectedWindowDigest) {
+    throw viewModelError(
+      "ARCHITECTURE_PROFILE_WINDOW_VIEW_DIGEST_INVALID",
+      "Architecture Profile window content does not match windowDigest.",
+      { expectedWindowDigest, observedWindowDigest: windowDigest }
+    );
+  }
+
+  const content = {
+    schemaVersion: safeWindow.schemaVersion,
+    proofVersion: safeWindow.proofVersion,
+    kind: safeWindow.kind,
+    source: safeWindow.source,
+    window: safeWindow.window,
+    page,
+    windowDigest,
+    continuation
+  };
+  const result = { ...content, viewModelDigest: canonicalDigest(content) };
+  const observedBytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+  if (observedBytes > ARCHITECTURE_PROFILE_WINDOW_VIEW_MODEL_LIMITS.outputBytes) {
+    throw windowLimitError("outputBytes", observedBytes, "windowViewModel");
+  }
+  return result;
+}
+
+function assertProfileWindowShape(profileWindow) {
+  assertRecord(profileWindow, "window");
+  assertExactKeys(profileWindow, ARCHITECTURE_PROFILE_WINDOW_FIELDS, "window");
+  if (profileWindow.schemaVersion !== 1) {
+    throw invalidInput("Architecture Profile window schemaVersion must be 1.", {
+      location: "window.schemaVersion",
+      observed: profileWindow.schemaVersion
+    });
+  }
+  if (profileWindow.proofVersion !== 1) {
+    throw invalidInput("Architecture Profile window proofVersion must be 1.", {
+      location: "window.proofVersion",
+      observed: profileWindow.proofVersion
+    });
+  }
+  if (profileWindow.kind !== "architecture-profile-window") {
+    throw invalidInput("Architecture Profile window kind is unsupported.", {
+      location: "window.kind",
+      observed: profileWindow.kind
+    });
+  }
+  requireDigest(profileWindow.windowDigest, "window.windowDigest");
+
+  assertRecord(profileWindow.source, "window.source");
+  assertExactKeys(profileWindow.source, SOURCE_REF_FIELDS, "window.source");
+  for (const field of SOURCE_REF_FIELDS) {
+    requireDigest(profileWindow.source[field], `window.source.${field}`);
+  }
+
+  assertRecord(profileWindow.window, "window.window");
+  assertExactKeys(
+    profileWindow.window,
+    ["ordering", "offset", "limit", "returned", "hasMore", "recordRefs"],
+    "window.window"
+  );
+  if (profileWindow.window.ordering !== "change-id-v1") {
+    throw invalidInput("Architecture Profile window ordering is unsupported.", {
+      location: "window.window.ordering",
+      observed: profileWindow.window.ordering
+    });
+  }
+  requireSafeInteger(profileWindow.window.offset, "window.window.offset", { minimum: 0 });
+  requireSafeInteger(profileWindow.window.limit, "window.window.limit", {
+    minimum: 1,
+    maximum: ARCHITECTURE_PROFILE_WINDOW_RECORD_LIMIT
+  });
+  requireSafeInteger(profileWindow.window.returned, "window.window.returned", {
+    minimum: 0,
+    maximum: profileWindow.window.limit
+  });
+  if (typeof profileWindow.window.hasMore !== "boolean") {
+    throw invalidInput("Architecture Profile window hasMore must be a boolean.", {
+      location: "window.window.hasMore"
+    });
+  }
+  assertArray(profileWindow.window.recordRefs, "window.window.recordRefs");
+  if (profileWindow.window.recordRefs.length !== profileWindow.window.returned) {
+    throw invalidInput("Architecture Profile window returned count must match recordRefs.", {
+      location: "window.window.recordRefs",
+      returned: profileWindow.window.returned,
+      observed: profileWindow.window.recordRefs.length
+    });
+  }
+  for (const [index, recordRef] of profileWindow.window.recordRefs.entries()) {
+    const location = `window.window.recordRefs.${index}`;
+    assertRecord(recordRef, location);
+    assertExactKeys(recordRef, ["id"], location);
+    if (typeof recordRef.id !== "string" || recordRef.id.length === 0) {
+      throw invalidInput("Architecture Profile window recordRefs require non-empty ids.", {
+        location: `${location}.id`
+      });
+    }
+  }
+  if (profileWindow.window.hasMore && profileWindow.window.returned === 0) {
+    throw invalidInput("Architecture Profile non-terminal windows must make progress.", {
+      location: "window.window.returned"
+    });
+  }
+
+  if (profileWindow.window.hasMore) {
+    assertRecord(profileWindow.continuation, "window.continuation");
+    assertExactKeys(profileWindow.continuation, ["cursor", "expiresAt"], "window.continuation");
+    if (typeof profileWindow.continuation.cursor !== "string"
+      || profileWindow.continuation.cursor.length === 0
+      || Buffer.byteLength(profileWindow.continuation.cursor, "utf8") > 2 * 1024) {
+      throw invalidInput("Architecture Profile continuation cursor must be a bounded string.", {
+        location: "window.continuation.cursor"
+      });
+    }
+    const expiresAt = profileWindow.continuation.expiresAt;
+    const expiresAtMillis = typeof expiresAt === "string" ? Date.parse(expiresAt) : Number.NaN;
+    if (typeof expiresAt !== "string"
+      || Buffer.byteLength(expiresAt, "utf8") > 64
+      || !Number.isFinite(expiresAtMillis)
+      || new Date(expiresAtMillis).toISOString() !== expiresAt) {
+      throw invalidInput("Architecture Profile continuation expiry must be an exact ISO timestamp.", {
+        location: "window.continuation.expiresAt"
+      });
+    }
+  } else if (profileWindow.continuation !== null) {
+    throw invalidInput("Architecture Profile terminal windows cannot carry a continuation.", {
+      location: "window.continuation"
+    });
+  }
+}
+
+function assertMatchingSource(source, pageSource) {
+  for (const field of SOURCE_REF_FIELDS) {
+    if (source[field] !== pageSource[field]) {
+      throw viewModelError(
+        "ARCHITECTURE_PROFILE_WINDOW_VIEW_SOURCE_MISMATCH",
+        "Architecture Profile window and page must share one exact source snapshot.",
+        { field, windowSource: source[field], pageSource: pageSource[field] }
+      );
+    }
+  }
+}
+
+function assertMatchingWindowChanges(recordRefs, changes) {
+  const expected = new Set(recordRefs.map((recordRef) => recordRef.id));
+  const observed = new Set(changes.map((change) => change.id));
+  if (expected.size !== recordRefs.length
+    || observed.size !== changes.length
+    || observed.size !== expected.size
+    || [...observed].some((changeRef) => !expected.has(changeRef))) {
+    throw invalidInput("Architecture Profile page Changes must match its declared window.", {
+      location: "window.page.entities.changes",
+      expected: [...expected],
+      observed: [...observed]
+    });
+  }
+}
+
+function requireSafeInteger(value, location, { minimum, maximum = Number.MAX_SAFE_INTEGER }) {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw invalidInput("Architecture Profile window requires a bounded safe integer.", {
+      location,
+      minimum,
+      maximum,
+      observed: value
+    });
+  }
 }
 
 function assertProfileShape(profile) {
@@ -400,6 +614,20 @@ function limitError(dimension, observed, location, suppliedLimit) {
     "ARCHITECTURE_PROFILE_VIEW_LIMIT_EXCEEDED",
     "Architecture Profile view input exceeded a hard resource limit.",
     { dimension, limit, observed, location },
+    413
+  );
+}
+
+function windowLimitError(dimension, observed, location) {
+  return viewModelError(
+    "ARCHITECTURE_PROFILE_VIEW_LIMIT_EXCEEDED",
+    "Architecture Profile window view input exceeded a hard resource limit.",
+    {
+      dimension,
+      limit: ARCHITECTURE_PROFILE_WINDOW_VIEW_MODEL_LIMITS[dimension],
+      observed,
+      location
+    },
     413
   );
 }

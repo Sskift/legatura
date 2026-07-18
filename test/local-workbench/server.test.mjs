@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { createServer, LOOPBACK_HOST } from "../../src/server.mjs";
-import { compileArchitectureProfileViewModel } from "../../src/workbench-view-model.mjs";
+import { compileArchitectureProfileWindowViewModel } from "../../src/workbench-view-model.mjs";
 
 test("serves public assets and the complete Change API on loopback", async (t) => {
   const publicDir = await mkdtemp(path.join(os.tmpdir(), "legatura-public-"));
@@ -15,17 +15,33 @@ test("serves public assets and the complete Change API on loopback", async (t) =
 
   const calls = [];
   const change = { id: "change-1", title: "Bound the change", status: "framed" };
-  const architectureProfile = architectureProfileFixture();
-  const architectureProfileViewModel = compileArchitectureProfileViewModel(architectureProfile);
+  const firstProfileWindow = architectureProfileWindowFixture({
+    changeIds: ["change-1"],
+    hasMore: true,
+    cursor: "opaque-window-cursor"
+  });
+  const secondProfileWindow = architectureProfileWindowFixture({
+    changeIds: ["change-2"],
+    offset: 1
+  });
+  const firstProfileWindowViewModel = compileArchitectureProfileWindowViewModel(firstProfileWindow);
+  const secondProfileWindowViewModel = compileArchitectureProfileWindowViewModel(secondProfileWindow);
   const workbenchProjection = {
-    schemaVersion: 1,
-    source: architectureProfile.source,
+    schemaVersion: 2,
+    source: firstProfileWindow.source,
+    selection: { changeRef: null },
     authoring: {
       modules: [{
         moduleRef: "core",
         selectableClaims: [{ claimRef: "claim-1", routeRefs: ["route-1"] }]
       }]
     },
+    changes: [],
+    projectionDigest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  };
+  const selectedWorkbenchProjection = {
+    ...workbenchProjection,
+    selection: { changeRef: "change-1" },
     changes: [{
       changeRef: "change-1",
       actions: [{
@@ -41,13 +57,15 @@ test("serves public assets and the complete Change API on loopback", async (t) =
       calls.push(["inspectProject"]);
       return { name: "fixture", validation: { valid: true } };
     },
-    async inspectArchitectureProfile() {
-      calls.push(["inspectArchitectureProfile"]);
-      return architectureProfile;
+    async inspectArchitectureProfileWindow(input) {
+      calls.push(["inspectArchitectureProfileWindow", input]);
+      return Object.hasOwn(input, "cursor") ? secondProfileWindow : firstProfileWindow;
     },
-    async inspectWorkbenchProjection() {
-      calls.push(["inspectWorkbenchProjection"]);
-      return workbenchProjection;
+    async inspectWorkbenchProjection(input) {
+      calls.push(["inspectWorkbenchProjection", input]);
+      return Object.hasOwn(input, "changeRef")
+        ? selectedWorkbenchProjection
+        : workbenchProjection;
     },
     async listChanges() {
       calls.push(["listChanges"]);
@@ -92,10 +110,18 @@ test("serves public assets and the complete Change API on loopback", async (t) =
     validation: { valid: true }
   });
   assert.deepEqual(
-    await getJson(`${address.url}/api/architecture-profile`),
-    architectureProfileViewModel
+    await getJson(`${address.url}/api/architecture-profile?limit=1`),
+    firstProfileWindowViewModel
+  );
+  assert.deepEqual(
+    await getJson(`${address.url}/api/architecture-profile?cursor=${encodeURIComponent("opaque-window-cursor")}`),
+    secondProfileWindowViewModel
   );
   assert.deepEqual(await getJson(`${address.url}/api/workbench`), workbenchProjection);
+  assert.deepEqual(
+    await getJson(`${address.url}/api/workbench?changeRef=change-1`),
+    selectedWorkbenchProjection
+  );
   assert.deepEqual(await getJson(`${address.url}/api/changes`), [change]);
 
   const created = await requestJson(`${address.url}/api/changes`, "POST", {
@@ -133,8 +159,10 @@ test("serves public assets and the complete Change API on loopback", async (t) =
 
   assert.deepEqual(calls, [
     ["inspectProject"],
-    ["inspectArchitectureProfile"],
-    ["inspectWorkbenchProjection"],
+    ["inspectArchitectureProfileWindow", { limit: 1 }],
+    ["inspectArchitectureProfileWindow", { cursor: "opaque-window-cursor" }],
+    ["inspectWorkbenchProjection", {}],
+    ["inspectWorkbenchProjection", { changeRef: "change-1" }],
     ["listChanges"],
     ["createChange", { title: "Created through HTTP", intent: "Keep intent explicit" }],
     ["getChange", "change-1"],
@@ -149,9 +177,18 @@ test("returns bounded structured JSON errors", async (t) => {
   await writeFile(path.join(publicDir, "index.html"), "ok");
   t.after(() => rm(publicDir, { force: true, recursive: true }));
 
+  let rejectedQueryKernelCalls = 0;
   const kernel = {
     async getChange() {
       return undefined;
+    },
+    async inspectArchitectureProfileWindow() {
+      rejectedQueryKernelCalls += 1;
+      throw new Error("invalid query reached Kernel");
+    },
+    async inspectWorkbenchProjection() {
+      rejectedQueryKernelCalls += 1;
+      throw new Error("invalid query reached Kernel");
     }
   };
   const app = createServer({ kernel, publicDir, bodyLimitBytes: 32 });
@@ -215,6 +252,28 @@ test("returns bounded structured JSON errors", async (t) => {
   const wrongMethod = await fetch(`${address.url}/api/project`, { method: "POST" });
   assert.equal(wrongMethod.status, 405);
   assert.deepEqual((await wrongMethod.json()).error.details.allowed, ["GET"]);
+
+  for (const query of [
+    "unknown=1",
+    "limit=1&limit=2",
+    "limit=1&cursor=opaque",
+    "limit=33",
+    "cursor="
+  ]) {
+    const response = await fetch(`${address.url}/api/architecture-profile?${query}`);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID");
+  }
+  for (const query of [
+    "unknown=1",
+    "changeRef=one&changeRef=two",
+    "changeRef="
+  ]) {
+    const response = await fetch(`${address.url}/api/workbench?${query}`);
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).error.code, "WORKBENCH_PROJECTION_INPUT_INVALID");
+  }
+  assert.equal(rejectedQueryKernelCalls, 0, "invalid queries must fail before Kernel observation");
 });
 
 async function getJson(url) {
@@ -232,7 +291,42 @@ async function requestJson(url, method, body) {
   return { response, body: await response.json() };
 }
 
-function architectureProfileFixture() {
+function architectureProfileWindowFixture({
+  changeIds,
+  offset = 0,
+  limit = 1,
+  hasMore = false,
+  cursor
+}) {
+  const page = architectureProfileFixture(changeIds);
+  const content = {
+    schemaVersion: 1,
+    proofVersion: 1,
+    kind: "architecture-profile-window",
+    source: page.source,
+    window: {
+      ordering: "change-id-v1",
+      offset,
+      limit,
+      returned: changeIds.length,
+      hasMore,
+      recordRefs: changeIds.map((id) => ({ id }))
+    },
+    page
+  };
+  return {
+    ...content,
+    windowDigest: canonicalDigest(content),
+    continuation: hasMore
+      ? {
+          cursor,
+          expiresAt: "2026-07-18T12:05:00.000Z"
+        }
+      : null
+  };
+}
+
+function architectureProfileFixture(changeIds = []) {
   const content = {
     schemaVersion: 1,
     source: {
@@ -241,7 +335,8 @@ function architectureProfileFixture() {
       gitContentDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       changeStoreDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     },
-    entities: Object.fromEntries([
+    entities: {
+      ...Object.fromEntries([
       "stages",
       "outcomes",
       "criteria",
@@ -255,7 +350,9 @@ function architectureProfileFixture() {
       "evidence",
       "residuals",
       "gaps"
-    ].map((key) => [key, []])),
+      ].map((key) => [key, []])),
+      changes: changeIds.map((id) => ({ id }))
+    },
     relations: Object.fromEntries([
       "outcomeCriteria",
       "outcomeClaims",

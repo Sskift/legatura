@@ -31,9 +31,12 @@
   "scripts": {
     "open": "node src/cli.mjs open",
     "test": "node --test",
-    "check": "node --check src/cli.mjs && node --check src/server.mjs && node --test"
+    "check": "node --check src/cli.mjs && node --check src/server.mjs && node --check public/app.js && node --check public/workbench-adapter.js && node --check public/profile-window-controller.js && node --test"
   },
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "linkedom": "^0.18.13"
   }
 }

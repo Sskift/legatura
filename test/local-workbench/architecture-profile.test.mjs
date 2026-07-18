@@ -4,15 +4,20 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { parseHTML } from "linkedom";
 
 import { ARCHITECTURE_PROFILE_LIMITS } from "../../src/core/architecture-profile.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
-import { runCli } from "../../src/cli.mjs";
 import { createServer } from "../../src/server.mjs";
 import {
   ARCHITECTURE_PROFILE_VIEW_MODEL_LIMITS,
+  compileArchitectureProfileWindowViewModel,
   compileArchitectureProfileViewModel
 } from "../../src/workbench-view-model.mjs";
+import {
+  createProfileWindowController,
+  receiveArchitectureProfileWindowViewModel
+} from "../../public/profile-window-controller.js";
 import {
   architectureProfileDimension,
   receiveArchitectureProfileViewModel,
@@ -21,6 +26,8 @@ import {
   selectWorkbenchAction,
   selectWorkbenchAuthoringModules
 } from "../../public/workbench-adapter.js";
+
+export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
 
 test("Local Workbench projects exact Profile dimensions and preserves Kernel Workbench actions", async (t) => {
   const profile = createProfile();
@@ -99,50 +106,84 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     assert.equal(serialized.includes(forbidden), false, `view leaked ${forbidden}`);
   }
 
+  const secondProfile = structuredClone(profile);
+  secondProfile.entities.changes[0].id = "change-2";
+  for (const item of secondProfile.entities.evidence) item.changeRef = "change-2";
+  reseal(secondProfile);
+  const opaqueCursor = "opaque/profile-window?proof=secret-sentinel";
+  const firstWindow = createProfileWindow(profile, {
+    offset: 0,
+    hasMore: true,
+    cursor: opaqueCursor
+  });
+  const secondWindow = createProfileWindow(secondProfile, { offset: 1 });
+  const mismatchedProfile = structuredClone(secondProfile);
+  mismatchedProfile.source.changeStoreDigest = canonicalDigest("mismatched-change-store");
+  reseal(mismatchedProfile);
+  const mismatchedWindow = createProfileWindow(mismatchedProfile, { offset: 1 });
+  const expectedFirstWindow = compileArchitectureProfileWindowViewModel(firstWindow);
+  const expectedSecondWindow = compileArchitectureProfileWindowViewModel(secondWindow);
+
   const publicDir = await mkdtemp(path.join(os.tmpdir(), "legatura-profile-view-"));
   await writeFile(path.join(publicDir, "index.html"), "<!doctype html><title>Legatura</title>");
   t.after(() => rm(publicDir, { recursive: true, force: true }));
-  const workbench = createWorkbenchProjection(profile.source);
+  const authoringWorkbench = createWorkbenchProjection(profile.source);
+  const selectedWorkbench = createWorkbenchProjection(profile.source, "change-1");
   const calls = [];
+  let profileMode = "normal";
   const server = createServer({
     publicDir,
     kernel: {
-      async inspectArchitectureProfile() {
-        calls.push("inspectArchitectureProfile");
-        return profile;
+      async inspectArchitectureProfileWindow(input) {
+        calls.push(["inspectArchitectureProfileWindow", structuredClone(input)]);
+        if (!Object.hasOwn(input, "cursor")) return firstWindow;
+        assert.equal(input.cursor, opaqueCursor, "HTTP forwards the continuation as one opaque value");
+        if (profileMode === "mismatched-source") return mismatchedWindow;
+        if (profileMode === "stale-cursor") {
+          const error = new Error(`Continuation expired: ${opaqueCursor}`);
+          error.code = `ARCHITECTURE_PROFILE_CURSOR_EXPIRED_${opaqueCursor}`;
+          error.statusCode = 410;
+          error.details = { cursor: opaqueCursor, private: "must not render" };
+          throw error;
+        }
+        return secondWindow;
       },
-      async inspectWorkbenchProjection() {
-        calls.push("inspectWorkbenchProjection");
-        return workbench;
+      async inspectWorkbenchProjection(input) {
+        calls.push(["inspectWorkbenchProjection", structuredClone(input)]);
+        return input.changeRef === "change-1" ? selectedWorkbench : authoringWorkbench;
       }
     }
   });
   t.after(() => server.close());
   const address = await server.listen(0);
-  const profileResponse = await fetch(`${address.url}/api/architecture-profile`);
-  const workbenchResponse = await fetch(`${address.url}/api/workbench`);
-  assert.equal(profileResponse.status, 200);
-  assert.equal(workbenchResponse.status, 200);
-  const profilePayload = await profileResponse.json();
-  const workbenchPayload = await workbenchResponse.json();
-  assert.deepEqual(profilePayload, repeated);
+  const profilePayload = await requestJson(address.url, "/api/architecture-profile");
+  const authoringPayload = await requestJson(address.url, "/api/workbench");
+  const selectedPayload = await requestJson(address.url, "/api/workbench?changeRef=change-1");
+  assert.deepEqual(profilePayload, expectedFirstWindow);
+  assert.deepEqual(authoringPayload, authoringWorkbench);
   assert.deepEqual(
-    workbenchPayload,
-    workbench,
+    selectedPayload,
+    selectedWorkbench,
     "HTTP preserves selectable Claims, exact routes, actions, and disabled reasons without recompilation"
   );
-  assert.deepEqual(calls, ["inspectArchitectureProfile", "inspectWorkbenchProjection"]);
+  assert.deepEqual(calls.slice(0, 3), [
+    ["inspectArchitectureProfileWindow", {}],
+    ["inspectWorkbenchProjection", {}],
+    ["inspectWorkbenchProjection", { changeRef: "change-1" }]
+  ]);
 
-  const browserProfile = receiveArchitectureProfileViewModel(profilePayload);
-  const browserWorkbench = receiveWorkbenchProjection(workbenchPayload);
+  const browserWindow = receiveArchitectureProfileWindowViewModel(profilePayload);
+  const browserProfile = browserWindow.page;
+  const browserAuthoring = receiveWorkbenchProjection(authoringPayload);
+  const browserWorkbench = receiveWorkbenchProjection(selectedPayload);
   assert.strictEqual(
     architectureProfileDimension(browserProfile, "evidence"),
     browserProfile.dimensions.evidence,
     "the browser adapter selects the exact canonical dimension"
   );
   assert.strictEqual(
-    selectWorkbenchAuthoringModules(browserWorkbench),
-    browserWorkbench.authoring.modules,
+    selectWorkbenchAuthoringModules(browserAuthoring),
+    browserAuthoring.authoring.modules,
     "the browser adapter preserves every authoring fact and its order"
   );
   const matchingChange = {
@@ -162,6 +203,87 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     "independently stable but mismatched detail and Workbench snapshots fail closed"
   );
 
+  const { document, window } = parseHTML(`<!doctype html><body>
+    <ol id="profile-page"></ol>
+    <span id="profile-status"></span>
+    <span id="profile-error" hidden></span>
+    <button id="profile-next" type="button">Next</button>
+  </body>`);
+  const pageElement = document.querySelector("#profile-page");
+  const statusElement = document.querySelector("#profile-status");
+  const errorElement = document.querySelector("#profile-error");
+  const nextElement = document.querySelector("#profile-next");
+  const controller = createProfileWindowController({
+    fetchJson: (url) => requestJson(address.url, url),
+    renderPage(page) {
+      pageElement.replaceChildren(...page.context.changes.map((change) => {
+        const item = document.createElement("li");
+        item.textContent = change.id;
+        return item;
+      }));
+    },
+    elements: { status: statusElement, error: errorElement, next: nextElement }
+  });
+  let pendingClick;
+  nextElement.addEventListener("click", () => { pendingClick = controller.next(); });
+
+  assert.equal((await controller.refresh()).status, "rendered");
+  assert.equal(pageElement.textContent, "change-1");
+  assert.equal(nextElement.disabled, false);
+  nextElement.dispatchEvent(new window.Event("click"));
+  await pendingClick;
+  assert.equal(
+    pageElement.textContent,
+    "change-2",
+    "the successor replaces the current DOM page instead of accumulating records"
+  );
+  assert.equal(pageElement.querySelectorAll("li").length, 1);
+  assert.equal(nextElement.hidden, true);
+  assert.equal(controller.snapshot().current.windowDigest, expectedSecondWindow.windowDigest);
+
+  profileMode = "mismatched-source";
+  await controller.refresh();
+  const mismatchedResult = await controller.next();
+  assert.equal(mismatchedResult.status, "failed");
+  assert.equal(pageElement.textContent, "change-1", "a mismatched successor leaves the prior page intact");
+  assert.match(errorElement.textContent, /BROWSER_PROFILE_WINDOW_INVALID/u);
+
+  profileMode = "normal";
+  await controller.refresh();
+  profileMode = "stale-cursor";
+  const staleResult = await controller.next();
+  assert.equal(staleResult.status, "failed");
+  assert.equal(pageElement.textContent, "change-1");
+  assert.doesNotMatch(errorElement.textContent, /secret-sentinel|private/u);
+  assert.match(errorElement.textContent, /\[opaque continuation\]/u);
+  await controller.refresh();
+  assert.deepEqual(
+    calls.at(-1),
+    ["inspectArchitectureProfileWindow", {}],
+    "refresh starts from the first window and never reuses a continuation"
+  );
+
+  const deferred = [];
+  const renderedByGeneration = [];
+  const guardedController = createProfileWindowController({
+    fetchJson() {
+      return new Promise((resolve) => deferred.push(resolve));
+    },
+    renderPage(page) {
+      renderedByGeneration.push(page.context.changes[0].id);
+    }
+  });
+  const lateRequest = guardedController.refresh();
+  const currentRequest = guardedController.refresh();
+  const replacementFirstWindow = compileArchitectureProfileWindowViewModel(
+    createProfileWindow(secondProfile, { offset: 0 })
+  );
+  deferred[1](replacementFirstWindow);
+  assert.equal((await currentRequest).status, "rendered");
+  deferred[0](expectedFirstWindow);
+  assert.equal((await lateRequest).status, "discarded");
+  assert.deepEqual(renderedByGeneration, ["change-2"], "late responses cannot replace a newer page");
+
   const refreshCalls = [];
   await refreshAfterMutation({
     async loadChangeDetail(id) { refreshCalls.push(["detail", id]); },
@@ -178,31 +300,15 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     ["project"]
   ]);
 
-  let cliOutput = "";
-  await runCli(
-    ["inspect", publicDir, "--json"],
-    {
-      stdout: { write(value) { cliOutput += value; } },
-      stderr: { write() {} },
-      async realpath() { return publicDir; },
-      async stat() { return { isDirectory: () => true }; }
-    },
-    {
-      kernelFactory() {
-        return { async inspectArchitectureProfile() { return profile; } };
-      }
-    }
-  );
-  assert.deepEqual(JSON.parse(cliOutput), repeated, "CLI emits the same exact bounded view model");
-
-  const [browserSource, browserAdapterSource, browserMarkup, browserStyles] = await Promise.all([
+  const [browserSource, browserAdapterSource, controllerSource, browserMarkup, browserStyles] = await Promise.all([
     readFile(new URL("../../public/app.js", import.meta.url), "utf8"),
     readFile(new URL("../../public/workbench-adapter.js", import.meta.url), "utf8"),
+    readFile(new URL("../../public/profile-window-controller.js", import.meta.url), "utf8"),
     readFile(new URL("../../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../../public/styles.css", import.meta.url), "utf8")
   ]);
   assert.doesNotMatch(
-    `${browserSource}\n${browserAdapterSource}\n${browserMarkup}\n${browserStyles}`,
+    `${browserSource}\n${browserAdapterSource}\n${controllerSource}\n${browserMarkup}\n${browserStyles}`,
     /\b(?:overall|score|percentage|confidence|green.?light|health|readiness)\b|\/100/iu
   );
   assert.doesNotMatch(
@@ -212,6 +318,9 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   );
   assert.match(browserSource, /selectWorkbenchAction/u);
   assert.match(browserSource, /refreshCanonicalStateAfterMutation/u);
+  assert.match(browserSource, /workbench\?changeRef=/u);
+  assert.match(browserSource, /createProfileWindowController/u);
+  assert.doesNotMatch(controllerSource, /\b(?:atob|btoa)\b|base64|JSON\.parse\([^)]*cursor/iu);
 
   view.dimensions.outcomes[0].statement = "caller mutation";
   view.relations.outcomeClaims.length = 0;
@@ -243,6 +352,62 @@ test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles
     (error) => error?.code === "ARCHITECTURE_PROFILE_VIEW_AGGREGATE_FORBIDDEN"
       && error?.details?.key === "overall"
   );
+
+  const windowAggregateProfile = createProfile();
+  windowAggregateProfile.entities.evidence[0].confidence = 0.99;
+  reseal(windowAggregateProfile);
+  assert.throws(
+    () => compileArchitectureProfileWindowViewModel(
+      createProfileWindow(windowAggregateProfile)
+    ),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_VIEW_AGGREGATE_FORBIDDEN"
+      && error?.details?.key === "confidence",
+    "the bounded window seam cannot reintroduce aggregate assurance"
+  );
+
+  const canonicalWindow = compileArchitectureProfileWindowViewModel(
+    createProfileWindow(createProfile(), {
+      hasMore: true,
+      cursor: "opaque-attack-table-cursor"
+    })
+  );
+  const differentlyOrderedProfile = createProfile();
+  differentlyOrderedProfile.entities.changes.push({
+    id: "change-2",
+    state: "Candidate",
+    primaryModuleRef: "module-1"
+  });
+  reseal(differentlyOrderedProfile);
+  const differentlyOrderedWindow = createProfileWindow(differentlyOrderedProfile, { limit: 2 });
+  differentlyOrderedWindow.window.recordRefs.reverse();
+  const {
+    windowDigest: _oldWindowDigest,
+    continuation: _continuation,
+    ...differentlyOrderedContent
+  } = differentlyOrderedWindow;
+  differentlyOrderedWindow.windowDigest = canonicalDigest(differentlyOrderedContent);
+  assert.doesNotThrow(() => receiveArchitectureProfileWindowViewModel(
+    compileArchitectureProfileWindowViewModel(differentlyOrderedWindow)
+  ), "Profile canonical entity order need not duplicate the Kernel record-window order");
+  const browserEnvelopeAttacks = [
+    ["aggregate envelope", (value) => { value.score = 100; }],
+    ["mismatched source", (value) => {
+      value.source.changeStoreDigest = canonicalDigest("forged-source");
+    }],
+    ["mismatched record", (value) => { value.window.recordRefs[0].id = "other-change"; }],
+    ["non-canonical expiry", (value) => {
+      value.continuation.expiresAt = "2026-07-18T12:05:00Z";
+    }]
+  ];
+  for (const [label, mutate] of browserEnvelopeAttacks) {
+    const attacked = structuredClone(canonicalWindow);
+    mutate(attacked);
+    assert.throws(
+      () => receiveArchitectureProfileWindowViewModel(attacked),
+      hasCode("BROWSER_PROFILE_WINDOW_INVALID"),
+      label
+    );
+  }
 
   const outputBody = createProfile();
   outputBody.entities.routes[0].observationBody = { detail: "private command output" };
@@ -434,10 +599,53 @@ function evidence(id, currency) {
   };
 }
 
-function createWorkbenchProjection(source) {
+function createProfileWindow(profile, {
+  offset = 0,
+  limit = 1,
+  hasMore = false,
+  cursor = null
+} = {}) {
   const content = {
     schemaVersion: 1,
+    proofVersion: ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION,
+    kind: "architecture-profile-window",
+    source: structuredClone(profile.source),
+    window: {
+      ordering: "change-id-v1",
+      offset,
+      limit,
+      returned: profile.entities.changes.length,
+      hasMore,
+      recordRefs: profile.entities.changes.map(({ id }) => ({ id }))
+    },
+    page: structuredClone(profile)
+  };
+  return {
+    ...content,
+    windowDigest: canonicalDigest(content),
+    continuation: hasMore
+      ? { cursor, expiresAt: "2026-07-18T12:05:00.000Z" }
+      : null
+  };
+}
+
+async function requestJson(origin, requestPath) {
+  const response = await fetch(new URL(requestPath, origin));
+  const payload = await response.json();
+  if (!response.ok) {
+    const error = new Error(payload?.error?.message ?? `HTTP ${response.status}`);
+    error.code = payload?.error?.code ?? response.status;
+    error.details = payload?.error?.details;
+    throw error;
+  }
+  return payload;
+}
+
+function createWorkbenchProjection(source, changeRef = null) {
+  const content = {
+    schemaVersion: 2,
     source: structuredClone(source),
+    selection: { changeRef },
     authoring: {
       modules: [{
         id: "module-1",
@@ -461,7 +669,7 @@ function createWorkbenchProjection(source) {
         }]
       }]
     },
-    changes: [{
+    changes: changeRef === null ? [] : [{
       id: "change-1",
       state: "Candidate",
       primaryModule: "module-1",

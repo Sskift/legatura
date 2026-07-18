@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { createKernel } from "./core/index.mjs";
 import { DEFAULT_PORT, startServer } from "./server.mjs";
-import { compileArchitectureProfileViewModel } from "./workbench-view-model.mjs";
+import { compileArchitectureProfileWindowViewModel } from "./workbench-view-model.mjs";
 
 const HELP_TEXT = `Usage:
   legatura open <repo> [--port ${DEFAULT_PORT}] [--no-browser]
@@ -56,14 +56,12 @@ export async function runCli(
 
   const repoPath = await resolveRepositoryPath(options.repo, io);
   if (options.command === "inspect") {
-    const profile = await kernelFactory({ repoPath }).inspectArchitectureProfile();
-    const viewModel = compileArchitectureProfileViewModel(profile);
-    io.stdout.write(
-      options.json
-        ? `${JSON.stringify(viewModel, null, 2)}\n`
-        : renderArchitectureProfileSummary(viewModel)
-    );
-    return { status: "inspected", repoPath, architectureProfile: viewModel };
+    return inspectArchitectureProfileWindows({
+      repoPath,
+      json: options.json,
+      io,
+      kernel: kernelFactory({ repoPath })
+    });
   }
 
   const app = await startServer({ repoPath, port: options.port });
@@ -175,10 +173,42 @@ async function resolveRepositoryPath(value, io) {
   return resolved;
 }
 
-function renderArchitectureProfileSummary(viewModel) {
-  const sourceRefs = viewModel.sourceRefs;
+async function inspectArchitectureProfileWindows({ repoPath, json, io, kernel }) {
+  let request = {};
+  let windowCount = 0;
+  let lastWindowDigest = null;
+  if (json) {
+    await writeOutput(
+      io.stdout,
+      '{"schemaVersion":1,"kind":"architecture-profile-window-stream","windows":['
+    );
+  }
+
+  while (request !== null) {
+    const profileWindow = await kernel.inspectArchitectureProfileWindow(request);
+    const viewModel = compileArchitectureProfileWindowViewModel(profileWindow);
+    if (json) {
+      await writeOutput(io.stdout, `${windowCount === 0 ? "" : ","}${JSON.stringify(viewModel)}`);
+    } else {
+      await writeOutput(io.stdout, renderArchitectureProfileWindowSummary(viewModel, windowCount + 1));
+    }
+    windowCount += 1;
+    lastWindowDigest = viewModel.windowDigest;
+    request = readContinuationRequest(viewModel.continuation);
+  }
+
+  if (json) {
+    await writeOutput(io.stdout, `],"windowCount":${windowCount}}\n`);
+  }
+  return { status: "inspected", repoPath, windowCount, lastWindowDigest };
+}
+
+function renderArchitectureProfileWindowSummary(viewModel, sequence) {
+  const sourceRefs = viewModel.source;
   const lines = [
-    `Architecture Profile: ${viewModel.profileRef}`,
+    `Architecture Profile window ${sequence}`,
+    `Profile: ${viewModel.page.profileRef}`,
+    `Window: offset ${viewModel.window.offset}, returned ${viewModel.window.returned}, limit ${viewModel.window.limit}, has more ${viewModel.window.hasMore ? "yes" : "no"}`,
     `Snapshot: ${sourceRefs.snapshotDigest}`,
     `Project Model: ${sourceRefs.projectModelDigest}`,
     `Git content: ${sourceRefs.gitContentDigest}`,
@@ -186,9 +216,42 @@ function renderArchitectureProfileSummary(viewModel) {
     "Orthogonal dimensions:"
   ];
   for (const [field, label] of PROFILE_DIMENSIONS) {
-    lines.push(`  ${label}: ${viewModel.dimensions[field].length}`);
+    lines.push(`  ${label}: ${viewModel.page.dimensions[field].length}`);
   }
   return `${lines.join("\n")}\n`;
+}
+
+function readContinuationRequest(continuation) {
+  if (continuation === null) return null;
+  if (!continuation
+    || typeof continuation !== "object"
+    || Array.isArray(continuation)
+    || typeof continuation.cursor !== "string"
+    || continuation.cursor.length === 0) {
+    throw cliError(
+      "ARCHITECTURE_PROFILE_CONTINUATION_INVALID",
+      "Architecture Profile window did not provide an opaque continuation cursor."
+    );
+  }
+  return { cursor: continuation.cursor };
+}
+
+function writeOutput(stream, value) {
+  if (stream.write(value) !== false || typeof stream.once !== "function") {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onDrain = () => {
+      stream.off?.("error", onError);
+      resolve();
+    };
+    const onError = (error) => {
+      stream.off?.("drain", onDrain);
+      reject(error);
+    };
+    stream.once("drain", onDrain);
+    stream.once("error", onError);
+  });
 }
 
 function cliError(code, message, details) {

@@ -1,11 +1,11 @@
 import {
   architectureProfileDimension,
-  receiveArchitectureProfileViewModel,
   receiveWorkbenchProjection,
   refreshAfterMutation,
   selectWorkbenchAction,
   selectWorkbenchAuthoringModules,
 } from "./workbench-adapter.js";
+import { createProfileWindowController } from "./profile-window-controller.js";
 
 const state = {
   project: null,
@@ -27,7 +27,6 @@ const state = {
 
 const requestGeneration = {
   workbench: 0,
-  architectureProfile: 0,
   changeDetail: 0,
 };
 
@@ -73,6 +72,20 @@ const elements = {
   acceptChange: $("#accept-change"),
   toastRegion: $("#toast-region"),
 };
+
+const profileWindowController = createProfileWindowController({
+  fetchJson: api,
+  renderPage(page) {
+    state.architectureProfile = page;
+    state.architectureProfileError = null;
+    renderProjectState();
+  },
+  elements: {
+    status: $("#profile-window-status"),
+    error: $("#profile-window-error"),
+    next: $("#profile-window-next"),
+  },
+});
 
 function createElement(tag, options = {}, children = []) {
   const element = document.createElement(tag);
@@ -425,11 +438,15 @@ async function loadProject() {
   }
 }
 
-async function loadWorkbench() {
+async function loadWorkbench(changeRef = state.selectedChangeId) {
   const generation = ++requestGeneration.workbench;
   state.workbenchError = null;
+  const selectedChangeRef = isPresent(changeRef) ? String(changeRef) : null;
+  const requestPath = selectedChangeRef === null
+    ? "/api/workbench"
+    : `/api/workbench?changeRef=${encodeURIComponent(selectedChangeRef)}`;
   try {
-    const payload = await api("/api/workbench");
+    const payload = await api(requestPath);
     if (generation !== requestGeneration.workbench) return;
     state.workbench = receiveWorkbenchProjection(payload);
   } catch (error) {
@@ -444,20 +461,19 @@ async function loadWorkbench() {
 }
 
 async function loadArchitectureProfile() {
-  const generation = ++requestGeneration.architectureProfile;
   state.architectureProfileError = null;
-  try {
-    const payload = await api("/api/architecture-profile");
-    if (generation !== requestGeneration.architectureProfile) return;
-    state.architectureProfile = receiveArchitectureProfileViewModel(payload);
-  } catch (error) {
-    if (generation !== requestGeneration.architectureProfile) return;
-    state.architectureProfileError = error;
-    state.architectureProfile = null;
-  } finally {
-    if (generation !== requestGeneration.architectureProfile) return;
-    renderProjectState();
-  }
+  const result = await profileWindowController.refresh();
+  if (result.status === "failed") state.architectureProfileError = result.error;
+  renderProjectState();
+  return result;
+}
+
+async function loadNextArchitectureProfile() {
+  state.architectureProfileError = null;
+  const result = await profileWindowController.next();
+  if (result.status === "failed") state.architectureProfileError = result.error;
+  renderProjectState();
+  return result;
 }
 
 async function loadChanges({ preserveSelection = true } = {}) {
@@ -487,6 +503,7 @@ async function loadChanges({ preserveSelection = true } = {}) {
     } else if (!nextId) {
       state.selectedChangeId = null;
       state.selectedChange = null;
+      await loadWorkbench(null);
       renderChangeDetail();
     }
   } catch (error) {
@@ -540,7 +557,10 @@ async function selectChange(id) {
   state.changeError = null;
   writeRequestedChangeId(state.selectedChangeId);
   renderChangesState();
-  await loadChangeDetail(state.selectedChangeId);
+  await Promise.allSettled([
+    loadChangeDetail(state.selectedChangeId),
+    loadWorkbench(state.selectedChangeId),
+  ]);
 }
 
 function readRequestedChangeId() {
@@ -1966,6 +1986,9 @@ function wireEvents() {
   });
   $("#retry-change-detail").addEventListener("click", () => {
     void Promise.allSettled([loadChangeDetail(), loadWorkbench()]);
+  });
+  $("#profile-window-next").addEventListener("click", () => {
+    void loadNextArchitectureProfile();
   });
   elements.compileChange.addEventListener("click", compileSelectedChange);
   elements.acceptChange.addEventListener("click", openAcceptDialog);
