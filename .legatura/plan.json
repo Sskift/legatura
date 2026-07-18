@@ -395,7 +395,7 @@
     {
       "id": "LGT-016",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "A versioned app/apk/relay brownfield reference proves incremental adoption through existing Legatura interfaces: relay is governed against public app and apk Contracts, provisional, opaque, and ungoverned areas remain explicit, and one relay Change reaches an Accepted Package without whole-repository modeling.",
       "dependsOn": ["LGT-011"],
       "acceptance": {
@@ -1642,6 +1642,16 @@
           "rationale": "The prior sealed Kernel and Local Workbench Packages directly cover the Gap's exact terminal-selection and browser content-verification proof Claims, including missing, duplicate, malformed, stale-digest, resealed-aggregate, and vocabulary-drift attacks."
         }
       ]
+    },
+    {
+      "id": "LGT-016-T1",
+      "outcomeRef": "LGT-016",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-011 is achieved and the complete revised LGT-016 definition was Accepted through LGT-016-R1 in an earlier Governance Baseline; this isolated Amendment freezes that unchanged compiler-bound brownfield boundary before any owner-scoped Contract or implementation Change references it.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
