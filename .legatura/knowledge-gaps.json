@@ -28,7 +28,7 @@
     },
     {
       "id": "subprocess-boundary-not-characterized",
-      "status": "open",
+      "status": "closed",
       "affects": ["assurance-runtime"],
       "owner": "module-maintainer",
       "statement": "Exit streams, signals, and byte truncation are characterized locally; timeout abort, encoding boundaries, and cross-platform subprocess behavior are not.",
@@ -36,7 +36,15 @@
       "proofClaimRefs": [
         "command-observation-is-terminal-state-complete",
         "unsupported-command-observations-fail-closed"
-      ]
+      ],
+      "resolution": "Assurance Runtime now declares local-direct-node-posix-v1, observes independent bounded raw-byte streams through confirmed close, distinguishes support, control, exit, signal, truncation, and strict UTF-8 facts, and reports every unsupported, malformed, controlled, or unconfirmed case as non-positive; Change Kernel consumes those facts without recompiling process semantics.",
+      "closedBy": [
+        {
+          "changeId": "lgt013-implement-terminal-command-observation",
+          "acceptanceDigest": "sha256:ee3288da5593aca287210668d57719e937c60ac9b3d0456f497311efd21d1f94"
+        }
+      ],
+      "reopenTrigger": "Reopen if the declared support descriptor broadens without a fixed conformance proof, raw-byte or close facts become lossy, timeout or cancellation can return positive before settlement, unsupported or malformed observations can pass, or Kernel and Runtime diverge on Command Observation meaning."
     },
     {
       "id": "browser-projection-not-e2e-tested",

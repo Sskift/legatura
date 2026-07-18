@@ -301,7 +301,7 @@
     {
       "id": "LGT-013",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "A declared local direct-process support profile produces bounded terminal-state-complete Command Observations, and the Kernel fails closed on unsupported, controlled, malformed, or unconfirmed outcomes.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1443,6 +1443,39 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-013-T2",
+      "outcomeRef": "LGT-013",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "The prior sealed Assurance Runtime and Change Kernel Packages now cover the frozen LGT-013 Criterion and close its exact subprocess-boundary Gap without using this Plan Amendment or the later proof-stabilization Package as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt013-implement-terminal-command-observation",
+          "acceptanceDigest": "sha256:ee3288da5593aca287210668d57719e937c60ac9b3d0456f497311efd21d1f94"
+        },
+        {
+          "changeId": "lgt013-adopt-command-observation-in-kernel",
+          "acceptanceDigest": "sha256:12f616e61052fee7ba6c32ce4338547dc8b5e58e58385d9a13e839acb0156050"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-013-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Assurance Runtime Package directly proves the declared local-direct-node-posix-v1 support boundary, immutable bounded raw-byte stream facts, natural exit and signal distinctions, confirmed timeout and cancellation settlement, and fail-closed malformed or unsupported observations. The accepted Change Kernel Package directly proves Gate Evidence consumes that canonical observation without synthesizing timeout or success semantics and rejects permissive, contradictory, unproved-truncated, or unsettled adapter reports.",
+            "residualUncertainty": "The profile intentionally excludes Windows, shell execution, Node majors outside 22, 24, and 25, descendants that deliberately escape the observed process group, authenticated remote workers, and distributed runner settlement; those boundaries remain unsupported rather than assured."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "subprocess-boundary-not-characterized",
+          "rationale": "The prior sealed Assurance Runtime Package covers both exact Gap proof Claims by characterizing the supported local profile and returning explicit unsupported or unconfirmed facts everywhere outside its positive boundary."
+        }
+      ]
     }
   ],
   "changeRules": {

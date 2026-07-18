@@ -80,7 +80,7 @@
     "provisional": [
       {
         "module": "assurance-runtime",
-        "reason": "Git exact-binding and fail-closed behavior plus process exits, streams, signals, and truncation are characterized locally; timeout, encoding boundaries, and cross-platform behavior remain open."
+        "reason": "Git exact binding and the local-direct-node-posix-v1 process profile now have bounded fail-closed proof for raw streams, encoding validity, exit, signal, timeout, cancellation, and settlement; the Module remains provisional because Windows, shell, other Node majors, escaped descendants, remote workers, and cross-host conformance are explicitly unsupported or outside this profile."
       },
       {
         "module": "local-workbench",
