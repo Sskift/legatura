@@ -53,6 +53,7 @@
       "A later-discovered prerequisite cannot rewrite an active Outcome's frozen Criteria or an existing Closure Contract: blocker relations are separate monotonic closure-consumption constraints, and canonical blocksGapClosureRefs plus exact blocksOutcomeTransitionRoutes may be declared or extended only by an open source Gap that already owns a governed Closure Contract, are append-only set inclusions against the frozen baseline, become fully frozen when the source closes, and reject unknown or already-closed Gap targets, duplicates, self-edges, cyclic Gap graphs, invalid Outcome routes, or declaration beside a matching target closure or Transition in the same amendment.",
       "Outcome Transition Gap dispositions exactly cover frozen Criterion Gaps plus every matching baseline-open blocker and every required Gap's transitive baseline-open incoming blockers; a blocker clears only when its own open-to-closed delta, unchanged frozen Closure Contract, prior sealed implementation Contribution to the target Outcome, and direct positive proof Claim Evidence compile atomically in that Transition, never from a status edit alone, while a blocker already closed in the frozen baseline requires no disposition.",
       "A newly declared Closure proof Claim uses a dedicated fixed test entrypoint that fails closed before its implementation can produce direct Evidence.",
+      "The versioned app/apk/relay brownfield reference is ordinary Project Model input rather than an adoption schema exception: its governed, provisional, opaque, public-Contract, ungoverned-disposition, tracked-path, Plan, and initial Context Capsule facts compile through the same bounded Interfaces and unknown tracked paths fail closed.",
       "Architecture Acceptance Profiles recompute the authoritative Project Model content digest and are deterministic bounded typed graphs compiled only from that bound Model, exact Claim Gate routes, and Kernel-normalized snapshot facts; current and sealed-historical Evidence remain separate, Evidence-to-Claim edges are neutral obligation-bound associations rather than support or approval conclusions, one obligation may retain multiple distinct exact source Claim routes only when its target, kind, obligation digest, and authority binding remain identical, Outcome Contributions are relevance-only, and no score, percentage, confidence, green-light, coverage, or Criterion-satisfaction conclusion is emitted.",
       "Change Kernel create and patch adapters must reject malformed or conflicting planRefs inputs before JSON persistence and store only the canonical compiler value."
     ]
@@ -85,6 +86,8 @@
       ".legatura/gates/workbench-semantics.json",
       ".legatura/gates/minimum.json",
       ".legatura/gates/full.json",
+      ".legatura/gates/brownfield-adoption.json",
+      "examples/brownfield-app-apk-relay/**",
       ".legatura/modules/project-model.json",
       ".legatura/contracts/project-model-interface.json"
     ],

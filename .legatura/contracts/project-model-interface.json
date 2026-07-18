@@ -28,6 +28,10 @@
       "statement": "The fixed ownership proof rejects unowned tracked paths, overlapping Module write owners, owner/disposition conflicts, malformed disposition rules, forged or stale ownership products, and Context Capsule scope derivation that bypasses the product."
     },
     {
+      "id": "brownfield-reference-model-is-explicit-and-bounded",
+      "statement": "The fixed versioned app/apk/relay reference uses the ordinary Project Model, path-ownership, assurance-boundary, Contract, Plan, and Context Capsule compilers without a schema exception: relay is governed, app and apk are independent provisional public-Contract providers, legacy remains explicitly opaque and covered by one non-authorizing ungoverned disposition, every tracked path has exactly one assignment, and the relay's initial compiled read scope contains its own paths plus exact governance and dependency Contract surfaces but no app, apk, or legacy implementation path."
+    },
+    {
       "id": "unrelated-claims-require-explicit-mapping",
       "statement": "Gate Evidence for one Claim cannot cover another Claim without explicit semantics and an authority-bound Verification Obligation."
     },
