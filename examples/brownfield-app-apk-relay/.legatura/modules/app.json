@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "app",
+  "name": "App",
+  "status": "provisional",
+  "summary": "Provides the provisional public relay request Contract.",
+  "factAuthority": "app-contract-facts",
+  "decisionAuthority": "governance-maintainer",
+  "interface": {
+    "entrypoints": ["createRelayRequest(input)"],
+    "invariants": ["A relay request carries a non-empty correlation id."]
+  },
+  "paths": {
+    "include": ["app/**"],
+    "exclude": []
+  },
+  "focusedTests": [],
+  "publicContracts": ["app-relay-request"],
+  "dependencies": []
+}

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "apk-delivery-port",
+  "name": "APK Delivery Port",
+  "owner": "apk",
+  "consumers": ["relay"],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent"],
+  "claims": [
+    {
+      "id": "apk-delivery-port-accepts-envelope",
+      "statement": "The apk delivery port accepts one correlation-bound envelope and returns an acceptance acknowledgement."
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "repository-governance",
+  "name": "Repository Governance",
+  "status": "governed",
+  "summary": "Owns the bounded Project Model and adoption narrative for this reference.",
+  "factAuthority": "repository-governance-facts",
+  "decisionAuthority": "governance-maintainer",
+  "interface": {
+    "entrypoints": ["loadProjectModel(repoPath)"],
+    "invariants": ["Every tracked reference path has one explicit Module owner or one non-authorizing disposition."]
+  },
+  "paths": {
+    "include": [".legatura/**", "README.md"],
+    "exclude": [".legatura/runtime/**"]
+  },
+  "focusedTests": [],
+  "publicContracts": [],
+  "dependencies": []
+}

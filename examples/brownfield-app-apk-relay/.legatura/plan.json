@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "id": "brownfield-adoption-plan",
+  "authority": "governance-maintainer",
+  "northStar": "Adopt trustworthy relay changes while keeping provisional and opaque boundaries explicit.",
+  "stages": [
+    {
+      "id": "S1",
+      "name": "Relay adoption",
+      "status": "active",
+      "outcomeRefs": ["LGT-001"]
+    }
+  ],
+  "outcomes": [
+    {
+      "id": "LGT-001",
+      "stage": "S1",
+      "status": "active",
+      "outcome": "Relay changes preserve correlation identity through the declared public Contract boundary.",
+      "dependsOn": [],
+      "acceptance": {
+        "exitCriteria": [
+          "The governed relay preserves correlation identity while consuming app and apk only through public Contracts."
+        ],
+        "claimRefs": ["relay-preserves-correlation-id"],
+        "gapRefs": [
+          "app-remains-provisional",
+          "apk-remains-provisional",
+          "legacy-device-bridge-remains-opaque"
+        ],
+        "criteria": [
+          {
+            "id": "LGT-001-C1",
+            "statement": "The governed relay preserves correlation identity while consuming app and apk only through public Contracts.",
+            "claimRefs": ["relay-preserves-correlation-id"],
+            "gapRefs": [
+              "app-remains-provisional",
+              "apk-remains-provisional",
+              "legacy-device-bridge-remains-opaque"
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

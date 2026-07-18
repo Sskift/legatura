@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "relay-routing",
+  "name": "Relay Routing",
+  "owner": "relay",
+  "consumers": [],
+  "maturity": "governed",
+  "normativeSources": ["product-intent"],
+  "claims": [
+    {
+      "id": "relay-preserves-correlation-id",
+      "statement": "Relay preserves the app request correlation id in the delivery envelope and returned acknowledgement."
+    }
+  ]
+}

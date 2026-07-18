@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "gaps": [
+    {
+      "id": "app-remains-provisional",
+      "status": "open",
+      "affects": ["app", "relay", "app-relay-request"],
+      "statement": "The app public request Contract is modeled, but broader app implementation behavior is not yet governed."
+    },
+    {
+      "id": "apk-remains-provisional",
+      "status": "open",
+      "affects": ["apk", "relay", "apk-delivery-port"],
+      "statement": "The apk delivery port Contract is modeled, but real device delivery behavior is not yet governed."
+    },
+    {
+      "id": "legacy-device-bridge-remains-opaque",
+      "status": "open",
+      "affects": ["legacy-device-bridge", "relay"],
+      "statement": "The legacy device bridge remains opaque and outside governed Module implementation scope."
+    }
+  ]
+}

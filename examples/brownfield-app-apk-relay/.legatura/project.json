@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "project": {
+    "id": "brownfield-app-apk-relay",
+    "name": "Brownfield app/apk/relay Reference",
+    "description": "A bounded incremental-governance reference for an existing multi-module repository."
+  },
+  "normativeSources": [
+    {
+      "id": "product-intent",
+      "path": "README.md",
+      "kind": "product-intent"
+    }
+  ],
+  "authorities": {
+    "fact": [
+      {
+        "id": "repository-governance-facts",
+        "module": "repository-governance",
+        "owns": "Reference Project Model, Plan, Knowledge Gaps, and adoption boundary facts."
+      },
+      {
+        "id": "app-contract-facts",
+        "module": "app",
+        "owns": "The provisional public app request Contract."
+      },
+      {
+        "id": "apk-contract-facts",
+        "module": "apk",
+        "owns": "The provisional public apk delivery Contract."
+      },
+      {
+        "id": "relay-routing-facts",
+        "module": "relay",
+        "owns": "Governed relay routing behavior and its focused proof."
+      }
+    ],
+    "decision": [
+      {
+        "id": "governance-maintainer",
+        "may": ["case-decision", "normative-amendment"]
+      },
+      {
+        "id": "relay-maintainer",
+        "may": ["case-decision"]
+      }
+    ]
+  },
+  "assuranceBoundary": {
+    "governed": [
+      {
+        "module": "repository-governance",
+        "reason": "The reference governance documents have an explicit owner and ordinary amendment authority."
+      },
+      {
+        "module": "relay",
+        "reason": "Relay behavior has a focused executable Contract proof through an injected delivery port."
+      }
+    ],
+    "provisional": [
+      {
+        "module": "app",
+        "reason": "Only the public app request Contract is modeled; broader app behavior is not yet governed."
+      },
+      {
+        "module": "apk",
+        "reason": "Only the public apk delivery Contract is modeled; device delivery behavior is not yet governed."
+      }
+    ],
+    "opaque": [
+      {
+        "module": "legacy-device-bridge",
+        "reason": "The legacy device bridge remains intentionally unmodeled during incremental adoption."
+      }
+    ]
+  },
+  "changePolicy": {
+    "defaultGate": "minimum",
+    "contextExpansion": "recorded",
+    "requirePlanRefs": true,
+    "outcomeAlignmentMode": "enforced",
+    "outcomeCriterionSelection": "unique-claim-match-or-explicit-hint"
+  },
+  "pathGovernance": {
+    "schemaVersion": 1,
+    "selectorGrammar": "exact-or-recursive-prefix",
+    "effectiveMatch": "include-minus-exclude",
+    "overlapPolicy": "reject-latent-and-concrete",
+    "conflictResolution": "none",
+    "dispositionPolicy": {
+      "allowedKinds": ["ungoverned"],
+      "requiredFields": ["id", "kind", "paths.include", "paths.exclude", "rationale"],
+      "minimumRationaleCharacters": 12,
+      "grantsWriteAuthority": false
+    },
+    "dispositions": [
+      {
+        "id": "legacy-ungoverned",
+        "kind": "ungoverned",
+        "paths": {
+          "include": ["legacy/**"],
+          "exclude": []
+        },
+        "rationale": "Legacy implementation is classified for total path coverage but grants no automatic write authority."
+      }
+    ]
+  }
+}

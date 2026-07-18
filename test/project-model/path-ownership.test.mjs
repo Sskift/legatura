@@ -1,12 +1,25 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { cp, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { compileChangeAgainstGovernance } from "../../src/core/change-compiler.mjs";
 import {
   compileModulePathOwnershipIndex,
+  loadProjectModel,
+  validateProjectModel,
   projectCompiledModulePathOwnershipIndex
 } from "../../src/core/project-model.mjs";
+
+const execFileAsync = promisify(execFile);
+const BROWNFIELD_REFERENCE_ROOT = path.resolve(
+  import.meta.dirname,
+  "../../examples/brownfield-app-apk-relay"
+);
 
 test("the ownership product binds exact sources and projects total, narrowed write decisions", () => {
   const { model, facts } = ownershipFixture();
@@ -330,6 +343,172 @@ test("ownership and governed Context attacks fail closed at the product seam", (
   }
 });
 
+test("the brownfield reference closes path ownership while relay sees dependency Contracts only", async (t) => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-brownfield-model-"));
+  const repoPath = path.join(fixtureRoot, "repo");
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  await cp(BROWNFIELD_REFERENCE_ROOT, repoPath, { recursive: true });
+  await initializeGitRepository(repoPath);
+
+  const model = await loadProjectModel(repoPath);
+  const validation = validateProjectModel(model);
+  assert.equal(validation.valid, true, JSON.stringify(validation.errors, null, 2));
+  assert.deepEqual(validation.errors, []);
+  assert.ok(validation.warnings.some((warning) => (
+    warning.code === "assurance.opaque.unmodeled"
+      && warning.message.includes("legacy-device-bridge")
+  )));
+
+  const modules = new Map(model.modules.map((module) => [module.id, module]));
+  assert.deepEqual([...modules.keys()].sort(), ["apk", "app", "relay", "repository-governance"]);
+  assert.deepEqual(
+    Object.fromEntries([...modules].map(([id, module]) => [id, module.status])),
+    {
+      apk: "provisional",
+      app: "provisional",
+      relay: "governed",
+      "repository-governance": "governed"
+    }
+  );
+  assert.deepEqual(modules.get("app").dependencies, []);
+  assert.deepEqual(modules.get("apk").dependencies, []);
+  assert.deepEqual(modules.get("app").publicContracts, ["app-relay-request"]);
+  assert.deepEqual(modules.get("apk").publicContracts, ["apk-delivery-port"]);
+  assert.deepEqual(
+    modules.get("relay").dependencies.map(({ module, via, access }) => ({ module, via, access })),
+    [
+      { module: "app", via: "app-relay-request", access: "interface-only" },
+      { module: "apk", via: "apk-delivery-port", access: "interface-only" }
+    ]
+  );
+
+  const contracts = new Map(model.contracts.map((contract) => [contract.id, contract]));
+  assert.deepEqual(
+    ["app-relay-request", "apk-delivery-port"].map((contractRef) => ({
+      contractRef,
+      owner: contracts.get(contractRef)?.owner,
+      consumers: contracts.get(contractRef)?.consumers
+    })),
+    [
+      { contractRef: "app-relay-request", owner: "app", consumers: ["relay"] },
+      { contractRef: "apk-delivery-port", owner: "apk", consumers: ["relay"] }
+    ]
+  );
+  assert.ok(model.projectDocument.assuranceBoundary.opaque.some((entry) => (
+    entry.module === "legacy-device-bridge"
+  )));
+  const legacyDisposition = model.projectDocument.pathGovernance.dispositions.find(
+    (disposition) => disposition.id === "legacy-ungoverned"
+  );
+  assert.deepEqual(legacyDisposition.paths, { include: ["legacy/**"], exclude: [] });
+  assert.equal(model.projectDocument.pathGovernance.dispositionPolicy.grantsWriteAuthority, false);
+
+  const trackedPathFacts = await observeTrackedPathFacts(repoPath);
+  assert.deepEqual(trackedPathFacts.paths, [
+    ".legatura/.gitignore",
+    ".legatura/contracts/apk-delivery-port.json",
+    ".legatura/contracts/app-relay-request.json",
+    ".legatura/contracts/relay-routing.json",
+    ".legatura/gates/minimum.json",
+    ".legatura/knowledge-gaps.json",
+    ".legatura/modules/apk.json",
+    ".legatura/modules/app.json",
+    ".legatura/modules/relay.json",
+    ".legatura/modules/repository-governance.json",
+    ".legatura/plan.json",
+    ".legatura/project.json",
+    "README.md",
+    "apk/public.mjs",
+    "app/public.mjs",
+    "legacy/device-bridge.mjs",
+    "relay/index.mjs",
+    "relay/relay.proof.mjs"
+  ]);
+  const product = compileModulePathOwnershipIndex(model, trackedPathFacts);
+  const projection = projectCompiledModulePathOwnershipIndex(product, {
+    model,
+    moduleRefs: [...modules.keys()],
+    pathRefs: trackedPathFacts.paths
+  });
+  for (const trackedPath of trackedPathFacts.paths) {
+    const expectedOwner = expectedBrownfieldOwner(trackedPath);
+    const decisions = [...projection.pathDecisionsByModule.values()].map(
+      (byPath) => byPath.get(trackedPath)
+    );
+    assert.ok(decisions.every((decision) => decision.classification !== "unassigned"), trackedPath);
+    assert.deepEqual(
+      [...new Set(decisions.map((decision) => decision.ownerModuleRef))],
+      [expectedOwner],
+      trackedPath
+    );
+    assert.equal(
+      decisions.filter((decision) => decision.ownershipAllowsWrite).length,
+      expectedOwner === null ? 0 : 1,
+      `${trackedPath} has exactly one authorizing owner or one non-authorizing disposition`
+    );
+    if (expectedOwner === null) {
+      assert.ok(decisions.every((decision) => (
+        decision.classification === "ungoverned-disposition"
+          && decision.dispositionRef === "legacy-ungoverned"
+          && decision.ownershipAllowsWrite === false
+      )), trackedPath);
+    }
+  }
+
+  const relayClaim = contracts.get("relay-routing").claims.find(
+    (claim) => claim.id === "relay-preserves-correlation-id"
+  );
+  const compiled = compileChangeAgainstGovernance({
+    id: "brownfield-relay-context",
+    primaryModule: "relay",
+    changeKind: "implementation",
+    planRefs: ["LGT-001"],
+    claims: [relayClaim],
+    compilerInput: {
+      verificationObligations: [],
+      impact: null,
+      contextCapsule: null,
+      outcomeContributionHints: [],
+      outcomeExceptions: []
+    }
+  }, model, { modulePathOwnershipProduct: product });
+  assert.deepEqual(
+    compiled.contextCapsule.dependencyContracts.map((contract) => contract.id).sort(),
+    ["apk-delivery-port", "app-relay-request"]
+  );
+  assert.deepEqual(
+    compiled.contextCapsule.dependencies
+      .map(({ module, interfaceRef, access }) => ({ module, interfaceRef, access })),
+    [
+      { module: "app", interfaceRef: "app-relay-request", access: "interface-only" },
+      { module: "apk", interfaceRef: "apk-delivery-port", access: "interface-only" }
+    ]
+  );
+  assert.deepEqual(
+    compiled.contextCapsule.publicContracts.map((contract) => contract.id),
+    ["relay-routing"]
+  );
+  assert.ok(compiled.contextCapsule.scope.read.include.includes("relay/**"));
+  assert.ok(compiled.contextCapsule.scope.read.include.every((pathRef) => (
+    !pathRef.startsWith("app/")
+      && !pathRef.startsWith("apk/")
+      && !pathRef.startsWith("legacy/")
+  )));
+  assert.equal(
+    compiled.contextCapsule.scope.otherModuleImplementation,
+    "contract-only; expansion must be recorded before reading implementation"
+  );
+
+  await writeFile(path.join(repoPath, "unmodeled.mjs"), "export const unmodeled = true;\n");
+  await runGit(repoPath, "add", "unmodeled.mjs");
+  const attackedFacts = await observeTrackedPathFacts(repoPath);
+  assert.throws(
+    () => compileModulePathOwnershipIndex(model, attackedFacts),
+    (error) => error?.code === "MODULE_PATH_OWNERSHIP_INCOMPLETE"
+      && error.details?.unassigned?.includes("unmodeled.mjs")
+  );
+});
+
 function ownershipFixture() {
   const model = syntheticModel();
   const paths = [
@@ -450,3 +629,38 @@ function syntheticModel() {
   const snapshot = { ...content, modelDigest };
   return { ...snapshot, digest: canonicalDigest(snapshot) };
 }
+
+async function initializeGitRepository(repoPath) {
+  await runGit(repoPath, "init", "--quiet");
+  await runGit(repoPath, "config", "user.name", "Legatura Brownfield Proof");
+  await runGit(repoPath, "config", "user.email", "brownfield-proof@legatura.test");
+  await runGit(repoPath, "add", ".");
+  await runGit(repoPath, "commit", "--quiet", "-m", "fixture: brownfield reference");
+}
+
+async function observeTrackedPathFacts(repoPath) {
+  const { stdout } = await runGit(repoPath, "ls-files", "-z");
+  const paths = stdout.split("\0").filter(Boolean).sort(compareUtf8);
+  return { schemaVersion: 1, paths, digest: factsDigest(paths) };
+}
+
+function expectedBrownfieldOwner(pathRef) {
+  if (pathRef === "README.md" || pathRef.startsWith(".legatura/")) {
+    return "repository-governance";
+  }
+  for (const moduleRef of ["app", "apk", "relay"]) {
+    if (pathRef.startsWith(`${moduleRef}/`)) return moduleRef;
+  }
+  if (pathRef.startsWith("legacy/")) return null;
+  assert.fail(`Unexpected tracked brownfield path: ${pathRef}`);
+}
+
+function compareUtf8(left, right) {
+  return Buffer.from(left).compare(Buffer.from(right));
+}
+
+function runGit(repoPath, ...args) {
+  return execFileAsync("git", args, { cwd: repoPath });
+}
+
+export const BROWNFIELD_ADOPTION_PROJECT_MODEL_PROOF_VERSION = 1;

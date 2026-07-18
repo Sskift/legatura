@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "minimum",
+  "name": "Relay Minimum Gate",
+  "purpose": "Run the focused governed relay Contract proof without importing provisional or opaque implementations.",
+  "appliesTo": ["relay"],
+  "commands": [
+    {
+      "id": "relay-correlation-proof",
+      "appliesTo": ["relay"],
+      "command": ["node", "--test", "relay/relay.proof.mjs"],
+      "timeoutMs": 30000,
+      "claimRefs": ["relay-preserves-correlation-id"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The focused relay proof exits zero only when the injected delivery envelope and acknowledgement preserve the exact correlation id."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "relay dropping or replacing the request correlation id",
+          "relay altering the bounded request payload before invoking the injected delivery port"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof uses an injected fake delivery port and does not exercise a real device.",
+        "The reference demonstrates compiled scope and Contract discipline, not operating-system read enforcement."
+      ]
+    }
+  ]
+}

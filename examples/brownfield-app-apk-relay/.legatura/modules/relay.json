@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "id": "relay",
+  "name": "Relay",
+  "status": "governed",
+  "summary": "Routes an app request through an injected apk delivery Contract while preserving correlation identity.",
+  "factAuthority": "relay-routing-facts",
+  "decisionAuthority": "relay-maintainer",
+  "interface": {
+    "entrypoints": ["createRelay({ deliver })"],
+    "invariants": ["The delivery acknowledgement preserves the request correlation id."]
+  },
+  "paths": {
+    "include": ["relay/**"],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "relay/relay.proof.mjs",
+      "command": "node --test relay/relay.proof.mjs"
+    }
+  ],
+  "publicContracts": ["relay-routing"],
+  "dependencies": [
+    {
+      "module": "app",
+      "via": "app-relay-request",
+      "access": "interface-only"
+    },
+    {
+      "module": "apk",
+      "via": "apk-delivery-port",
+      "access": "interface-only"
+    }
+  ]
+}

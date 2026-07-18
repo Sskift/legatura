@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "apk",
+  "name": "APK Delivery",
+  "status": "provisional",
+  "summary": "Provides the provisional public delivery-port Contract.",
+  "factAuthority": "apk-contract-facts",
+  "decisionAuthority": "governance-maintainer",
+  "interface": {
+    "entrypoints": ["createDeliveryPort(deliver)"],
+    "invariants": ["Delivery is invoked through one injected envelope port."]
+  },
+  "paths": {
+    "include": ["apk/**"],
+    "exclude": []
+  },
+  "focusedTests": [],
+  "publicContracts": ["apk-delivery-port"],
+  "dependencies": []
+}

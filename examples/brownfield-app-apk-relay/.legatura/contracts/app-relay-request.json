@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "app-relay-request",
+  "name": "App Relay Request",
+  "owner": "app",
+  "consumers": ["relay"],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent"],
+  "claims": [
+    {
+      "id": "app-relay-request-carries-correlation-id",
+      "statement": "An app relay request carries a non-empty correlation id and an opaque payload."
+    }
+  ]
+}
