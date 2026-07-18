@@ -1,6 +1,8 @@
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const WORKBENCH_COLLECTION_LIMIT = 65_536;
 
+export const WORKBENCH_BROWSER_PROJECTION_INTEGRITY_PROOF_VERSION = 1;
+
 const WORKBENCH_SOURCE_KEYS = Object.freeze([
   "snapshotDigest",
   "projectModelDigest",
@@ -22,6 +24,7 @@ const WORKBENCH_DISABLED_REASON_CODES = Object.freeze([
   "PLAN_OUTCOME_UNAVAILABLE",
   "MODULE_NOT_GOVERNED",
   "CLAIM_ACCEPTANCE_ROUTE_MISSING",
+  "CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME",
   "CHANGE_CLAIM_REQUIRED",
   "CHANGE_NOT_COMPILED",
   "CHANGE_SCOPE_EXCEEDED",
@@ -80,11 +83,35 @@ const PROFILE_CONTEXT_KEYS = Object.freeze([
   "routes",
 ]);
 
+const PROFILE_FORBIDDEN_KEYS = new Set([
+  "acceptedpackage",
+  "body",
+  "commandoutput",
+  "confidence",
+  "coverage",
+  "evidencebody",
+  "greenlight",
+  "health",
+  "observationbody",
+  "overall",
+  "output",
+  "package",
+  "percentage",
+  "progress",
+  "ready",
+  "satisfied",
+  "score",
+  "sourcebody",
+  "stderr",
+  "stdout",
+]);
+
 /**
  * Browser-side boundary adapters only validate and select canonical facts.
  * They deliberately do not derive governance eligibility or assurance.
  */
-export function receiveArchitectureProfileViewModel(value) {
+export async function receiveArchitectureProfileViewModel(value) {
+  value = snapshotJson(value, "Architecture Profile");
   requireRecord(value, "Architecture Profile");
   requireExactKeys(
     value,
@@ -104,17 +131,20 @@ export function receiveArchitectureProfileViewModel(value) {
   for (const relation of Object.values(value.relations)) {
     if (!Array.isArray(relation)) throw invalidProjection("Architecture Profile relation");
   }
+  requireNoForbiddenProfileKeys(value, "Architecture Profile");
+  await requireProjectionDigest(value, "viewModelDigest", "Architecture Profile viewModelDigest");
   return deepFreeze(value);
 }
 
-export function receiveWorkbenchProjection(value) {
+export async function receiveWorkbenchProjection(value) {
+  value = snapshotJson(value, "Workbench projection");
   requireRecord(value, "Workbench projection");
   requireExactKeys(
     value,
     ["schemaVersion", "source", "selection", "authoring", "changes", "projectionDigest"],
     "Workbench projection",
   );
-  if (value.schemaVersion !== 2) throw invalidProjection("Workbench projection schemaVersion");
+  if (value.schemaVersion !== 3) throw invalidProjection("Workbench projection schemaVersion");
   requireDigest(value.projectionDigest, "Workbench projection digest");
   requireWorkbenchSource(value.source);
   requireRecord(value.selection, "Workbench selection");
@@ -135,6 +165,7 @@ export function receiveWorkbenchProjection(value) {
   if (value.selection.changeRef !== null) {
     requireWorkbenchSelectedChange(value.changes[0], value.source);
   }
+  await requireProjectionDigest(value, "projectionDigest", "Workbench projection digest");
   return deepFreeze(value);
 }
 
@@ -167,6 +198,30 @@ export function selectWorkbenchChangeKindAuthoring(workbench, changeKind) {
   return Array.isArray(changeKinds)
     ? changeKinds.find((entry) => entry.id === changeKind) ?? null
     : null;
+}
+
+export function selectWorkbenchClaimOptions(
+  workbench,
+  { changeKind, planRefs, moduleRef } = {},
+) {
+  const authoring = selectWorkbenchChangeKindAuthoring(workbench, changeKind);
+  if (!Array.isArray(planRefs)
+    || planRefs.some((reference) => typeof reference !== "string" || reference.length === 0)
+    || typeof moduleRef !== "string"
+    || moduleRef.length === 0) {
+    throw invalidProjection("Workbench Claim selection input");
+  }
+  if (authoring === null) return null;
+  const outcomeRef = authoring.integrityIncident.required === true
+    ? planRefs.length === 1 ? planRefs[0] : undefined
+    : null;
+  if (outcomeRef === undefined) return null;
+  const route = workbench?.authoring?.claimSelectionRoutes?.find((candidate) => (
+    candidate.changeKindRef === changeKind
+      && candidate.outcomeRef === outcomeRef
+      && candidate.moduleRef === moduleRef
+  ));
+  return route?.claimOptions ?? null;
 }
 
 export function selectWorkbenchChange(workbench, changeId) {
@@ -367,19 +422,21 @@ function requireWorkbenchAuthoring(value) {
   requireRecord(value, "Workbench authoring");
   requireExactKeys(
     value,
-    ["modules", "schemaVersion", "planOutcomes", "changeKinds"],
+    ["modules", "schemaVersion", "planOutcomes", "changeKinds", "claimSelectionRoutes"],
     "Workbench authoring",
   );
-  if (value.schemaVersion !== 1) throw invalidProjection("Workbench authoring schemaVersion");
+  if (value.schemaVersion !== 2) throw invalidProjection("Workbench authoring schemaVersion");
   if (!Array.isArray(value.modules)
     || !Array.isArray(value.planOutcomes)
-    || !Array.isArray(value.changeKinds)) {
+    || !Array.isArray(value.changeKinds)
+    || !Array.isArray(value.claimSelectionRoutes)) {
     throw invalidProjection("Workbench authoring collections");
   }
   requireBoundedArray(value.modules, "Workbench authoring Modules");
   requireBoundedArray(value.planOutcomes, "Workbench Plan Outcomes");
   requireBoundedArray(value.changeKinds, "Workbench Change kinds");
-  requireWorkbenchAuthoringModules(value.modules);
+  requireBoundedArray(value.claimSelectionRoutes, "Workbench Claim selection routes");
+  const moduleClaims = requireWorkbenchAuthoringModules(value.modules);
 
   const outcomeRefs = new Set();
   for (const outcome of value.planOutcomes) {
@@ -401,10 +458,15 @@ function requireWorkbenchAuthoring(value) {
       outcomeRefs,
     );
   });
+  requireWorkbenchClaimSelectionRoutes(value.claimSelectionRoutes, {
+    changeKinds: value.changeKinds,
+    moduleClaims,
+  });
 }
 
 function requireWorkbenchAuthoringModules(modules) {
   const moduleRefs = new Set();
+  const moduleClaims = new Map();
   for (const module of modules) {
     requireRecord(module, "Workbench authoring Module");
     requireExactKeys(
@@ -429,8 +491,9 @@ function requireWorkbenchAuthoringModules(modules) {
       throw invalidProjection("Workbench authoring Module selectable state");
     }
     requireBoundedArray(module.claims, "Workbench authoring Claims");
-    requireWorkbenchAuthoringClaims(module.claims);
+    moduleClaims.set(module.id, requireWorkbenchAuthoringClaims(module.claims));
   }
+  return moduleClaims;
 }
 
 function requireWorkbenchAuthoringClaims(claims) {
@@ -444,8 +507,6 @@ function requireWorkbenchAuthoringClaims(claims) {
         "statement",
         "contractRef",
         "visibilityKinds",
-        "selectable",
-        "disabledReasonCodes",
         "acceptanceRoutes",
       ],
       "Workbench authoring Claim",
@@ -457,7 +518,7 @@ function requireWorkbenchAuthoringClaims(claims) {
     ]) {
       requireString(claim[field], `Workbench authoring Claim ${label}`);
     }
-    if (claimRefs.has(claim.id) || typeof claim.selectable !== "boolean") {
+    if (claimRefs.has(claim.id)) {
       throw invalidProjection("Workbench authoring Claim identity");
     }
     claimRefs.add(claim.id);
@@ -467,14 +528,6 @@ function requireWorkbenchAuthoringClaims(claims) {
       "Workbench Claim visibility kinds",
       { nonempty: true },
     );
-    requireClosedStringArray(
-      claim.disabledReasonCodes,
-      WORKBENCH_DISABLED_REASON_CODES,
-      "Workbench authoring Claim disabled reasons",
-    );
-    if (claim.selectable !== (claim.disabledReasonCodes.length === 0)) {
-      throw invalidProjection("Workbench authoring Claim selectable state");
-    }
     requireBoundedArray(claim.acceptanceRoutes, "Workbench Claim acceptance routes");
     const routeRefs = new Set();
     for (const route of claim.acceptanceRoutes) {
@@ -493,6 +546,7 @@ function requireWorkbenchAuthoringClaims(claims) {
       routeRefs.add(routeKey);
     }
   }
+  return claimRefs;
 }
 
 function requireWorkbenchChangeKind(value, expectedId, outcomeRefs) {
@@ -537,32 +591,105 @@ function requireWorkbenchChangeKind(value, expectedId, outcomeRefs) {
   requireRecord(value.integrityIncident, "Workbench integrity incident authoring");
   requireExactKeys(
     value.integrityIncident,
-    ["required", "protectedClaimRefsByOutcome"],
+    ["required"],
     "Workbench integrity incident authoring",
   );
-  if (typeof value.integrityIncident.required !== "boolean"
-    || !Array.isArray(value.integrityIncident.protectedClaimRefsByOutcome)) {
+  if (typeof value.integrityIncident.required !== "boolean") {
     throw invalidProjection("Workbench integrity incident authoring");
   }
-  const protectedOutcomeRefs = new Set();
-  for (const protection of value.integrityIncident.protectedClaimRefsByOutcome) {
-    requireRecord(protection, "Workbench protected Claim authoring");
-    requireExactKeys(
-      protection,
-      ["outcomeRef", "claimRefs"],
-      "Workbench protected Claim authoring",
-    );
-    requireString(protection.outcomeRef, "Workbench protected Claim Outcome ref");
-    if (!outcomeRefs.has(protection.outcomeRef)
-      || protectedOutcomeRefs.has(protection.outcomeRef)) {
-      throw invalidProjection("Workbench protected Claim Outcome reference");
+}
+
+function requireWorkbenchClaimSelectionRoutes(routes, { changeKinds, moduleClaims }) {
+  const changeKindsByRef = new Map(changeKinds.map((changeKind) => [changeKind.id, changeKind]));
+  const expectedKeys = new Set();
+  for (const changeKind of changeKinds) {
+    const outcomeRefs = changeKind.integrityIncident.required
+      ? changeKind.planSelection.selectableOutcomeRefs
+      : [null];
+    for (const outcomeRef of outcomeRefs) {
+      for (const moduleRef of moduleClaims.keys()) {
+        expectedKeys.add(workbenchClaimSelectionRouteKey(changeKind.id, outcomeRef, moduleRef));
+      }
     }
-    protectedOutcomeRefs.add(protection.outcomeRef);
-    requireCanonicalStringArray(
-      protection.claimRefs,
-      "Workbench protected Claim refs",
-    );
   }
+
+  const observedKeys = new Set();
+  let previousKey = null;
+  for (const route of routes) {
+    requireRecord(route, "Workbench Claim selection route");
+    requireExactKeys(
+      route,
+      ["changeKindRef", "outcomeRef", "moduleRef", "claimOptions"],
+      "Workbench Claim selection route",
+    );
+    requireString(route.changeKindRef, "Workbench Claim selection Change kind ref");
+    requireString(route.moduleRef, "Workbench Claim selection Module ref");
+    if (route.outcomeRef !== null) {
+      requireString(route.outcomeRef, "Workbench Claim selection Outcome ref");
+    }
+    const key = workbenchClaimSelectionRouteKey(
+      route.changeKindRef,
+      route.outcomeRef,
+      route.moduleRef,
+    );
+    if (!expectedKeys.has(key)
+      || observedKeys.has(key)
+      || (previousKey !== null && compareCodeUnits(previousKey, key) >= 0)) {
+      throw invalidProjection("Workbench Claim selection route key");
+    }
+    previousKey = key;
+    observedKeys.add(key);
+
+    const changeKind = changeKindsByRef.get(route.changeKindRef);
+    if (!changeKind
+      || (changeKind.integrityIncident.required
+        ? !changeKind.planSelection.selectableOutcomeRefs.includes(route.outcomeRef)
+        : route.outcomeRef !== null)) {
+      throw invalidProjection("Workbench Claim selection route binding");
+    }
+    const expectedClaimRefs = moduleClaims.get(route.moduleRef);
+    if (!(expectedClaimRefs instanceof Set)) {
+      throw invalidProjection("Workbench Claim selection Module binding");
+    }
+    requireBoundedArray(route.claimOptions, "Workbench Claim selection options");
+    if (route.claimOptions.length !== expectedClaimRefs.size) {
+      throw invalidProjection("Workbench Claim selection route completeness");
+    }
+    let priorClaimRef = null;
+    const observedClaimRefs = new Set();
+    for (const option of route.claimOptions) {
+      requireRecord(option, "Workbench Claim selection option");
+      requireExactKeys(
+        option,
+        ["claimRef", "selectable", "disabledReasonCodes"],
+        "Workbench Claim selection option",
+      );
+      requireString(option.claimRef, "Workbench Claim selection Claim ref");
+      if (!expectedClaimRefs.has(option.claimRef)
+        || observedClaimRefs.has(option.claimRef)
+        || (priorClaimRef !== null && compareCodeUnits(priorClaimRef, option.claimRef) >= 0)
+        || typeof option.selectable !== "boolean") {
+        throw invalidProjection("Workbench Claim selection option identity");
+      }
+      priorClaimRef = option.claimRef;
+      observedClaimRefs.add(option.claimRef);
+      requireClosedStringArray(
+        option.disabledReasonCodes,
+        WORKBENCH_DISABLED_REASON_CODES,
+        "Workbench Claim selection disabled reasons",
+      );
+      if (option.selectable !== (option.disabledReasonCodes.length === 0)) {
+        throw invalidProjection("Workbench Claim selection selectable state");
+      }
+    }
+  }
+  if (observedKeys.size !== expectedKeys.size) {
+    throw invalidProjection("Workbench Claim selection route completeness");
+  }
+}
+
+function workbenchClaimSelectionRouteKey(changeKindRef, outcomeRef, moduleRef) {
+  return [changeKindRef, outcomeRef === null ? "" : outcomeRef, moduleRef].join("\u0000");
 }
 
 function requireWorkbenchSelectedChange(value, source) {
@@ -949,6 +1076,68 @@ function requireDigest(value, label) {
   if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) {
     throw invalidProjection(label);
   }
+}
+
+function snapshotJson(value, label) {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError("missing JSON value");
+    return JSON.parse(serialized);
+  } catch {
+    throw invalidProjection(`${label} JSON snapshot`);
+  }
+}
+
+function requireNoForbiddenProfileKeys(value, label) {
+  const pending = [{ value, location: label }];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current.value || typeof current.value !== "object") continue;
+    for (const [key, child] of Object.entries(current.value)) {
+      const normalized = key.toLowerCase().replace(/[^a-z]/gu, "");
+      if (PROFILE_FORBIDDEN_KEYS.has(normalized)) {
+        throw invalidProjection(`${current.location}.${key}`);
+      }
+      if (child && typeof child === "object") {
+        pending.push({ value: child, location: `${current.location}.${key}` });
+      }
+    }
+  }
+}
+
+async function requireProjectionDigest(value, digestField, label) {
+  const observed = value[digestField];
+  const content = Object.fromEntries(
+    Object.entries(value).filter(([key]) => key !== digestField),
+  );
+  let expected;
+  try {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) throw new TypeError("WebCrypto unavailable");
+    const bytes = new TextEncoder().encode(canonicalStringify(content));
+    const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+    expected = `sha256:${[...digest]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")}`;
+  } catch {
+    throw invalidProjection(`${label} verification`);
+  }
+  if (observed !== expected) throw invalidProjection(label);
+}
+
+function canonicalStringify(value) {
+  return JSON.stringify(sortCanonicalValue(value));
+}
+
+function sortCanonicalValue(value) {
+  if (Array.isArray(value)) return value.map(sortCanonicalValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => [key, sortCanonicalValue(value[key])]),
+  );
 }
 
 function invalidProjection(label) {

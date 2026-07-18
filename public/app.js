@@ -6,6 +6,7 @@ import {
   selectWorkbenchAction,
   selectWorkbenchAcceptanceInputRequirements,
   selectWorkbenchAuthoringModules,
+  selectWorkbenchClaimOptions,
   selectWorkbenchChangeKinds,
   selectWorkbenchChangeKindAuthoring,
   selectWorkbenchPlanOutcomes,
@@ -459,7 +460,9 @@ async function loadWorkbench(changeRef = state.selectedChangeId) {
   try {
     const payload = await api(requestPath);
     if (generation !== requestGeneration.workbench) return;
-    state.workbench = receiveWorkbenchProjection(payload);
+    const received = await receiveWorkbenchProjection(payload);
+    if (generation !== requestGeneration.workbench) return;
+    state.workbench = received;
   } catch (error) {
     if (generation !== requestGeneration.workbench) return;
     state.workbenchError = error;
@@ -751,15 +754,6 @@ function createAuthoringAvailable() {
     && createPlanSelectionSatisfied();
 }
 
-function protectedClaimRefsForCurrentAuthoring() {
-  const authoring = selectedChangeKindAuthoring();
-  if (authoring?.integrityIncident?.required !== true) return null;
-  const selectedRefs = new Set(selectedPlanRefs());
-  return new Set(authoring.integrityIncident.protectedClaimRefsByOutcome
-    .filter((entry) => selectedRefs.has(entry.outcomeRef))
-    .flatMap((entry) => entry.claimRefs));
-}
-
 function renderProjectState() {
   elements.projectLoading.hidden = !state.projectLoading;
   elements.projectError.hidden = !state.projectError;
@@ -948,7 +942,6 @@ function renderCreateClaimOptions(moduleId) {
   }
   const module = workbenchAuthoringModules().find((item) => String(item?.id) === String(moduleId));
   const claims = Array.isArray(module?.claims) ? module.claims : [];
-  const protectedClaimRefs = protectedClaimRefsForCurrentAuthoring();
   if (claims.length === 0) {
     container.append(createElement("div", {
       className: "claim-picker-empty",
@@ -956,12 +949,25 @@ function renderCreateClaimOptions(moduleId) {
     }));
     return;
   }
+  const claimOptions = selectWorkbenchClaimOptions(state.workbench, {
+    changeKind: selectedChangeKind(),
+    planRefs: selectedPlanRefs(),
+    moduleRef: String(moduleId),
+  });
+  if (claimOptions === null) {
+    container.append(createElement("div", {
+      className: "claim-picker-empty",
+      text: "先完成 Kernel 要求的 Outcome 选择。",
+    }));
+    return;
+  }
+  const claimOptionsByRef = new Map(claimOptions.map((option) => [option.claimRef, option]));
   for (const claim of claims) {
     const id = claim?.id;
     if (!id) continue;
+    const claimOption = claimOptionsByRef.get(id);
     const statement = String(claim.statement || id);
-    const protectedForIncident = protectedClaimRefs === null || protectedClaimRefs.has(String(id));
-    const selectable = claim.selectable === true && protectedForIncident;
+    const selectable = claimOption.selectable === true;
     const routes = Array.isArray(claim.acceptanceRoutes) ? claim.acceptanceRoutes : [];
     const routeSummary = routes.map((route) => (
       `${route.gateId}/${route.commandId} · ${shortIdentifier(route.routeDigest, 18)}`
@@ -990,13 +996,9 @@ function renderCreateClaimOptions(moduleId) {
           className: `claim-oracle-state${selectable ? " has-gate" : ""}`,
           text: selectable
             ? `${routes.length} 条精确路由`
-            : protectedForIncident
-              ? disabledReasonSummary(claim.disabledReasonCodes)
-              : "不在所选 Outcome 的 protected Claims 中",
+            : disabledReasonSummary(claimOption.disabledReasonCodes),
           attributes: {
-            title: routeSummary || (protectedForIncident
-              ? disabledReasonSummary(claim.disabledReasonCodes)
-              : "Kernel 未将此 Claim 投影为所选完整性修复的 target"),
+            title: routeSummary || disabledReasonSummary(claimOption.disabledReasonCodes),
           },
         }),
       ]),

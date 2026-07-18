@@ -27,13 +27,16 @@ import {
   selectWorkbenchAction,
   selectWorkbenchAcceptanceInputRequirements,
   selectWorkbenchAuthoringModules,
+  selectWorkbenchClaimOptions,
   selectWorkbenchChangeKindAuthoring,
   selectWorkbenchChangeKinds,
-  selectWorkbenchPlanOutcomes
+  selectWorkbenchPlanOutcomes,
+  WORKBENCH_BROWSER_PROJECTION_INTEGRITY_PROOF_VERSION
 } from "../../public/workbench-adapter.js";
 
 export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
 export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
+export { WORKBENCH_BROWSER_PROJECTION_INTEGRITY_PROOF_VERSION };
 
 test("Local Workbench projects exact Profile dimensions and preserves Kernel Workbench actions", async (t) => {
   const profile = createProfile();
@@ -184,10 +187,11 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     ["inspectWorkbenchProjection", { changeRef: "change-1" }]
   ]);
 
-  const browserWindow = receiveArchitectureProfileWindowViewModel(profilePayload);
+  assert.equal(WORKBENCH_BROWSER_PROJECTION_INTEGRITY_PROOF_VERSION, 1);
+  const browserWindow = await receiveArchitectureProfileWindowViewModel(profilePayload);
   const browserProfile = browserWindow.page;
-  const browserAuthoring = receiveWorkbenchProjection(authoringPayload);
-  const browserWorkbench = receiveWorkbenchProjection(selectedPayload);
+  const browserAuthoring = await receiveWorkbenchProjection(authoringPayload);
+  const browserWorkbench = await receiveWorkbenchProjection(selectedPayload);
   assert.strictEqual(
     architectureProfileDimension(browserProfile, "evidence"),
     browserProfile.dimensions.evidence,
@@ -213,6 +217,44 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     browserAuthoring.authoring.changeKinds[0],
     "Change-kind cardinality and eligibility remain Kernel-owned"
   );
+  const implementationClaimOptions = selectWorkbenchClaimOptions(browserAuthoring, {
+    changeKind: "implementation",
+    planRefs: ["LGT-001", "LGT-099"],
+    moduleRef: "module-1"
+  });
+  assert.strictEqual(
+    implementationClaimOptions,
+    browserAuthoring.authoring.claimSelectionRoutes.find((route) => (
+      route.changeKindRef === "implementation"
+        && route.outcomeRef === null
+        && route.moduleRef === "module-1"
+    )).claimOptions,
+    "non-integrity authoring selects the exact Kernel null-Outcome route without merging Plan facts"
+  );
+  const integrityClaimOptions = selectWorkbenchClaimOptions(browserAuthoring, {
+    changeKind: "regression-repair",
+    planRefs: ["LGT-099"],
+    moduleRef: "module-1"
+  });
+  assert.strictEqual(
+    integrityClaimOptions,
+    browserAuthoring.authoring.claimSelectionRoutes.find((route) => (
+      route.changeKindRef === "regression-repair"
+        && route.outcomeRef === "LGT-099"
+        && route.moduleRef === "module-1"
+    )).claimOptions,
+    "integrity authoring returns the exact source-bound Claim option collection"
+  );
+  assert.deepEqual(integrityClaimOptions[1], {
+    claimRef: "claim-2",
+    selectable: false,
+    disabledReasonCodes: ["CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"]
+  });
+  assert.equal(selectWorkbenchClaimOptions(browserAuthoring, {
+    changeKind: "regression-repair",
+    planRefs: [],
+    moduleRef: "module-1"
+  }), null, "an incomplete integrity key fails closed instead of combining routes");
   const matchingChange = {
     id: "change-1",
     observation: { sourceSnapshotDigest: browserWorkbench.source.snapshotDigest }
@@ -256,7 +298,8 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   ];
   const { requirementsDigest: _requirementsDigest, ...readyRequirementContent } = readyRequirements;
   readyRequirements.requirementsDigest = canonicalDigest(readyRequirementContent);
-  const readyWorkbench = receiveWorkbenchProjection(readyProjection);
+  resealWorkbenchProjection(readyProjection);
+  const readyWorkbench = await receiveWorkbenchProjection(readyProjection);
   const acceptanceRequest = compileWorkbenchAcceptanceRequest(
     readyWorkbench.changes[0].actions.accept.inputRequirements,
     {
@@ -326,6 +369,13 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   );
 
   const workbenchAttacks = [
+    ["stale digest after Claim mutation", false, (value) => {
+      value.authoring.modules[0].claims[0].statement = "mutated after the Kernel sealed it";
+    }],
+    ["missing Claim selection route after reseal", false, (value) => {
+      value.authoring.claimSelectionRoutes.pop();
+      resealWorkbenchProjection(value);
+    }],
     ["missing Plan collection", false, (value) => { delete value.authoring.planOutcomes; }],
     ["missing closed Change kind", false, (value) => { value.authoring.changeKinds.pop(); }],
     ["unknown Change kind", false, (value) => { value.authoring.changeKinds[0].id = "feature"; }],
@@ -358,8 +408,8 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   for (const [label, selected, mutate] of workbenchAttacks) {
     const attacked = createWorkbenchProjection(profile.source, selected ? "change-1" : null);
     mutate(attacked);
-    assert.throws(
-      () => receiveWorkbenchProjection(attacked),
+    await assert.rejects(
+      receiveWorkbenchProjection(attacked),
       hasCode("BROWSER_PROJECTION_INVALID"),
       label
     );
@@ -471,15 +521,14 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     ["project"]
   ]);
 
-  const [browserSource, browserAdapterSource, controllerSource, browserMarkup, browserStyles] = await Promise.all([
+  const [browserSource, controllerSource, browserMarkup, browserStyles] = await Promise.all([
     readFile(new URL("../../public/app.js", import.meta.url), "utf8"),
-    readFile(new URL("../../public/workbench-adapter.js", import.meta.url), "utf8"),
     readFile(new URL("../../public/profile-window-controller.js", import.meta.url), "utf8"),
     readFile(new URL("../../public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../../public/styles.css", import.meta.url), "utf8")
   ]);
   assert.doesNotMatch(
-    `${browserSource}\n${browserAdapterSource}\n${controllerSource}\n${browserMarkup}\n${browserStyles}`,
+    `${browserSource}\n${controllerSource}\n${browserMarkup}\n${browserStyles}`,
     /\b(?:overall|score|percentage|confidence|green.?light|health|readiness)\b|\/100/iu
   );
   assert.doesNotMatch(
@@ -493,6 +542,7 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     "browser source cannot reconstruct Plan, Change-kind, or integrity eligibility"
   );
   assert.match(browserSource, /selectWorkbenchAction/u);
+  assert.match(browserSource, /selectWorkbenchClaimOptions/u);
   assert.match(browserSource, /selectWorkbenchChangeKindAuthoring/u);
   assert.match(browserSource, /selectWorkbenchAcceptanceInputRequirements/u);
   assert.match(browserSource, /body:\s*JSON\.stringify\(acceptanceRequest\)/u);
@@ -501,6 +551,7 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   assert.match(browserSource, /workbench\?changeRef=/u);
   assert.match(browserSource, /createProfileWindowController/u);
   assert.match(controllerSource, /clearPage\(\);/u);
+  assert.doesNotMatch(browserSource, /protectedClaimRefs|protectedForIncident/u);
   assert.match(browserMarkup, /accept-decision-option/u);
   assert.match(browserMarkup, /accept-closure-mode/u);
   assert.doesNotMatch(controllerSource, /\b(?:atob|btoa)\b|base64|JSON\.parse\([^)]*cursor/iu);
@@ -510,7 +561,7 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   assert.deepEqual(profile, original, "returned view does not alias caller-owned Profile facts");
 });
 
-test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles", () => {
+test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles", async () => {
   const forged = createProfile();
   forged.entities.outcomes[0].statement = "forged without rebinding the Profile digest";
   assert.throws(
@@ -534,6 +585,15 @@ test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles
     () => compileArchitectureProfileViewModel(aggregate),
     (error) => error?.code === "ARCHITECTURE_PROFILE_VIEW_AGGREGATE_FORBIDDEN"
       && error?.details?.key === "overall"
+  );
+
+  const resealedAggregateView = compileArchitectureProfileViewModel(createProfile());
+  resealedAggregateView.dimensions.evidence[0].overall = "green";
+  resealViewModel(resealedAggregateView);
+  await assert.rejects(
+    receiveArchitectureProfileViewModel(resealedAggregateView),
+    hasCode("BROWSER_PROJECTION_INVALID"),
+    "a digest-valid nested aggregate still fails at the browser receiver"
   );
 
   const windowAggregateProfile = createProfile();
@@ -569,7 +629,7 @@ test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles
     ...differentlyOrderedContent
   } = differentlyOrderedWindow;
   differentlyOrderedWindow.windowDigest = canonicalDigest(differentlyOrderedContent);
-  assert.doesNotThrow(() => receiveArchitectureProfileWindowViewModel(
+  await assert.doesNotReject(receiveArchitectureProfileWindowViewModel(
     compileArchitectureProfileWindowViewModel(differentlyOrderedWindow)
   ), "Profile canonical entity order need not duplicate the Kernel record-window order");
   const browserEnvelopeAttacks = [
@@ -585,8 +645,8 @@ test("Local Workbench rejects forged, ambiguous, non-JSON, or unbounded Profiles
   for (const [label, mutate] of browserEnvelopeAttacks) {
     const attacked = structuredClone(canonicalWindow);
     mutate(attacked);
-    assert.throws(
-      () => receiveArchitectureProfileWindowViewModel(attacked),
+    await assert.rejects(
+      receiveArchitectureProfileWindowViewModel(attacked),
       hasCode("BROWSER_PROFILE_WINDOW_INVALID"),
       label
     );
@@ -825,8 +885,10 @@ async function requestJson(origin, requestPath) {
 }
 
 function createWorkbenchProjection(source, changeRef = null) {
+  const planAuthoring = createWorkbenchPlanAuthoring();
+  const claimSelectionRoutes = createWorkbenchClaimSelectionRoutes(planAuthoring);
   const content = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     source: structuredClone(source),
     selection: { changeRef },
     authoring: {
@@ -841,17 +903,27 @@ function createWorkbenchProjection(source, changeRef = null) {
           statement: "The governed behavior remains exact.",
           contractRef: "contract-1",
           visibilityKinds: ["owned"],
-          selectable: true,
-          disabledReasonCodes: [],
           acceptanceRoutes: [{
             gateId: "gate-1",
             commandId: "exact-command",
             routeRef: "route-1",
             routeDigest: canonicalDigest("route")
           }]
+        }, {
+          id: "claim-2",
+          statement: "A second exact behavior remains governed.",
+          contractRef: "contract-1",
+          visibilityKinds: ["owned"],
+          acceptanceRoutes: [{
+            gateId: "gate-1",
+            commandId: "second-command",
+            routeRef: "route-2",
+            routeDigest: canonicalDigest("second-route")
+          }]
         }]
       }],
-      ...createWorkbenchPlanAuthoring()
+      ...planAuthoring,
+      claimSelectionRoutes
     },
     changes: changeRef === null ? [] : [{
       id: "change-1",
@@ -900,39 +972,82 @@ function createWorkbenchPlanAuthoring() {
     selectable,
     disabledReasonCodes: selectable ? [] : ["PLAN_OUTCOME_UNAVAILABLE"],
     planSelection: { minRefs, maxRefs, selectableOutcomeRefs },
-    integrityIncident: { required: integrityRequired, protectedClaimRefsByOutcome }
+    integrityIncident: { required: integrityRequired },
+    protectedClaimRefsByOutcome
   });
+  const internalChangeKinds = [
+    changeKind({
+      id: "implementation",
+      minRefs: 1,
+      maxRefs: 64,
+      selectableOutcomeRefs: ["LGT-001"]
+    }),
+    changeKind({ id: "plan-amendment", minRefs: 0, maxRefs: 0 }),
+    changeKind({
+      id: "regression-repair",
+      selectableOutcomeRefs: ["LGT-099"],
+      integrityRequired: true,
+      protectedClaimRefsByOutcome: [{
+        outcomeRef: "LGT-099",
+        claimRefs: ["claim-1"]
+      }]
+    }),
+    ...[
+      "security-containment",
+      "data-integrity-repair",
+      "acceptance-integrity-repair",
+      "entrypoint-restoration"
+    ].map((id) => changeKind({ id, selectable: false, integrityRequired: true }))
+  ];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     planOutcomes: [
       { outcomeRef: "LGT-001", statement: "Implement one bounded fixture capability." },
       { outcomeRef: "LGT-099", statement: "Restore one protected fixture Claim." }
     ],
-    changeKinds: [
-      changeKind({
-        id: "implementation",
-        minRefs: 1,
-        maxRefs: 64,
-        selectableOutcomeRefs: ["LGT-001"]
-      }),
-      changeKind({ id: "plan-amendment", minRefs: 0, maxRefs: 0 }),
-      changeKind({
-        id: "regression-repair",
-        selectableOutcomeRefs: ["LGT-099"],
-        integrityRequired: true,
-        protectedClaimRefsByOutcome: [{
-          outcomeRef: "LGT-099",
-          claimRefs: ["claim-1"]
-        }]
-      }),
-      ...[
-        "security-containment",
-        "data-integrity-repair",
-        "acceptance-integrity-repair",
-        "entrypoint-restoration"
-      ].map((id) => changeKind({ id, selectable: false, integrityRequired: true }))
-    ]
+    changeKinds: internalChangeKinds.map(({ protectedClaimRefsByOutcome: ignored, ...kind }) => kind),
+    protectionByChangeKind: new Map(internalChangeKinds.map((kind) => [
+      kind.id,
+      kind.protectedClaimRefsByOutcome
+    ]))
   };
+}
+
+function createWorkbenchClaimSelectionRoutes(planAuthoring) {
+  const routes = [];
+  for (const changeKind of planAuthoring.changeKinds) {
+    const protections = changeKind.integrityIncident.required
+      ? planAuthoring.protectionByChangeKind.get(changeKind.id)
+      : [{ outcomeRef: null, claimRefs: null }];
+    for (const protection of protections) {
+      const protectedRefs = protection.claimRefs === null ? null : new Set(protection.claimRefs);
+      routes.push({
+        changeKindRef: changeKind.id,
+        outcomeRef: protection.outcomeRef,
+        moduleRef: "module-1",
+        claimOptions: ["claim-1", "claim-2"].map((claimRef) => {
+          const disabledReasonCodes = protectedRefs === null || protectedRefs.has(claimRef)
+            ? []
+            : ["CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"];
+          return {
+            claimRef,
+            selectable: disabledReasonCodes.length === 0,
+            disabledReasonCodes
+          };
+        })
+      });
+    }
+  }
+  delete planAuthoring.protectionByChangeKind;
+  return routes.sort((left, right) => [
+    left.changeKindRef,
+    left.outcomeRef ?? "",
+    left.moduleRef
+  ].join("\u0000").localeCompare([
+    right.changeKindRef,
+    right.outcomeRef ?? "",
+    right.moduleRef
+  ].join("\u0000")));
 }
 
 function createWorkbenchAcceptanceInputRequirements({
@@ -1025,6 +1140,16 @@ function emptyRelations() {
 function reseal(profile) {
   const { profileDigest: ignored, ...content } = profile;
   profile.profileDigest = canonicalDigest(content);
+}
+
+function resealViewModel(viewModel) {
+  const { viewModelDigest: ignored, ...content } = viewModel;
+  viewModel.viewModelDigest = canonicalDigest(content);
+}
+
+function resealWorkbenchProjection(projection) {
+  const { projectionDigest: ignored, ...content } = projection;
+  projection.projectionDigest = canonicalDigest(content);
 }
 
 function fillProfileContentToBytes(profile, targetBytes) {

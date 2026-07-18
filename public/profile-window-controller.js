@@ -87,7 +87,8 @@ export function createProfileWindowController({
     try {
       const value = await fetchJson(profileWindowUrl(endpoint, cursor));
       if (requestGeneration !== generation) return { status: "discarded", window: current };
-      const received = receiveArchitectureProfileWindowViewModel(value, { predecessor });
+      const received = await receiveArchitectureProfileWindowViewModel(value, { predecessor });
+      if (requestGeneration !== generation) return { status: "discarded", window: current };
       current = received;
       renderPage(received.page, received);
       return { status: "rendered", window: received };
@@ -128,7 +129,11 @@ export function createProfileWindowController({
   return Object.freeze({ refresh, next, cancel, snapshot });
 }
 
-export function receiveArchitectureProfileWindowViewModel(value, { predecessor = null } = {}) {
+export async function receiveArchitectureProfileWindowViewModel(value, { predecessor = null } = {}) {
+  value = snapshotJson(value, "Profile window");
+  const safePredecessor = predecessor === null
+    ? null
+    : snapshotJson(predecessor, "Preceding Profile window");
   requireRecord(value, "Profile window");
   requireExactKeys(value, ENVELOPE_FIELDS, "Profile window");
   if (value.schemaVersion !== 1
@@ -140,25 +145,27 @@ export function receiveArchitectureProfileWindowViewModel(value, { predecessor =
   requireDigest(value.viewModelDigest, "Profile window view-model digest");
   requireSource(value.source, "Profile window source");
   requireWindow(value.window);
-  const page = receiveArchitectureProfileViewModel(value.page);
+  const page = await receiveArchitectureProfileViewModel(value.page);
+  value.page = page;
   requireSameSource(value.source, page.sourceRefs, "Profile page source");
   requirePageRecords(value.window, page);
   requireContinuation(value.continuation, value.window.hasMore);
 
-  if (predecessor !== null) {
-    requireRecord(predecessor, "Preceding Profile window");
-    requireSameSource(predecessor.source, value.source, "Profile successor source");
-    if (predecessor.window.hasMore !== true
-      || predecessor.continuation === null
-      || value.window.ordering !== predecessor.window.ordering
-      || value.window.limit !== predecessor.window.limit
-      || value.window.offset !== predecessor.window.offset + predecessor.window.returned) {
+  if (safePredecessor !== null) {
+    requireRecord(safePredecessor, "Preceding Profile window");
+    requireSameSource(safePredecessor.source, value.source, "Profile successor source");
+    if (safePredecessor.window.hasMore !== true
+      || safePredecessor.continuation === null
+      || value.window.ordering !== safePredecessor.window.ordering
+      || value.window.limit !== safePredecessor.window.limit
+      || value.window.offset !== safePredecessor.window.offset + safePredecessor.window.returned) {
       throw invalidWindow("Profile window successor");
     }
   } else if (value.window.offset !== 0) {
     throw invalidWindow("Initial Profile window offset");
   }
-  return value;
+  await requireWindowViewModelDigest(value);
+  return deepFreeze(value);
 }
 
 function profileWindowUrl(endpoint, cursor) {
@@ -265,6 +272,54 @@ function requireRecord(value, label) {
 
 function requireDigest(value, label) {
   if (typeof value !== "string" || !DIGEST_PATTERN.test(value)) throw invalidWindow(label);
+}
+
+function snapshotJson(value, label) {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) throw new TypeError("missing JSON value");
+    return JSON.parse(serialized);
+  } catch {
+    throw invalidWindow(`${label} JSON snapshot`);
+  }
+}
+
+async function requireWindowViewModelDigest(value) {
+  const { viewModelDigest: observed, ...content } = value;
+  let expected;
+  try {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) throw new TypeError("WebCrypto unavailable");
+    const bytes = new TextEncoder().encode(canonicalStringify(content));
+    const digest = new Uint8Array(await subtle.digest("SHA-256", bytes));
+    expected = `sha256:${[...digest]
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("")}`;
+  } catch {
+    throw invalidWindow("Profile window view-model digest verification");
+  }
+  if (observed !== expected) throw invalidWindow("Profile window view-model digest");
+}
+
+function canonicalStringify(value) {
+  return JSON.stringify(sortCanonicalValue(value));
+}
+
+function sortCanonicalValue(value) {
+  if (Array.isArray(value)) return value.map(sortCanonicalValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => [key, sortCanonicalValue(value[key])]),
+  );
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const item of Object.values(value)) deepFreeze(item);
+  return Object.freeze(value);
 }
 
 function sanitizeStructuredError(error, cursor) {
