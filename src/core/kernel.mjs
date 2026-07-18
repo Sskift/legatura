@@ -82,11 +82,13 @@ const ARCHITECTURE_PROFILE_WINDOW_PURPOSE = "architecture-profile-window";
 
 export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
 export const WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION = 1;
+export const WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION = 1;
 
 export const WORKBENCH_DISABLED_REASON_CODES = Object.freeze([
   "PLAN_OUTCOME_UNAVAILABLE",
   "MODULE_NOT_GOVERNED",
   "CLAIM_ACCEPTANCE_ROUTE_MISSING",
+  "CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME",
   "CHANGE_CLAIM_REQUIRED",
   "CHANGE_NOT_COMPILED",
   "CHANGE_SCOPE_EXCEEDED",
@@ -1653,8 +1655,10 @@ function compileWorkbenchProjectionFromSnapshot(snapshot, { changeRef = null } =
     historicalProviders,
     historicalModuleProjections
   };
+  const modules = compileWorkbenchAuthoringModules(bundle, budget);
+  const planAuthoring = compileWorkbenchPlanAuthoring(snapshot, budget);
   const content = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     source: {
       snapshotDigest: snapshot.digest,
       projectModelDigest: snapshot.inspection.digest,
@@ -1663,8 +1667,15 @@ function compileWorkbenchProjectionFromSnapshot(snapshot, { changeRef = null } =
     },
     selection: { changeRef },
     authoring: {
-      modules: compileWorkbenchAuthoringModules(bundle, budget),
-      ...compileWorkbenchPlanAuthoring(snapshot, budget)
+      schemaVersion: 2,
+      modules,
+      planOutcomes: planAuthoring.planOutcomes,
+      changeKinds: compileWorkbenchPublicChangeKinds(planAuthoring.changeKinds),
+      claimSelectionRoutes: compileWorkbenchClaimSelectionRoutes({
+        modules,
+        changeKinds: planAuthoring.changeKinds,
+        budget
+      })
     },
     changes: snapshot.records
       .map((record) => compileWorkbenchChangeActions(record, snapshot, bundle, budget))
@@ -1757,11 +1768,10 @@ function compileWorkbenchAuthoringModules(bundle, budget) {
         ),
         contractRef,
         visibilityKinds,
-        selectable: disabledReasonCodes.length === 0,
-        disabledReasonCodes,
-        acceptanceRoutes: routeOptions
+        acceptanceRoutes: routeOptions,
+        selectionBaseline: disabledReasonCodes
       };
-    });
+    }).sort((left, right) => compareCodeUnits(left.id, right.id));
     const disabledReasonCodes = compileWorkbenchDisabledReasons(
       module?.status === "governed" ? [] : ["MODULE_NOT_GOVERNED"]
     );
@@ -1775,6 +1785,131 @@ function compileWorkbenchAuthoringModules(bundle, budget) {
     });
   }
   return modules;
+}
+
+function compileWorkbenchPublicChangeKinds(changeKinds) {
+  return changeKinds.map((changeKind) => ({
+    id: changeKind.id,
+    selectable: changeKind.selectable,
+    disabledReasonCodes: cloneJson(changeKind.disabledReasonCodes),
+    planSelection: cloneJson(changeKind.planSelection),
+    integrityIncident: { required: changeKind.integrityIncident.required }
+  }));
+}
+
+function compileWorkbenchClaimSelectionRoutes({ modules, changeKinds, budget }) {
+  const routes = [];
+  for (const changeKind of changeKinds) {
+    const changeKindRef = requireWorkbenchReference(
+      changeKind?.id,
+      "authoring.claimSelectionRoutes.changeKindRef"
+    );
+    const integrityRequired = changeKind?.integrityIncident?.required === true;
+    const protections = integrityRequired
+      ? readWorkbenchIntegrityProtectionEntries(changeKind)
+      : [{ outcomeRef: null, claimRefs: null }];
+    for (const protection of protections) {
+      for (const module of modules) {
+        consumeWorkbenchProjectionFact(budget);
+        const moduleRef = requireWorkbenchReference(
+          module?.id,
+          "authoring.claimSelectionRoutes.moduleRef"
+        );
+        const protectedClaimRefs = protection.claimRefs == null
+          ? null
+          : new Set(protection.claimRefs);
+        const claimOptions = module.claims.map((claim) => {
+          consumeWorkbenchProjectionFact(budget);
+          const claimRef = requireWorkbenchReference(
+            claim?.id,
+            `authoring.claimSelectionRoutes.${changeKindRef}.${moduleRef}.claimRef`
+          );
+          const disabledReasonCodes = compileWorkbenchDisabledReasons([
+            ...changeKind.disabledReasonCodes,
+            ...claim.selectionBaseline,
+            ...(protectedClaimRefs == null || protectedClaimRefs.has(claimRef)
+              ? []
+              : ["CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"])
+          ]);
+          return {
+            claimRef,
+            selectable: disabledReasonCodes.length === 0,
+            disabledReasonCodes
+          };
+        });
+        assertWorkbenchClaimSelectionCoverage(module, claimOptions, {
+          changeKindRef,
+          outcomeRef: protection.outcomeRef,
+          moduleRef
+        });
+        routes.push({
+          changeKindRef,
+          outcomeRef: protection.outcomeRef,
+          moduleRef,
+          claimOptions
+        });
+      }
+    }
+  }
+  for (const module of modules) {
+    for (const claim of module.claims) delete claim.selectionBaseline;
+  }
+  return routes.sort(compareWorkbenchClaimSelectionRoutes);
+}
+
+function readWorkbenchIntegrityProtectionEntries(changeKind) {
+  const entries = changeKind?.integrityIncident?.protectedClaimRefsByOutcome;
+  if (!Array.isArray(entries)) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench integrity authoring policy is missing compiler-owned protected Claim entries.",
+      500,
+      { changeKindRef: changeKind?.id }
+    );
+  }
+  const protections = entries.map((entry) => ({
+    outcomeRef: requireWorkbenchReference(
+      entry?.outcomeRef,
+      `authoring.changeKind.${changeKind.id}.integrityIncident.outcomeRef`
+    ),
+    claimRefs: normalizeStringList(entry?.claimRefs).sort(compareCodeUnits)
+  })).sort((left, right) => compareCodeUnits(left.outcomeRef, right.outcomeRef));
+  const expectedOutcomeRefs = normalizeStringList(
+    changeKind?.planSelection?.selectableOutcomeRefs
+  ).sort(compareCodeUnits);
+  const observedOutcomeRefs = protections.map((entry) => entry.outcomeRef);
+  if (expectedOutcomeRefs.length !== observedOutcomeRefs.length
+    || new Set(observedOutcomeRefs).size !== observedOutcomeRefs.length
+    || expectedOutcomeRefs.some((outcomeRef, index) => outcomeRef !== observedOutcomeRefs[index])) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench integrity protection entries must match compiler-owned selectable Outcomes exactly.",
+      500,
+      { changeKindRef: changeKind.id, expectedOutcomeRefs, observedOutcomeRefs }
+    );
+  }
+  return protections;
+}
+
+function assertWorkbenchClaimSelectionCoverage(module, claimOptions, key) {
+  const expected = module.claims.map((claim) => claim.id).sort(compareCodeUnits);
+  const observed = claimOptions.map((claim) => claim.claimRef).sort(compareCodeUnits);
+  if (expected.length !== observed.length
+    || new Set(observed).size !== observed.length
+    || expected.some((claimRef, index) => claimRef !== observed[index])) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench Claim selection route must cover each visible Module Claim exactly once.",
+      500,
+      { ...key, expectedClaimRefs: expected, observedClaimRefs: observed }
+    );
+  }
+}
+
+function compareWorkbenchClaimSelectionRoutes(left, right) {
+  return compareCodeUnits(left.changeKindRef, right.changeKindRef)
+    || compareCodeUnits(left.outcomeRef ?? "", right.outcomeRef ?? "")
+    || compareCodeUnits(left.moduleRef, right.moduleRef);
 }
 
 function compileWorkbenchPlanAuthoring(snapshot, budget) {

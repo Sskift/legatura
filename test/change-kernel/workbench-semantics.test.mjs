@@ -10,7 +10,8 @@ import {
   createKernel,
   WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION,
   WORKBENCH_DISABLED_REASON_CODES,
-  WORKBENCH_INPUT_REQUIREMENT_REASON_CODES
+  WORKBENCH_INPUT_REQUIREMENT_REASON_CODES,
+  WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION
 } from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { compileChangePlanAuthoringProjection } from "../../src/core/change-compiler.mjs";
@@ -20,9 +21,30 @@ const execFileAsync = promisify(execFile);
 const PRIVATE_OUTPUT = "workbench-private-gate-output";
 
 export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
+export { WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION };
 
 test("Kernel compiles one bounded canonical Workbench semantic projection", async (t) => {
   assert.equal(WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION, 1);
+  assert.equal(WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION, 1);
+  const kernelContract = JSON.parse(await readFile(
+    new URL("../../.legatura/contracts/change-kernel-interface.json", import.meta.url),
+    "utf8"
+  ));
+  assert.deepEqual(
+    WORKBENCH_DISABLED_REASON_CODES,
+    kernelContract.valueObjects.workbenchDisabledReasonCodes
+  );
+  assert.deepEqual(
+    WORKBENCH_DISABLED_REASON_CODES,
+    kernelContract.valueObjects.workbenchDisabledReasonPrecedence
+  );
+  assert.deepEqual(
+    WORKBENCH_INPUT_REQUIREMENT_REASON_CODES,
+    kernelContract.valueObjects.workbenchInputRequirementReasonCodes
+  );
+  assert.ok(WORKBENCH_INPUT_REQUIREMENT_REASON_CODES.every((reason) => (
+    WORKBENCH_DISABLED_REASON_CODES.includes(reason)
+  )));
   assert.deepEqual(
     compileAuthorityDecisionOptions(["module-maintainer"], [{ id: "module-maintainer" }])
       .map(({ decisionType }) => decisionType),
@@ -68,19 +90,27 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
 
   const storeBefore = await snapshotStore(repoPath);
   const authoringOnly = await createKernel({ repoPath }).inspectWorkbenchProjection();
-  assert.equal(authoringOnly.schemaVersion, 2);
+  assert.equal(authoringOnly.schemaVersion, 3);
+  assert.equal(authoringOnly.authoring.schemaVersion, 2);
   assert.deepEqual(authoringOnly.selection, { changeRef: null });
   assert.deepEqual(authoringOnly.changes, []);
   const expectedPlanAuthoring = compileChangePlanAuthoringProjection(await writer.inspectProject());
   assert.deepEqual(authoringOnly.authoring.planOutcomes, expectedPlanAuthoring.planOutcomes);
-  assert.deepEqual(authoringOnly.authoring.changeKinds, expectedPlanAuthoring.changeKinds);
+  assert.deepEqual(
+    authoringOnly.authoring.changeKinds,
+    expectedPlanAuthoring.changeKinds.map(({ integrityIncident, ...changeKind }) => ({
+      ...changeKind,
+      integrityIncident: { required: integrityIncident.required }
+    }))
+  );
   const counted = countingCommandRunner();
   const projection = await createKernel({ repoPath, commandRunner: counted.run })
     .inspectWorkbenchProjection({ changeRef: "ready-change" });
 
   assert.equal(counted.observations(), 2, "one selected Change shares one stabilized source query");
   assert.deepEqual(await snapshotStore(repoPath), storeBefore, "Workbench inspection is read-only");
-  assert.equal(projection.schemaVersion, 2);
+  assert.equal(projection.schemaVersion, 3);
+  assert.equal(projection.authoring.schemaVersion, 2);
   assert.deepEqual(projection.selection, { changeRef: "ready-change" });
   assert.deepEqual(projection.changes.map((change) => change.id), ["ready-change"]);
   assert.equal(Object.hasOwn(projection, "architectureProfile"), false);
@@ -113,21 +143,72 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   assert.deepEqual(findById(consumer.claims, "core-correct").visibilityKinds, ["dependency"]);
 
   const coreCorrect = findById(core.claims, "core-correct");
-  assert.equal(coreCorrect.selectable, true);
-  assert.deepEqual(coreCorrect.disabledReasonCodes, []);
+  assert.equal(Object.hasOwn(coreCorrect, "selectable"), false);
+  assert.equal(Object.hasOwn(coreCorrect, "disabledReasonCodes"), false);
   assert.deepEqual(coreCorrect.acceptanceRoutes.map((route) => route.gateId), ["legacy", "minimum"]);
   assert.equal(
     coreCorrect.acceptanceRoutes.some((route) => route.gateId === "full"),
     false,
     "integration-only full Gate is not an acceptance authoring route"
   );
-  assert.deepEqual(findById(core.claims, "core-unrouted").disabledReasonCodes, [
+  assertClaimSelectionRouteIntegrity(projection.authoring);
+  const implementationCore = findClaimSelectionRoute(projection.authoring, {
+    changeKindRef: "implementation",
+    outcomeRef: null,
+    moduleRef: "core"
+  });
+  assert.deepEqual(findClaimOption(implementationCore, "core-correct"), {
+    claimRef: "core-correct",
+    selectable: true,
+    disabledReasonCodes: []
+  });
+  assert.deepEqual(findClaimOption(implementationCore, "core-unrouted").disabledReasonCodes, [
     "CLAIM_ACCEPTANCE_ROUTE_MISSING"
   ]);
-  assert.deepEqual(findById(preview.claims, "preview-unrouted").disabledReasonCodes, [
+  const integrityCore = findClaimSelectionRoute(projection.authoring, {
+    changeKindRef: "regression-repair",
+    outcomeRef: "LGT-099",
+    moduleRef: "core"
+  });
+  assert.deepEqual(findClaimOption(integrityCore, "core-correct").disabledReasonCodes, []);
+  assert.deepEqual(findClaimOption(integrityCore, "core-unrouted").disabledReasonCodes, [
+    "CLAIM_ACCEPTANCE_ROUTE_MISSING",
+    "CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"
+  ]);
+  const integrityConsumer = findClaimSelectionRoute(projection.authoring, {
+    changeKindRef: "regression-repair",
+    outcomeRef: "LGT-099",
+    moduleRef: "consumer"
+  });
+  assert.equal(findClaimOption(integrityConsumer, "core-correct").selectable, true);
+  assert.deepEqual(findClaimOption(integrityConsumer, "consumer-correct").disabledReasonCodes, [
+    "CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"
+  ]);
+  const integrityPreview = findClaimSelectionRoute(projection.authoring, {
+    changeKindRef: "regression-repair",
+    outcomeRef: "LGT-099",
+    moduleRef: "preview"
+  });
+  assert.deepEqual(findClaimOption(integrityPreview, "preview-unrouted").disabledReasonCodes, [
     "MODULE_NOT_GOVERNED",
-    "CLAIM_ACCEPTANCE_ROUTE_MISSING"
+    "CLAIM_ACCEPTANCE_ROUTE_MISSING",
+    "CLAIM_NOT_PROTECTED_BY_SELECTED_OUTCOME"
   ]);
+  for (const [attack, mutate] of [
+    ["missing route", (value) => value.claimSelectionRoutes.pop()],
+    ["duplicate route", (value) => value.claimSelectionRoutes.push(
+      structuredClone(value.claimSelectionRoutes[0])
+    )],
+    ["wrong route key", (value) => { value.claimSelectionRoutes[0].moduleRef = "invented"; }]
+  ]) {
+    const attackedAuthoring = structuredClone(projection.authoring);
+    mutate(attackedAuthoring);
+    assert.throws(
+      () => assertClaimSelectionRouteIntegrity(attackedAuthoring),
+      { name: "AssertionError" },
+      attack
+    );
+  }
 
   const readyActions = findById(projection.changes, "ready-change").actions;
   assert.deepEqual(readyActions.gates.map((gate) => gate.gateId), [
@@ -299,6 +380,7 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   ]) {
     assert.equal(serialized.includes(forbidden), false, `projection leaked ${forbidden}`);
   }
+  assert.equal(serialized.includes("protectedClaimRefsByOutcome"), false);
   assert.ok(Buffer.byteLength(serialized, "utf8") < 128 * 1024);
 });
 
@@ -536,6 +618,56 @@ function findGate(values, gateId) {
   return value;
 }
 
+function findClaimSelectionRoute(authoring, key) {
+  const route = authoring.claimSelectionRoutes.find((candidate) => (
+    candidate.changeKindRef === key.changeKindRef
+      && candidate.outcomeRef === key.outcomeRef
+      && candidate.moduleRef === key.moduleRef
+  ));
+  assert.ok(route, `missing Claim selection route ${JSON.stringify(key)}`);
+  return route;
+}
+
+function findClaimOption(route, claimRef) {
+  const option = route.claimOptions.find((candidate) => candidate.claimRef === claimRef);
+  assert.ok(option, `missing Claim option ${claimRef}`);
+  return option;
+}
+
+function assertClaimSelectionRouteIntegrity(authoring) {
+  const expectedKeys = authoring.changeKinds.flatMap((changeKind) => {
+    const outcomeRefs = changeKind.integrityIncident.required
+      ? changeKind.planSelection.selectableOutcomeRefs
+      : [null];
+    return outcomeRefs.flatMap((outcomeRef) => authoring.modules.map((module) => ({
+      changeKindRef: changeKind.id,
+      outcomeRef,
+      moduleRef: module.id
+    })));
+  }).sort(compareClaimSelectionKeys);
+  const observedKeys = authoring.claimSelectionRoutes.map((route) => ({
+    changeKindRef: route.changeKindRef,
+    outcomeRef: route.outcomeRef,
+    moduleRef: route.moduleRef
+  }));
+  assert.deepEqual(observedKeys, expectedKeys);
+  for (const route of authoring.claimSelectionRoutes) {
+    const module = findById(authoring.modules, route.moduleRef);
+    assert.deepEqual(
+      route.claimOptions.map((option) => option.claimRef),
+      module.claims.map((claim) => claim.id),
+      `route ${JSON.stringify(route)} must cover visible Claims exactly once`
+    );
+    assert.equal(new Set(route.claimOptions.map((option) => option.claimRef)).size, route.claimOptions.length);
+  }
+}
+
+function compareClaimSelectionKeys(left, right) {
+  return left.changeKindRef.localeCompare(right.changeKindRef)
+    || (left.outcomeRef ?? "").localeCompare(right.outcomeRef ?? "")
+    || left.moduleRef.localeCompare(right.moduleRef);
+}
+
 async function createFixture() {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "legatura-workbench-"));
   for (const directory of ["modules", "contracts", "gates"]) {
@@ -547,7 +679,10 @@ async function createFixture() {
     schemaVersion: 1,
     project: { id: "workbench-fixture", name: "Workbench Fixture" },
     authorities: {
-      decision: [{ id: "module-maintainer", may: ["case-decision"] }],
+      decision: [
+        { id: "module-maintainer", may: ["case-decision"] },
+        { id: "plan-maintainer", may: ["normative-amendment"] }
+      ],
       fact: [
         { id: "core-facts", module: "core", owns: "Core facts" },
         { id: "consumer-facts", module: "consumer", owns: "Consumer facts" },
@@ -646,6 +781,52 @@ async function createFixture() {
   await writeJson(path.join(repoPath, ".legatura/knowledge-gaps.json"), {
     schemaVersion: 1,
     gaps: []
+  });
+  await writeJson(path.join(repoPath, ".legatura/plan.json"), {
+    schemaVersion: 1,
+    id: "workbench-plan",
+    authority: "plan-maintainer",
+    northStar: "Workbench authoring consumes exact compiler-owned policy.",
+    stages: [{
+      id: "S1",
+      name: "Workbench fixture",
+      status: "active",
+      outcomeRefs: ["LGT-001", "LGT-099"]
+    }],
+    outcomes: [
+      {
+        id: "LGT-001",
+        stage: "S1",
+        status: "active",
+        outcome: "Ordinary fixture implementation remains selectable.",
+        dependsOn: [],
+        acceptance: {
+          claimRefs: ["core-correct"],
+          gapRefs: [],
+          exitCriteria: ["The ordinary authoring route remains explicit."]
+        }
+      },
+      {
+        id: "LGT-099",
+        stage: "S1",
+        status: "active",
+        kind: "integrity-maintenance",
+        outcome: "Only the protected core Claim is eligible for bounded integrity repair.",
+        dependsOn: [],
+        allowedChangeKinds: [
+          "regression-repair",
+          "security-containment",
+          "data-integrity-repair",
+          "acceptance-integrity-repair",
+          "entrypoint-restoration"
+        ],
+        acceptance: {
+          claimRefs: ["core-correct"],
+          gapRefs: [],
+          exitCriteria: ["Integrity authoring exposes only the protected Claim as selectable."]
+        }
+      }
+    ]
   });
   await writeFile(path.join(repoPath, "src/index.mjs"), "export const fixture = true;\n");
   await git(repoPath, "init", "-q");
