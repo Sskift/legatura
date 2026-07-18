@@ -522,7 +522,7 @@
     {
       "id": "LGT-025",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "Workbench creation and Architecture Profile surfaces consume content-verified Kernel projections whose final Claim eligibility and orthogonal assurance facts are never reconstructed or collapsed in the browser.",
       "dependsOn": ["LGT-018", "LGT-019"],
       "acceptance": {
@@ -1519,6 +1519,16 @@
           "rationale": "The prior sealed Assurance Runtime Package covers both exact Gap proof Claims by characterizing the supported local profile and returning explicit unsupported or unconfirmed facts everywhere outside its positive boundary."
         }
       ]
+    },
+    {
+      "id": "LGT-025-T1",
+      "outcomeRef": "LGT-025",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-018 and LGT-019 are achieved, and the complete LGT-025 definition plus its explicit projection-integrity Gap were Accepted in an earlier Governance Baseline; this isolated Amendment freezes that unchanged definition before owner-scoped Contract or implementation work.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
