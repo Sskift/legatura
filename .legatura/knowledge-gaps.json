@@ -40,6 +40,9 @@
       "affects": ["local-workbench"],
       "owner": "module-maintainer",
       "statement": "The browser projection has no DOM-level test proving that it preserves Project Model and Change semantics.",
+      "proofClaimRefs": [
+        "architecture-profile-browser-dom-workflow-is-exercised"
+      ],
       "expansionTrigger": "Before Local Workbench becomes governed."
     },
     {
@@ -48,6 +51,10 @@
       "affects": ["change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The only Kernel Profile query compiles every Change record and every referenced frozen Governance Baseline into one result under one 2 MiB and aggregate route-query budget; the repository's real accepted history already exceeds that shape, and there is no authenticated snapshot-bound continuation or adapter traversal proof.",
+      "proofClaimRefs": [
+        "architecture-profile-window-proof-rejects-query-attacks",
+        "architecture-profile-window-adapter-proof-rejects-semantic-drift"
+      ],
       "expansionTrigger": "Before LGT-014 implementation begins or any Profile history beyond one legal window is presented."
     },
     {

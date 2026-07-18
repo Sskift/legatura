@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "architecture-profile",
   "name": "Architecture Acceptance Profile Proof Gate",
-  "purpose": "Produce direct, Module-owned Evidence for the Architecture Acceptance Profile Closure Contract through fixed test entrypoints that fail closed until their implementations exist.",
+  "purpose": "Produce direct, Module-owned Evidence for exact Architecture Profile compilation and bounded snapshot-window traversal through fixed test entrypoints that fail closed until their implementations exist.",
   "appliesTo": [
     "project-model",
     "change-kernel",
@@ -74,6 +74,41 @@
       ]
     },
     {
+      "id": "architecture-profile-window-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/change-kernel/architecture-profile.test.mjs'); if (proof.ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION !== 1) throw new Error('The fixed Change Kernel Profile-window proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "architecture-profile-windows-are-snapshot-bound-and-complete",
+        "architecture-profile-window-proof-rejects-query-attacks"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel Profile proof module must export version 1 only after its window traversal and attack scenario exits zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "full Profile materialization before window selection",
+          "facts or frozen-baseline Provider work outside the selected window",
+          "omitted or duplicate Changes during unchanged-snapshot traversal",
+          "malformed, modified, expired, unissued, cross-process, cross-snapshot, or cross-query continuations",
+          "GET-time Change Store writes or output beyond fixed window ceilings"
+        ]
+      },
+      "residualUncertainty": [
+        "Continuations are authenticated only inside one local Kernel process and deliberately do not survive restart or provide portable multi-writer history."
+      ]
+    },
+    {
       "id": "architecture-profile-local-workbench-proof",
       "appliesTo": ["local-workbench"],
       "command": [
@@ -105,6 +140,43 @@
         "Browser DOM rendering and interaction remain outside this proof Gate; the browser view model is verified without a real browser.",
         "The real cross-interface HTTP-to-Kernel lifecycle remains a full-Gate concern.",
         "Fresh clones and other workspaces cannot reconstruct ignored local Accepted history; cross-workspace profile portability remains an explicit Knowledge Gap."
+      ]
+    },
+    {
+      "id": "architecture-profile-window-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/local-workbench/architecture-profile.test.mjs'); if (proof.ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION !== 1) throw new Error('The fixed Local Workbench Profile-window proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "architecture-profile-window-adapters-preserve-kernel-semantics",
+        "architecture-profile-window-adapter-proof-rejects-semantic-drift",
+        "architecture-profile-browser-dom-workflow-is-exercised"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Local Workbench Profile proof module must export version 1 only after its adapter and DOM window scenario exits zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "adapter-side cursor decoding, Change selection, sorting, joining, or Evidence reclassification",
+          "omitted, duplicate, or cross-snapshot browser traversal",
+          "unbounded browser or CLI accumulation",
+          "aggregate score, percentage, confidence, health, readiness, or green-light conclusions",
+          "loss of structured stale or forged continuation errors"
+        ]
+      },
+      "residualUncertainty": [
+        "The fixed DOM workflow proves semantic preservation rather than pixel-perfect rendering or cross-browser visual compatibility.",
+        "Accepted history remains local and unauthenticated across clones or workspaces."
       ]
     }
   ]
