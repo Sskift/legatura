@@ -11,6 +11,7 @@
       "legatura open <repo>",
       "legatura inspect <repo>",
       "compileArchitectureProfileViewModel(input)",
+      "compileArchitectureProfileWindowViewModel(input)",
       "createServer(options)",
       "startServer(options)",
       "loopback HTTP Change interface"
@@ -19,6 +20,7 @@
       "The server binds only to loopback.",
       "HTTP input and errors remain bounded and structured.",
       "compileArchitectureProfileViewModel is pure and bounded, preserves orthogonal Profile dimensions through exact identifiers and digests, and emits no aggregate assurance conclusion.",
+      "Architecture Profile window adapters preserve the Kernel-selected record membership, exact source and query bindings, Profile graph, hard-bound observation, window digest, and opaque continuation without decoding, sorting, joining, retrying across snapshots, or accumulating unbounded presentation state; the browser independently exercises unchanged-snapshot traversal and fail-closed continuation errors.",
       "CLI, HTTP, and browser adapters preserve the Kernel's complete canonical authoring and action projections, including exact route identifiers and digests and closed disabled-reason codes, without omission, duplication, invention, or reinterpretation of Contract visibility, Gate applicability, or lifecycle eligibility."
     ]
   },

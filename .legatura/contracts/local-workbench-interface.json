@@ -20,6 +20,18 @@
       "statement": "The CLI output, loopback HTTP response, and browser view model preserve Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap as separate assurance dimensions; they expose no aggregate score, percentage, confidence, or green-light status."
     },
     {
+      "id": "architecture-profile-window-adapters-preserve-kernel-semantics",
+      "statement": "Local Workbench's pure window view model plus CLI, loopback HTTP, and browser adapters preserve each Kernel window's exact source bindings, Profile facts and relations, hard-bound observation, window digest, and opaque continuation without decoding the token, choosing Change membership, compiling historical providers, reclassifying Evidence, or deriving aggregate assurance. They request only the next Kernel window, reject cross-window source mismatch, retain bounded presentation state, and one DOM workflow proves complete unchanged-snapshot traversal plus structured stale or forged continuation failure."
+    },
+    {
+      "id": "architecture-profile-window-adapter-proof-rejects-semantic-drift",
+      "statement": "The fixed Local Workbench Profile-window proof rejects cursor decoding, adapter-side Change selection or governance compilation, lost source, graph, bound, digest, or error facts, cross-snapshot coalescing, unbounded presentation state, and aggregate assurance conclusions."
+    },
+    {
+      "id": "architecture-profile-browser-dom-workflow-is-exercised",
+      "statement": "The fixed browser DOM proof traverses Kernel-issued Profile windows over one unchanged snapshot without omission or duplication and renders structured stale or forged continuation failure without recompiling governance semantics."
+    },
+    {
       "id": "workbench-projects-kernel-semantics",
       "statement": "The pure bounded Architecture Profile view model preserves Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap through exact identifiers and digests without aggregate assurance. Separately, CLI, HTTP, and browser adapters preserve the Change Kernel's complete canonical authoring and action projections, including selectable Claims, exact Gate and command route identifiers and digests, enabled state, and ordered workbenchDisabledReasonCodes, without omission, duplication, invention, or governance recomputation."
     }
