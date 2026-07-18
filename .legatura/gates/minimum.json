@@ -16,30 +16,62 @@
       "command": [
         "node",
         "--test",
-        "test/assurance-runtime/command-runner.test.mjs",
         "test/assurance-runtime/git-binding.test.mjs"
       ],
       "timeoutMs": 120000,
       "claimRefs": [
         "repository-binding-is-content-exact",
-        "repository-binding-fails-closed",
-        "command-observation-is-explicit"
+        "repository-binding-fails-closed"
       ],
       "oracle": {
         "kind": "node-test-runner-exit",
-        "description": "The Assurance Runtime Interface tests must exit zero."
+        "description": "The exact Git binding Interface tests must exit zero."
       },
       "applicability": {
         "phase": "acceptance"
       },
       "discriminatoryPower": {
         "rejects": [
-          "failed or truncated Git observations treated as exact",
-          "lost command exit, stream, signal, or truncation state"
+          "failed or truncated Git observations treated as exact"
         ]
       },
       "residualUncertainty": [
-        "Non-current-host process and Git behavior is not exercised."
+        "Non-current-host Git behavior is not exercised."
+      ]
+    },
+    {
+      "id": "assurance-runtime-command-boundary-proof",
+      "appliesTo": ["assurance-runtime"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const observer = await import('./src/core/command-runner.mjs'); if (observer.COMMAND_OBSERVATION_PROOF_VERSION !== 1) throw new Error('Command Observation proof version 1 is not implemented.'); await import('./test/assurance-runtime/command-runner.test.mjs');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "command-observation-is-explicit",
+        "command-observation-is-terminal-state-complete",
+        "unsupported-command-observations-fail-closed"
+      ],
+      "oracle": {
+        "kind": "node-command-observation-proof-exit",
+        "description": "The fixed Command Observation proof version and its terminal-state conformance scenario must exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "timeout or cancellation returned before close while late process effects remain possible",
+          "signal, start failure, unsupported support profile, malformed adapter output, or unconfirmed close synthesized as natural exit zero",
+          "stdout and stderr truncation or invalid UTF-8 losing their original byte counts and digests",
+          "captured text treated as the authoritative stream instead of bounded raw bytes"
+        ]
+      },
+      "residualUncertainty": [
+        "The declared profile is limited to direct argv on Linux or macOS under Node major 22, 24, or 25.",
+        "Descendants that deliberately escape the observed POSIX process group remain outside this proof."
       ]
     },
     {

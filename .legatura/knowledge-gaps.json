@@ -32,7 +32,11 @@
       "affects": ["assurance-runtime"],
       "owner": "module-maintainer",
       "statement": "Exit streams, signals, and byte truncation are characterized locally; timeout abort, encoding boundaries, and cross-platform subprocess behavior are not.",
-      "expansionTrigger": "Before Assurance Runtime becomes governed."
+      "expansionTrigger": "Before Assurance Runtime becomes governed.",
+      "proofClaimRefs": [
+        "command-observation-is-terminal-state-complete",
+        "unsupported-command-observations-fail-closed"
+      ]
     },
     {
       "id": "browser-projection-not-e2e-tested",
