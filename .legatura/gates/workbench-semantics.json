@@ -198,6 +198,70 @@
         "The DOM proof is semantic rather than a pixel-perfect or cross-browser visual test.",
         "Authenticated human identity and portable Accepted history remain outside the current boundary."
       ]
+    },
+    {
+      "id": "workbench-projection-integrity-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/change-kernel/workbench-semantics.test.mjs'); if (proof.WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION !== 1) throw new Error('The fixed Change Kernel Workbench projection-integrity proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-authoring-claim-options-are-kernel-final"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel Workbench semantics module must export proof version 1 only after terminal source-bound Claim selection and exact Contract vocabulary parity are exercised."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-projection-integrity-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "raw protected Claim sets exposed to adapters or final integrity eligibility reconstructed outside Kernel",
+          "a missing, duplicate, invented, or incorrectly keyed claimSelectionRoutes entry for a Change kind, selected Outcome, Module, or visible Claim",
+          "final Claim options whose exact acceptance routes differ from the current Project Model route product",
+          "Contract disabled-reason codes or precedence that differ from the exported Kernel closed vocabulary"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof covers one bounded local stabilized Workbench projection; multi-writer history remains outside the current boundary.",
+        "Browser content verification and exact route lookup are proved by the Local Workbench command."
+      ]
+    },
+    {
+      "id": "workbench-projection-integrity-local-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/local-workbench/architecture-profile.test.mjs'); if (proof.WORKBENCH_BROWSER_PROJECTION_INTEGRITY_PROOF_VERSION !== 1) throw new Error('The fixed Local Workbench browser projection-integrity proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-browser-verifies-and-projects-kernel-content"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Local Workbench Profile module must export proof version 1 only after browser canonical digest verification, forbidden aggregate rejection, and exact Kernel Claim-option lookup are exercised."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-projection-integrity-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "Workbench, Profile page, or Profile window content accepted after a stale canonical digest mutation",
+          "aggregate assurance accepted after injection and resealing at the browser boundary",
+          "browser consumption of protected Claim sets, Boolean intersection of eligibility, or invention of disabled explanations",
+          "a missing, duplicate, invented, or malformed exact Claim-selection route accepted by the receiver"
+        ]
+      },
+      "residualUncertainty": [
+        "SHA-256 content verification inside the loopback boundary is not a signature or remote-server authentication.",
+        "The DOM proof is semantic rather than pixel-perfect or cross-browser visual verification."
+      ]
     }
   ]
 }
