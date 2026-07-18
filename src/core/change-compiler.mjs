@@ -2357,7 +2357,8 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
     id
   }));
   const integrityOutcomes = selected.filter((outcome) => outcome.kind === "integrity-maintenance");
-  if (changeKind === "implementation" && integrityOutcomes.length > 0) {
+  if (changeKind === "implementation"
+    && selected.some((outcome) => !outcomeSelectableForChangeKind(outcome, changeKind))) {
     throw compilerError(
       "CHANGE_INTEGRITY_CHANNEL_MISUSED",
       "An implementation Change cannot use an integrity-maintenance Outcome as a feature path.",
@@ -2373,7 +2374,7 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
       );
     }
     const outcome = integrityOutcomes[0];
-    if (!normalizeStringList(outcome.allowedChangeKinds).includes(changeKind)) {
+    if (!outcomeSelectableForChangeKind(outcome, changeKind)) {
       throw compilerError(
         "CHANGE_INTEGRITY_KIND_NOT_ALLOWED",
         `Outcome ${outcome.id} does not allow Change kind ${changeKind}.`,
@@ -2409,6 +2410,71 @@ function selectDevelopmentOutcomes(change, governanceBaseline) {
   }
 
   return selected;
+}
+
+export function compileChangePlanAuthoringProjection(governanceBaseline) {
+  const policy = governanceBaseline?.projectDocument?.changePolicy ?? {};
+  const activeOutcomes = asArray(governanceBaseline?.plan?.outcomes)
+    .filter((outcome) => outcome?.status === "active" && readString(outcome?.id))
+    .map((outcome) => ({
+      outcome,
+      outcomeRef: readString(outcome.id),
+      statement: readString(outcome.outcome) ?? readString(outcome.id)
+    }))
+    .sort((left, right) => compareCodeUnits(left.outcomeRef, right.outcomeRef));
+  const changeKinds = CHANGE_KINDS.map((changeKind) => {
+    const eligible = changeKind === "plan-amendment"
+      ? []
+      : activeOutcomes.filter(({ outcome }) => outcomeSelectableForChangeKind(outcome, changeKind));
+    const minimumRefs = changeKind === "plan-amendment"
+      ? 0
+      : INTEGRITY_CHANGE_KINDS.includes(changeKind) || policy.requirePlanRefs === true ? 1 : 0;
+    const maximumRefs = changeKind === "plan-amendment"
+      ? 0
+      : INTEGRITY_CHANGE_KINDS.includes(changeKind) ? 1 : MAX_CHANGE_PLAN_REFS;
+    const selectable = minimumRefs === 0 || eligible.length >= minimumRefs;
+    return {
+      id: changeKind,
+      selectable,
+      disabledReasonCodes: selectable ? [] : ["PLAN_OUTCOME_UNAVAILABLE"],
+      planSelection: {
+        minRefs: minimumRefs,
+        maxRefs: maximumRefs,
+        selectableOutcomeRefs: eligible.map(({ outcomeRef }) => outcomeRef)
+      },
+      integrityIncident: {
+        required: INTEGRITY_CHANGE_KINDS.includes(changeKind),
+        protectedClaimRefsByOutcome: eligible
+          .filter(({ outcome }) => outcome.kind === "integrity-maintenance")
+          .map(({ outcome, outcomeRef }) => ({
+            outcomeRef,
+            claimRefs: normalizeStringList(outcome.acceptance?.claimRefs).sort(compareCodeUnits)
+          }))
+      }
+    };
+  });
+  const referencedOutcomeRefs = new Set(changeKinds.flatMap((entry) => (
+    entry.planSelection.selectableOutcomeRefs
+  )));
+  return {
+    schemaVersion: 1,
+    planOutcomes: activeOutcomes
+      .filter(({ outcomeRef }) => referencedOutcomeRefs.has(outcomeRef))
+      .map(({ outcomeRef, statement }) => ({ outcomeRef, statement })),
+    changeKinds
+  };
+}
+
+function outcomeSelectableForChangeKind(outcome, changeKind) {
+  if (outcome?.status !== "active" || changeKind === "plan-amendment") return false;
+  if (changeKind === "implementation") return outcome?.kind !== "integrity-maintenance";
+  return INTEGRITY_CHANGE_KINDS.includes(changeKind)
+    && outcome?.kind === "integrity-maintenance"
+    && normalizeStringList(outcome.allowedChangeKinds).includes(changeKind);
+}
+
+function compareCodeUnits(left, right) {
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function parseChangePlanRefs(value) {

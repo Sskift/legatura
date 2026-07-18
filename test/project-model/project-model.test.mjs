@@ -6,6 +6,7 @@ import test from "node:test";
 
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import {
+  compileChangePlanAuthoringProjection,
   compileChangeAgainstGovernance,
   parseChangePlanRefs
 } from "../../src/core/change-compiler.mjs";
@@ -487,6 +488,44 @@ test("Outcome Contributions and Transitions bind exact Claims, Criteria, Evidenc
   assert.deepEqual(parseChangePlanRefs([" LGT-001 ", "LGT-001"]), ["LGT-001"]);
   assert.deepEqual(parseChangePlanRefs("x".repeat(256)), ["x".repeat(256)]);
   assert.deepEqual(parseChangePlanRefs(Array(64).fill("LGT-001")), ["LGT-001"]);
+
+  const authoringModel = structuredClone(uniqueModel);
+  authoringModel.plan.outcomes.push({
+    id: "LGT-099",
+    stage: "S1",
+    status: "active",
+    kind: "integrity-maintenance",
+    allowedChangeKinds: ["regression-repair"],
+    outcome: "The fixture core remains usable.",
+    dependsOn: [],
+    acceptance: {
+      claimRefs: ["core-works"],
+      gapRefs: [],
+      exitCriteria: ["A failed protected Claim receives an exact bounded repair."]
+    },
+    nonGoals: ["Feature work"]
+  });
+  authoringModel.plan.stages[0].outcomeRefs.push("LGT-099");
+  const authoring = compileChangePlanAuthoringProjection(governanceBaseline(authoringModel));
+  assert.deepEqual(authoring.planOutcomes.map((outcome) => outcome.outcomeRef), ["LGT-001", "LGT-099"]);
+  assert.deepEqual(
+    authoring.changeKinds.find((kind) => kind.id === "implementation").planSelection,
+    { minRefs: 1, maxRefs: 64, selectableOutcomeRefs: ["LGT-001"] }
+  );
+  assert.deepEqual(
+    authoring.changeKinds.find((kind) => kind.id === "plan-amendment").planSelection,
+    { minRefs: 0, maxRefs: 0, selectableOutcomeRefs: [] }
+  );
+  const regressionRepair = authoring.changeKinds.find((kind) => kind.id === "regression-repair");
+  assert.deepEqual(regressionRepair.planSelection, {
+    minRefs: 1,
+    maxRefs: 1,
+    selectableOutcomeRefs: ["LGT-099"]
+  });
+  assert.deepEqual(regressionRepair.integrityIncident.protectedClaimRefsByOutcome, [{
+    outcomeRef: "LGT-099",
+    claimRefs: ["core-works"]
+  }]);
 
   const paddedOutcomeModel = baseModel();
   enableOutcomeCriteria(paddedOutcomeModel);
