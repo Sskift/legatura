@@ -47,6 +47,10 @@
     {
       "id": "workbench-semantics-consume-project-model-projections",
       "statement": "The Change Kernel obtains Workbench authoring Claim visibility and acceptance-eligible current or frozen-Plan routes only through Project Model's bounded module Claim/Gate projection over each corresponding opaque route product. It does not traverse Contract publicContracts or dependency via relations, interpret Gate or command scope, or filter route effectiveModuleRefs, while retaining ownership only of stable source orchestration, lifecycle action policy, disabled-reason ordering, and compiler-bound Verification Plan validation."
+    },
+    {
+      "id": "workbench-input-requirements-are-kernel-compiled",
+      "statement": "From the same stabilized composite source and compiler-owned current or frozen Governance Baseline semantics as Workbench Claims, routes, and actions, Change Kernel emits one bounded source-bound input-requirement product: authoring requirements enumerate every supported Change kind with exact Plan-selection cardinality and selectable Outcome references, while a selected Change projects the exact Knowledge Closure modes, Decision Authority choices, Decision types, required fields, amendment or adoption references, and confirmation binding accepted by its lifecycle state and scope. The product uses closed reason and field vocabularies and is derived through the same policy seams as Change compilation and acceptance validation, so adapters need not inspect raw Plan, Project Model, or Change internals or invent acceptance policy."
     }
   ],
   "valueObjects": {
