@@ -6,6 +6,18 @@ const EVIDENCE_COVERAGE_EVALUATION_LIMIT = 32768;
 const ELIGIBLE_ASSOCIATIONS_PER_EVIDENCE_LIMIT = 256;
 const ELIGIBLE_ASSOCIATIONS_TOTAL_LIMIT = 32768;
 
+export const KNOWLEDGE_CLOSURE_MODES = Object.freeze(["no-new-knowledge", "entries"]);
+export const KNOWLEDGE_CLOSURE_ENTRY_KINDS = Object.freeze([
+  "model-amendment",
+  "model-gap",
+  "ephemeral"
+]);
+export const AUTHORITY_DECISION_TYPES = Object.freeze([
+  "case-decision",
+  "normative-amendment",
+  "waiver"
+]);
+
 export const EVIDENCE_FIELDS = [
   "claim",
   "oracle",
@@ -773,7 +785,7 @@ export function validateKnowledgeClosure(value) {
   if (entries.length === 0) {
     errors.push("Knowledge Closure requires at least one entry, or noNewKnowledge with rationale.");
   }
-  const allowedKinds = new Set(["model-amendment", "model-gap", "ephemeral"]);
+  const allowedKinds = new Set(KNOWLEDGE_CLOSURE_ENTRY_KINDS);
   entries.forEach((entry, index) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
       errors.push(`Knowledge Closure entry ${index + 1} must be an object.`);
@@ -830,7 +842,7 @@ export function validateAuthorityDecision(value, expectedAuthorities = [], autho
       errors.push(`Authority ${value.authority} is not one of: ${expectedAuthorities.join(", ")}.`);
     }
     const decisionType = value.decisionType;
-    const allowedTypes = new Set(["case-decision", "normative-amendment", "waiver"]);
+    const allowedTypes = new Set(AUTHORITY_DECISION_TYPES);
     if (!allowedTypes.has(decisionType)) {
       errors.push("decisionType must be case-decision, normative-amendment, or waiver.");
     } else if (decisionType === "case-decision") {
@@ -863,6 +875,43 @@ export function validateAuthorityDecision(value, expectedAuthorities = [], autho
     }
   }
   return { valid: errors.length === 0, errors };
+}
+
+export function compileAuthorityDecisionOptions(expectedAuthorities = [], authorityDeclarations = []) {
+  const declarations = new Map((Array.isArray(authorityDeclarations) ? authorityDeclarations : [])
+    .map((authority) => [
+      typeof authority === "string" ? authority : readString(authority?.id),
+      authority
+    ])
+    .filter(([authorityRef]) => Boolean(authorityRef)));
+  return [...new Set((Array.isArray(expectedAuthorities) ? expectedAuthorities : [])
+    .map(readString)
+    .filter(Boolean))]
+    .sort(compareCodeUnits)
+    .flatMap((authorityRef) => {
+      const declaration = declarations.get(authorityRef);
+      const declaredTypes = Array.isArray(declaration?.may)
+        ? declaration.may.map(readString).filter((type) => AUTHORITY_DECISION_TYPES.includes(type))
+        : [];
+      const allowedTypes = declaredTypes.length > 0 ? [...new Set(declaredTypes)] : AUTHORITY_DECISION_TYPES;
+      return allowedTypes.sort(compareCodeUnits).map((decisionType) => ({
+        authorityRef,
+        decisionType,
+        requiredFields: authorityDecisionRequiredFields(decisionType)
+      }));
+    });
+}
+
+function authorityDecisionRequiredFields(decisionType) {
+  if (decisionType === "case-decision") return ["decidedBy", "rationale"];
+  if (decisionType === "normative-amendment") {
+    return ["amendmentRefs", "decidedBy", "rationale"];
+  }
+  return ["compensatingControls", "decidedBy", "expiresAt", "reason", "scope"];
+}
+
+function compareCodeUnits(left, right) {
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 export function readExpectedAuthorities(model, change) {

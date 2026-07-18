@@ -8,12 +8,16 @@ import test from "node:test";
 
 import {
   createKernel,
-  WORKBENCH_DISABLED_REASON_CODES
+  WORKBENCH_DISABLED_REASON_CODES,
+  WORKBENCH_INPUT_REQUIREMENT_REASON_CODES
 } from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
+import { compileChangePlanAuthoringProjection } from "../../src/core/change-compiler.mjs";
 
 const execFileAsync = promisify(execFile);
 const PRIVATE_OUTPUT = "workbench-private-gate-output";
+
+export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
 
 test("Kernel compiles one bounded canonical Workbench semantic projection", async (t) => {
   const repoPath = await createFixture();
@@ -58,6 +62,9 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   assert.equal(authoringOnly.schemaVersion, 2);
   assert.deepEqual(authoringOnly.selection, { changeRef: null });
   assert.deepEqual(authoringOnly.changes, []);
+  const expectedPlanAuthoring = compileChangePlanAuthoringProjection(await writer.inspectProject());
+  assert.deepEqual(authoringOnly.authoring.planOutcomes, expectedPlanAuthoring.planOutcomes);
+  assert.deepEqual(authoringOnly.authoring.changeKinds, expectedPlanAuthoring.changeKinds);
   const counted = countingCommandRunner();
   const projection = await createKernel({ repoPath, commandRunner: counted.run })
     .inspectWorkbenchProjection({ changeRef: "ready-change" });
@@ -123,6 +130,20 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   ]);
   assert.equal(readyActions.accept.enabled, true, "current readiness, not stale persisted state, selects accept");
   assert.deepEqual(readyActions.accept.disabledReasonCodes, []);
+  assertWorkbenchInputRequirements(readyActions.accept.inputRequirements, {
+    changeRef: "ready-change",
+    sourceSnapshotDigest: projection.source.snapshotDigest,
+    available: true,
+    disabledReasonCodes: [],
+    allowedModes: ["no-new-knowledge", "entries"],
+    requiredModelAmendmentRefs: [],
+    selectableKnowledgeGapRefs: [],
+    decisionOptions: [{
+      authorityRef: "module-maintainer",
+      decisionType: "case-decision",
+      requiredFields: ["decidedBy", "rationale"]
+    }]
+  });
   const minimum = findGate(readyActions.gates, "minimum");
   assert.equal(minimum.enabled, true);
   assert.equal(minimum.claimRouteAnnotations.length, 1);
@@ -172,6 +193,20 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
     "CHANGE_NOT_COMPILED",
     "CHANGE_NOT_EVIDENCE_READY"
   ]);
+  assertWorkbenchInputRequirements(claimless.accept.inputRequirements, {
+    changeRef: "claimless-change",
+    sourceSnapshotDigest: claimlessProjection.source.snapshotDigest,
+    available: false,
+    disabledReasonCodes: ["CHANGE_NOT_COMPILED"],
+    allowedModes: ["no-new-knowledge", "entries"],
+    requiredModelAmendmentRefs: [],
+    selectableKnowledgeGapRefs: [],
+    decisionOptions: [{
+      authorityRef: "module-maintainer",
+      decisionType: "case-decision",
+      requiredFields: ["decidedBy", "rationale"]
+    }]
+  });
   assertWorkbenchReasonDiscipline(projection);
 
   const storeBeforeDrift = await snapshotStore(repoPath);
@@ -258,6 +293,123 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   assert.ok(Buffer.byteLength(serialized, "utf8") < 128 * 1024);
 });
 
+test("Workbench acceptance requirements are compiler-owned and accepted at the bound lifecycle seam", async (t) => {
+  const repoPath = await createFixture();
+  t.after(() => rm(repoPath, { recursive: true, force: true }));
+
+  const projectPath = path.join(repoPath, ".legatura/project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  project.authorities.decision[0].may.push("normative-amendment");
+  await writeJson(projectPath, project);
+  await git(repoPath, "add", projectPath);
+  await git(repoPath, "commit", "-qm", "allow fixture normative amendments");
+
+  const writer = createKernel({ repoPath });
+  const candidate = await writer.createChange({
+    id: "model-input-change",
+    title: "Record a durable Workbench input Gap",
+    primaryModule: "core",
+    claims: [{ id: "core-correct", statement: "Core behavior remains correct." }]
+  });
+  const gap = {
+    id: "workbench-input-gap",
+    status: "open",
+    affects: ["core"],
+    owner: "module-maintainer",
+    statement: "The fixture records one durable input requirement.",
+    expansionTrigger: "Before the fixture Workbench expands."
+  };
+  await writeJson(path.join(repoPath, ".legatura/knowledge-gaps.json"), {
+    schemaVersion: 1,
+    gaps: [gap]
+  });
+  await writer.compileChange(candidate.id);
+  const gateResult = await writer.runGate(candidate.id);
+  assert.equal(gateResult.change.state, "EvidenceReady");
+
+  const counted = countingCommandRunner();
+  const projection = await createKernel({ repoPath, commandRunner: counted.run })
+    .inspectWorkbenchProjection({ changeRef: candidate.id });
+  assert.equal(counted.observations(), 2, "input projection reuses one stabilized composite source");
+  const requirements = projection.changes[0].actions.accept.inputRequirements;
+  assertWorkbenchInputRequirements(requirements, {
+    changeRef: candidate.id,
+    sourceSnapshotDigest: projection.source.snapshotDigest,
+    available: true,
+    disabledReasonCodes: [],
+    allowedModes: ["entries"],
+    requiredModelAmendmentRefs: [".legatura/knowledge-gaps.json"],
+    selectableKnowledgeGapRefs: [gap.id],
+    decisionOptions: [{
+      authorityRef: "module-maintainer",
+      decisionType: "normative-amendment",
+      requiredFields: ["amendmentRefs", "decidedBy", "rationale"]
+    }]
+  });
+  assert.deepEqual(requirements.authorityDecision.requiredAdoptedChangePaths, []);
+  assert.deepEqual(requirements.authorityDecision.requiredApprovedObligationIds, []);
+  assert.deepEqual(requirements.authorityDecision.outOfScopePaths, []);
+
+  const knowledgeClosure = {
+    status: "complete",
+    entries: [
+      {
+        kind: "model-amendment",
+        refs: [".legatura/knowledge-gaps.json"],
+        rationale: "The durable fixture Gap is recorded in the governed model."
+      },
+      {
+        kind: "model-gap",
+        refs: [gap.id],
+        rationale: "The new Gap remains explicit until its trigger is crossed."
+      }
+    ]
+  };
+  const accepted = await writer.acceptChange({
+    changeId: candidate.id,
+    knowledgeClosure,
+    authorityDecision: {
+      status: "approved",
+      authority: "module-maintainer",
+      decidedBy: "workbench-semantics-test",
+      decisionType: "normative-amendment",
+      amendmentRefs: [".legatura/knowledge-gaps.json"],
+      rationale: "Approve the exact governed fixture amendment."
+    }
+  });
+  assert.equal(accepted.state, "Accepted");
+  assert.deepEqual(accepted.acceptance.package.knowledgeClosure, knowledgeClosure);
+});
+
+function assertWorkbenchInputRequirements(requirements, expected) {
+  assert.equal(requirements.schemaVersion, 1);
+  assert.equal(requirements.binding.changeRef, expected.changeRef);
+  assert.equal(requirements.binding.sourceSnapshotDigest, expected.sourceSnapshotDigest);
+  assert.match(requirements.binding.governanceBaselineDigest, /^sha256:[a-f0-9]{64}$/u);
+  if (expected.available) {
+    assert.match(requirements.binding.verificationSubjectDigest, /^sha256:[a-f0-9]{64}$/u);
+  } else {
+    assert.equal(requirements.binding.verificationSubjectDigest, null);
+  }
+  assert.equal(requirements.available, expected.available);
+  assert.deepEqual(requirements.disabledReasonCodes, expected.disabledReasonCodes);
+  assert.deepEqual(requirements.knowledgeClosure.allowedModes, expected.allowedModes);
+  assert.deepEqual(
+    requirements.knowledgeClosure.requiredModelAmendmentRefs,
+    expected.requiredModelAmendmentRefs
+  );
+  assert.deepEqual(
+    requirements.knowledgeClosure.selectableKnowledgeGapRefs,
+    expected.selectableKnowledgeGapRefs
+  );
+  assert.deepEqual(requirements.authorityDecision.decisionOptions, expected.decisionOptions);
+  assert.ok(requirements.disabledReasonCodes.every((code) => (
+    WORKBENCH_INPUT_REQUIREMENT_REASON_CODES.includes(code)
+  )));
+  const { requirementsDigest, ...content } = requirements;
+  assert.equal(requirementsDigest, canonicalDigest(content));
+}
+
 function assertWorkbenchReasonDiscipline(value) {
   if (Array.isArray(value)) {
     for (const item of value) assertWorkbenchReasonDiscipline(item);
@@ -271,7 +423,7 @@ function assertWorkbenchReasonDiscipline(value) {
       value.disabledReasonCodes,
       WORKBENCH_DISABLED_REASON_CODES.filter((code) => value.disabledReasonCodes.includes(code))
     );
-    if (value.enabled === false || value.selectable === false) {
+    if (value.enabled === false || value.selectable === false || value.available === false) {
       assert.ok(value.disabledReasonCodes.length > 0);
     } else {
       assert.deepEqual(value.disabledReasonCodes, []);

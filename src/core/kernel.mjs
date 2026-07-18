@@ -13,6 +13,7 @@ import {
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
   assertIntegrityFailureEvidenceCurrent,
+  compileChangePlanAuthoringProjection,
   compileChangeAgainstGovernance,
   parseChangePlanRefs,
   validateIntegrityFailureEvidence
@@ -20,6 +21,9 @@ import {
 import { createChangeStore } from "./change-store.mjs";
 import { executeCommand, normalizeGateCommand } from "./command-runner.mjs";
 import {
+  KNOWLEDGE_CLOSURE_ENTRY_KINDS,
+  KNOWLEDGE_CLOSURE_MODES,
+  compileAuthorityDecisionOptions,
   createGateEvidence,
   createProjectModelEvidence,
   normalizeAuthorityDecision,
@@ -74,14 +78,23 @@ const ARCHITECTURE_PROFILE_WINDOW_PURPOSE = "architecture-profile-window";
 export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
 
 export const WORKBENCH_DISABLED_REASON_CODES = Object.freeze([
+  "PLAN_OUTCOME_UNAVAILABLE",
   "MODULE_NOT_GOVERNED",
   "CLAIM_ACCEPTANCE_ROUTE_MISSING",
   "CHANGE_CLAIM_REQUIRED",
   "CHANGE_NOT_COMPILED",
+  "CHANGE_SCOPE_EXCEEDED",
+  "AUTHORITY_OPTION_UNAVAILABLE",
   "CHANGE_NOT_EVIDENCE_READY",
   "CHANGE_SEALED",
   "GATE_NOT_APPLICABLE",
   "GATE_COMMAND_NOT_APPLICABLE"
+]);
+
+export const WORKBENCH_INPUT_REQUIREMENT_REASON_CODES = Object.freeze([
+  "CHANGE_NOT_COMPILED",
+  "CHANGE_SCOPE_EXCEEDED",
+  "AUTHORITY_OPTION_UNAVAILABLE"
 ]);
 
 const WORKBENCH_DISABLED_REASON_PRECEDENCE = new Map(
@@ -791,6 +804,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       );
     }
 
+    if (request.knowledgeClosure !== undefined) {
+      change.knowledgeClosure = cloneJson(request.knowledgeClosure);
+    }
     if (request.authorityDecision !== undefined) {
       change.authorityDecision = normalizeAuthorityDecision(request.authorityDecision, now());
       bindAuthorityDecision(change);
@@ -1173,7 +1189,11 @@ function createArchitectureProfileWindowCursor({ secret, now }) {
         throwArchitectureProfileCursorInvalid("payload");
       }
       assertArchitectureProfileCursorPayload(payload);
-      if (now() >= payload.expiresAt) {
+      const observedNow = now();
+      if (observedNow < payload.issuedAt) {
+        throwArchitectureProfileCursorInvalid("issued-in-future");
+      }
+      if (observedNow >= payload.expiresAt) {
         throw kernelError(
           "ARCHITECTURE_PROFILE_CURSOR_EXPIRED",
           "Architecture Profile continuation has expired.",
@@ -1347,9 +1367,9 @@ function selectArchitectureProfileRecordWindow(snapshot, query) {
       }
     }
   }
-  const records = [...snapshot.records].sort((left, right) => (
-    requireArchitectureProfileString(left?.id, "change.id")
-      .localeCompare(requireArchitectureProfileString(right?.id, "change.id"))
+  const records = [...snapshot.records].sort((left, right) => compareCodeUnits(
+    requireArchitectureProfileString(left?.id, "change.id"),
+    requireArchitectureProfileString(right?.id, "change.id")
   ));
   for (let index = 1; index < records.length; index += 1) {
     if (readString(records[index - 1]?.id) === readString(records[index]?.id)) {
@@ -1628,7 +1648,8 @@ function compileWorkbenchProjectionFromSnapshot(snapshot, { changeRef = null } =
     },
     selection: { changeRef },
     authoring: {
-      modules: compileWorkbenchAuthoringModules(bundle, budget)
+      modules: compileWorkbenchAuthoringModules(bundle, budget),
+      ...compileWorkbenchPlanAuthoring(snapshot, budget)
     },
     changes: snapshot.records
       .map((record) => compileWorkbenchChangeActions(record, snapshot, bundle, budget))
@@ -1739,6 +1760,22 @@ function compileWorkbenchAuthoringModules(bundle, budget) {
     });
   }
   return modules;
+}
+
+function compileWorkbenchPlanAuthoring(snapshot, budget) {
+  const projection = compileChangePlanAuthoringProjection(snapshot.inspection);
+  consumeWorkbenchProjectionFact(
+    budget,
+    projection.planOutcomes.length + projection.changeKinds.reduce((count, changeKind) => (
+      count
+        + 1
+        + changeKind.planSelection.selectableOutcomeRefs.length
+        + changeKind.integrityIncident.protectedClaimRefsByOutcome.reduce((sum, entry) => (
+          sum + 1 + entry.claimRefs.length
+        ), 0)
+    ), 0)
+  );
+  return cloneJson(projection);
 }
 
 function compileWorkbenchAcceptanceRouteOptions({
@@ -1865,6 +1902,11 @@ function compileWorkbenchChangeActions(record, snapshot, bundle, budget) {
       : [])
   ]);
   const currentApplicability = inspectCurrentApplicability(record, snapshot.inspection, seal);
+  const acceptanceInputRequirements = compileWorkbenchAcceptanceInputRequirements(
+    record,
+    snapshot,
+    budget
+  );
   const gates = [...(Array.isArray(governanceBaseline.gates) ? governanceBaseline.gates : [])]
     .sort((left, right) => (readString(left?.id) ?? "").localeCompare(readString(right?.id) ?? ""))
     .map((gate) => compileWorkbenchGateAction({
@@ -1884,9 +1926,104 @@ function compileWorkbenchChangeActions(record, snapshot, bundle, budget) {
     actions: {
       compile: workbenchAction("compile", compileReasons),
       gates,
-      accept: workbenchAction("accept", acceptReasons)
+      accept: {
+        ...workbenchAction("accept", acceptReasons),
+        inputRequirements: acceptanceInputRequirements
+      }
     }
   };
+}
+
+function compileWorkbenchAcceptanceInputRequirements(record, snapshot, budget) {
+  const governanceBaseline = readGovernanceBaseline(record);
+  const scope = record?.scopeAnalysis;
+  const modelAmendmentRefs = normalizeStringList(scope?.modelAmendmentPaths).sort(compareCodeUnits);
+  const requiredAdoptedChangePaths = normalizeStringList(scope?.preExistingPaths).sort(compareCodeUnits);
+  const outOfScopePaths = normalizeStringList(scope?.outOfScopePaths).sort(compareCodeUnits);
+  const knowledgeGapFileChanged = modelAmendmentRefs.includes(".legatura/knowledge-gaps.json");
+  const selectableKnowledgeGapRefs = knowledgeGapFileChanged
+    ? normalizeStringList(snapshot.inspection?.knowledgeGaps?.map((gap) => readString(gap?.id)))
+      .sort(compareCodeUnits)
+    : [];
+  const expectedAuthorities = readExpectedAuthorities(governanceBaseline, record);
+  const allDecisionOptions = compileAuthorityDecisionOptions(
+    expectedAuthorities,
+    governanceBaseline.projectDocument?.authorities?.decision ?? []
+  );
+  const decisionOptions = allDecisionOptions.filter((option) => (
+    modelAmendmentRefs.length === 0 || option.decisionType === "normative-amendment"
+  ));
+  const requiredApprovedObligationIds = readRequiredCrossMappingObligationIds(record);
+  const disabledReasonCodes = [
+    ...(!scope ? ["CHANGE_NOT_COMPILED"] : []),
+    ...(outOfScopePaths.length > 0 ? ["CHANGE_SCOPE_EXCEEDED"] : []),
+    ...(decisionOptions.length === 0 ? ["AUTHORITY_OPTION_UNAVAILABLE"] : [])
+  ];
+  for (const reason of disabledReasonCodes) {
+    if (!WORKBENCH_INPUT_REQUIREMENT_REASON_CODES.includes(reason)) {
+      throw kernelError(
+        "WORKBENCH_INPUT_REQUIREMENT_INVALID",
+        `Unknown Workbench input-requirement reason code: ${reason}.`,
+        500
+      );
+    }
+  }
+  consumeWorkbenchProjectionFact(
+    budget,
+    8
+      + modelAmendmentRefs.length
+      + requiredAdoptedChangePaths.length
+      + outOfScopePaths.length
+      + selectableKnowledgeGapRefs.length
+      + requiredApprovedObligationIds.length
+      + decisionOptions.reduce((count, option) => count + 1 + option.requiredFields.length, 0)
+  );
+  const content = {
+    schemaVersion: 1,
+    binding: {
+      changeRef: requireWorkbenchReference(record?.id, "acceptanceRequirements.changeRef"),
+      sourceSnapshotDigest: requireArchitectureProfileDigest(
+        snapshot.digest,
+        "acceptanceRequirements.sourceSnapshotDigest"
+      ),
+      governanceBaselineDigest: requireArchitectureProfileDigest(
+        governanceBaseline.digest,
+        "acceptanceRequirements.governanceBaselineDigest"
+      ),
+      verificationSubjectDigest: record?.compilation ? verificationSubjectDigest(record) : null
+    },
+    available: disabledReasonCodes.length === 0,
+    disabledReasonCodes,
+    knowledgeClosure: {
+      required: true,
+      allowedModes: modelAmendmentRefs.length > 0
+        ? ["entries"]
+        : [...KNOWLEDGE_CLOSURE_MODES],
+      entryKinds: [...KNOWLEDGE_CLOSURE_ENTRY_KINDS],
+      requiredModelAmendmentRefs: modelAmendmentRefs,
+      selectableKnowledgeGapRefs,
+      requiredEntryFields: ["rationale"],
+      referenceOrStatementRequired: true
+    },
+    authorityDecision: {
+      required: true,
+      decisionOptions,
+      requiredAmendmentRefs: modelAmendmentRefs,
+      requiredAdoptedChangePaths,
+      requiredApprovedObligationIds,
+      outOfScopePaths
+    },
+    confirmation: {
+      required: true,
+      bindingFields: [
+        "changeRef",
+        "sourceSnapshotDigest",
+        "governanceBaselineDigest",
+        "verificationSubjectDigest"
+      ]
+    }
+  };
+  return { ...content, requirementsDigest: canonicalDigest(content) };
 }
 
 function compileWorkbenchGateAction({
@@ -5366,15 +5503,7 @@ function readObligationMappings(obligations, gateClaimRefs, gateId, commandId) {
 }
 
 function readMappingAuthorization(change, governanceBaseline) {
-  const crossMappings = change.verificationObligations.filter((obligation) => {
-    if (obligation.mapping?.kind === "exact-contract-claim") return false;
-    const refs = [
-      ...normalizeStringList(obligation.evidenceSourceRefs),
-      ...normalizeStringList(obligation.gateClaimRefs),
-      ...normalizeStringList(obligation.supportedBy)
-    ];
-    return refs.some((ref) => ref !== obligation.claimId);
-  });
+  const crossMappings = readCrossMappingObligations(change);
   const invalidObligationIds = crossMappings
     .filter((obligation) => !hasCrossMappingSemantics(obligation))
     .map((obligation) => obligation.id);
@@ -5404,12 +5533,33 @@ function readMappingAuthorization(change, governanceBaseline) {
     .filter((id) => !approved.has(id));
   return {
     valid: invalidObligationIds.length === 0 && unauthorizedObligationIds.length === 0,
-    requiredObligationIds: approvable.map((obligation) => obligation.id),
+    requiredObligationIds: readRequiredCrossMappingObligationIds(change),
     approvedObligationIds,
     authorityBindings,
     invalidObligationIds,
     unauthorizedObligationIds
   };
+}
+
+function readCrossMappingObligations(change) {
+  return (Array.isArray(change?.verificationObligations) ? change.verificationObligations : [])
+    .filter((obligation) => {
+    if (obligation.mapping?.kind === "exact-contract-claim") return false;
+    const refs = [
+      ...normalizeStringList(obligation.evidenceSourceRefs),
+      ...normalizeStringList(obligation.gateClaimRefs),
+      ...normalizeStringList(obligation.supportedBy)
+    ];
+    return refs.some((ref) => ref !== obligation.claimId);
+  });
+}
+
+function readRequiredCrossMappingObligationIds(change) {
+  return readCrossMappingObligations(change)
+    .filter(hasCrossMappingSemantics)
+    .map((obligation) => readString(obligation.id))
+    .filter(Boolean)
+    .sort(compareCodeUnits);
 }
 
 function hasCrossMappingSemantics(obligation) {
@@ -5487,12 +5637,14 @@ function readAcceptanceRequest(idOrInput, optionalDecision) {
     return {
       changeId: idOrInput,
       authorityDecision: nestedDecision ?? directDecision ?? (optionObject ? undefined : optionalDecision),
+      knowledgeClosure: optionObject?.knowledgeClosure,
       integrate: optionObject?.integrate === true || optionObject?.integrated === true
     };
   }
   return {
     changeId: readChangeId(idOrInput),
     authorityDecision: idOrInput.authorityDecision ?? idOrInput.decision,
+    knowledgeClosure: idOrInput.knowledgeClosure,
     integrate: idOrInput.integrate === true || idOrInput.integrated === true
   };
 }
@@ -5580,6 +5732,10 @@ function readModelReference(value) {
 
 function readString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function compareCodeUnits(left, right) {
+  return left === right ? 0 : left < right ? -1 : 1;
 }
 
 function isSubstantive(value) {

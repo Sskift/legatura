@@ -536,6 +536,15 @@ test("Change queries observe sources independently of N and keep list bodies bou
     );
   }
 
+  for (const id of ["zz-order_b", "zz-order-b"]) {
+    await routeProductWriter.createChange({
+      id,
+      title: `Prove deterministic ordering for ${id}`,
+      primaryModule: "core",
+      claims: [routeProductClaim("target-a")]
+    });
+  }
+
   let cursorNow = Date.UTC(2026, 6, 18, 0, 0, 0);
   const windowKernel = createKernel({
     repoPath: routeProductFixture.repoPath,
@@ -576,7 +585,28 @@ test("Change queries observe sources independently of N and keep list bodies bou
     cursor: secondWindow.continuation.cursor
   });
   assert.deepEqual(thirdWindow.window.recordRefs, [{ id: "union-b" }]);
-  assert.equal(thirdWindow.continuation, null);
+  const fourthWindow = await windowKernel.inspectArchitectureProfileWindow({
+    cursor: thirdWindow.continuation.cursor
+  });
+  assert.deepEqual(
+    fourthWindow.window.recordRefs,
+    [{ id: "zz-order-b" }],
+    "window ordering follows explicit code-unit order, not locale collation"
+  );
+  const fifthWindow = await windowKernel.inspectArchitectureProfileWindow({
+    cursor: fourthWindow.continuation.cursor
+  });
+  assert.deepEqual(fifthWindow.window.recordRefs, [{ id: "zz-order_b" }]);
+  assert.equal(fifthWindow.continuation, null);
+
+  cursorNow -= 1;
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({ cursor: firstContinuation.cursor }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_CURSOR_INVALID"
+      && error?.statusCode === 400
+      && error?.details?.reason === "issued-in-future"
+  );
+  cursorNow += 1;
 
   const independentCounted = countingCommandRunner();
   const independentKernel = createKernel({
@@ -620,7 +650,7 @@ test("Change queries observe sources independently of N and keep list bodies bou
 
   const defaultWindow = await windowKernel.inspectArchitectureProfileWindow();
   assert.equal(defaultWindow.window.limit, 20);
-  assert.equal(defaultWindow.window.returned, 3);
+  assert.equal(defaultWindow.window.returned, 5);
   assert.equal(defaultWindow.continuation, null);
 
   cursorNow += 5 * 60 * 1000;
