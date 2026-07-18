@@ -1,7 +1,11 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { canonicalDigest } from "./canonical.mjs";
-import { executeCommand } from "./command-runner.mjs";
+import {
+  isSuccessfulCommandObservation,
+  observeCommand,
+  readCommandUtf8Stream
+} from "./command-runner.mjs";
 
 const RUNTIME_PREFIX = ".legatura/runtime/";
 const TRACKED_PATH_LIMITS = Object.freeze({
@@ -17,10 +21,11 @@ export async function readGitBinding(repoPath, commandRunner) {
     command: "git",
     args: ["rev-parse", "--verify", "HEAD"]
   });
-  if (headResult.exitCode !== 0 || headResult.truncated) {
+  if (!headResult.successful || headResult.truncated || !headResult.textAvailable) {
     const error = headResult.truncated
       ? "Git HEAD output was truncated."
-      : headResult.stderr || headResult.stdout;
+      : headResult.textError || headResult.stderr || headResult.stdout
+        || `Git HEAD observation ended as ${headResult.termination}.`;
     return unavailableBinding(error, null, false);
   }
 
@@ -40,15 +45,20 @@ export async function readGitBinding(repoPath, commandRunner) {
     ["tracked", trackedResult]
   ];
   const failedCommands = commandObservations
-    .filter(([, result]) => result.exitCode !== 0)
-    .map(([name, result]) => `${name} (exit ${result.exitCode})`);
+    .filter(([, result]) => !result.successful)
+    .map(([name, result]) => `${name} (${result.termination})`);
   const truncatedCommands = commandObservations
     .filter(([, result]) => result.truncated)
     .map(([name]) => name);
-  if (failedCommands.length > 0 || truncatedCommands.length > 0) {
+  const unreadableCommands = commandObservations
+    .filter(([, result]) => result.successful && !result.truncated && !result.textAvailable)
+    .map(([name, result]) => `${name} (${result.textError})`);
+  if (failedCommands.length > 0 || truncatedCommands.length > 0 || unreadableCommands.length > 0) {
     const failures = [
       ...(failedCommands.length > 0 ? [`failed commands: ${failedCommands.join(", ")}`] : []),
-      ...(truncatedCommands.length > 0 ? [`truncated output: ${truncatedCommands.join(", ")}`] : [])
+      ...(truncatedCommands.length > 0 ? [`truncated output: ${truncatedCommands.join(", ")}`] : []),
+      ...(unreadableCommands.length > 0
+        ? [`unreadable output: ${unreadableCommands.join(", ")}`] : [])
     ];
     const error = `Git binding observations were incomplete (${failures.join("; ")}).`;
     return unavailableBinding(error, headResult.stdout.trim());
@@ -182,14 +192,53 @@ function unavailableBinding(error, head = null, dirty = true) {
 
 async function executeGitCommand(commandRunner, specification) {
   try {
-    return await executeCommand(commandRunner, specification);
+    const observation = await observeCommand(commandRunner, specification);
+    const stdout = readCommandUtf8Stream(observation, "stdout");
+    const stderr = readCommandUtf8Stream(observation, "stderr");
+    const termination = describeTermination(observation);
+    return {
+      successful: isSuccessfulCommandObservation(observation),
+      exitCode: observation.termination.kind === "exited"
+        ? observation.termination.exitCode : null,
+      stdout: stdout.available ? stdout.value : "",
+      stderr: stderr.available
+        ? stderr.value : observation.termination.error?.message ?? "",
+      truncated: observation.streams.stdout.truncated
+        || observation.streams.stderr.truncated
+        || observation.termination.error?.reportedTruncated === true,
+      textAvailable: stdout.available && stderr.available,
+      textError: [stdout, stderr]
+        .filter((projection) => !projection.available)
+        .map((projection) => projection.reasonCode)
+        .join(", "),
+      termination
+    };
   } catch (error) {
     return {
+      successful: false,
       exitCode: 1,
       stdout: "",
-      stderr: error instanceof Error ? error.message : String(error)
+      stderr: error instanceof Error ? error.message : String(error),
+      truncated: false,
+      textAvailable: false,
+      textError: "observer-threw",
+      termination: "observer-threw"
     };
   }
+}
+
+function describeTermination(observation) {
+  if (observation.support.status === "unsupported") {
+    return `unsupported ${observation.support.reasonCode}`;
+  }
+  if (observation.control.kind !== "none") return observation.control.kind;
+  if (observation.termination.kind === "exited") {
+    return `exit ${observation.termination.exitCode}`;
+  }
+  if (observation.termination.kind === "signaled") {
+    return `signal ${observation.termination.signal}`;
+  }
+  return observation.termination.kind;
 }
 
 function countNulTerminators(value) {
