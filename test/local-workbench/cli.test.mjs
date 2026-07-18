@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +12,22 @@ import { parseArgs, runCli } from "../../src/cli.mjs";
 import { compileArchitectureProfileWindowViewModel } from "../../src/workbench-view-model.mjs";
 
 const execFileAsync = promisify(execFile);
+const CLI_ENTRYPOINT = fileURLToPath(new URL("../../src/cli.mjs", import.meta.url));
+const BROWNFIELD_REFERENCE_ROOT = fileURLToPath(
+  new URL("../../examples/brownfield-app-apk-relay/", import.meta.url)
+);
+const AGGREGATE_ASSURANCE_KEYS = new Set([
+  "completeness",
+  "confidence",
+  "greenlight",
+  "health",
+  "overall",
+  "percent",
+  "percentage",
+  "readiness",
+  "ready",
+  "score"
+]);
 
 test("parses supported commands and rejects ambiguous input", () => {
   assert.deepEqual(parseArgs(["open", "/repo"]), {
@@ -190,6 +206,191 @@ test("inspect streams exact Profile windows or bounded orthogonal dimension summ
   assert.deepEqual(failedCalls, [{}, { cursor: "opaque-next-window" }]);
 });
 
+test("the real inspect CLI preserves the brownfield reference as orthogonal Profile facts", async (t) => {
+  const repoPath = await createBrownfieldReferenceFixture(t);
+  const { stdout, stderr } = await execFileAsync(
+    process.execPath,
+    [CLI_ENTRYPOINT, "inspect", repoPath, "--json"],
+    { cwd: repoPath, maxBuffer: 4 * 1024 * 1024 }
+  );
+  assert.equal(stderr, "");
+  const stream = JSON.parse(stdout);
+  assert.deepEqual({
+    schemaVersion: stream.schemaVersion,
+    kind: stream.kind,
+    windowCount: stream.windowCount,
+    complete: stream.complete,
+    error: stream.error
+  }, {
+    schemaVersion: 2,
+    kind: "architecture-profile-window-stream",
+    windowCount: 1,
+    complete: true,
+    error: null
+  });
+  assert.equal(stream.windows.length, 1);
+  const [window] = stream.windows;
+  assert.equal(window.kind, "architecture-profile-window");
+  assert.deepEqual(window.window, {
+    ordering: "change-id-v1",
+    offset: 0,
+    limit: 20,
+    returned: 0,
+    hasMore: false,
+    recordRefs: []
+  });
+  assert.equal(window.continuation, null);
+
+  const profile = window.page;
+  assert.deepEqual(
+    profile.context.modules
+      .map(({ id, status }) => ({ id, status }))
+      .sort(compareIds),
+    [
+      { id: "apk", status: "provisional" },
+      { id: "app", status: "provisional" },
+      { id: "relay", status: "governed" },
+      { id: "repository-governance", status: "governed" }
+    ]
+  );
+  assert.equal(
+    profile.context.modules.some((module) => module.id === "legacy-device-bridge"),
+    false,
+    "the opaque legacy dependency remains explicitly unmodeled, not invented as a fifth Module"
+  );
+
+  assert.deepEqual(
+    profile.context.contracts
+      .map(({ id, ownerModuleRef, maturity }) => ({ id, ownerModuleRef, maturity }))
+      .sort(compareIds),
+    [
+      { id: "apk-delivery-port", ownerModuleRef: "apk", maturity: "provisional" },
+      { id: "app-relay-request", ownerModuleRef: "app", maturity: "provisional" },
+      { id: "relay-routing", ownerModuleRef: "relay", maturity: "governed" }
+    ]
+  );
+  assert.deepEqual(
+    profile.dimensions.claims
+      .map(({ id, contractRef, ownerModuleRef, statement }) => ({
+        id,
+        contractRef,
+        ownerModuleRef,
+        statement
+      }))
+      .sort(compareIds),
+    [
+      {
+        id: "apk-delivery-port-accepts-envelope",
+        contractRef: "apk-delivery-port",
+        ownerModuleRef: "apk",
+        statement: "The apk delivery port accepts one correlation-bound envelope and returns an acceptance acknowledgement."
+      },
+      {
+        id: "app-relay-request-carries-correlation-id",
+        contractRef: "app-relay-request",
+        ownerModuleRef: "app",
+        statement: "An app relay request carries a non-empty correlation id and an opaque payload."
+      },
+      {
+        id: "relay-preserves-correlation-id",
+        contractRef: "relay-routing",
+        ownerModuleRef: "relay",
+        statement: "Relay preserves the app request correlation id in the delivery envelope and returned acknowledgement."
+      }
+    ]
+  );
+
+  assert.deepEqual(profile.dimensions.gates, [{ id: "minimum", name: "Relay Minimum Gate" }]);
+  const relayRelations = profile.relations.claimGateRoutes.filter(
+    (relation) => relation.claimRef === "relay-preserves-correlation-id"
+  );
+  assert.equal(relayRelations.length, 1);
+  const relayRoute = profile.context.routes.find(
+    (route) => route.id === relayRelations[0].routeRef
+  );
+  assert.deepEqual({
+    claimRef: relayRoute.claimRef,
+    gateRef: relayRoute.gateRef,
+    commandRef: relayRoute.commandRef,
+    timeoutMs: relayRoute.timeoutMs,
+    oracleKind: relayRoute.oracle.kind
+  }, {
+    claimRef: "relay-preserves-correlation-id",
+    gateRef: "minimum",
+    commandRef: "relay-correlation-proof",
+    timeoutMs: 30000,
+    oracleKind: "node-test-runner-exit"
+  });
+  assert.match(relayRoute.commandDigest, /^sha256:[a-f0-9]{64}$/u);
+  assert.match(relayRoute.routeDigest, /^sha256:[a-f0-9]{64}$/u);
+  assert.deepEqual(
+    profile.relations.routeModules
+      .filter((relation) => relation.routeRef === relayRoute.id)
+      .map((relation) => relation.moduleRef),
+    ["relay"]
+  );
+
+  assert.deepEqual(
+    profile.dimensions.knowledgeGaps
+      .map(({ id, status, statement }) => ({ id, status, statement }))
+      .sort(compareIds),
+    [
+      {
+        id: "apk-remains-provisional",
+        status: "open",
+        statement: "The apk delivery port Contract is modeled, but real device delivery behavior is not yet governed."
+      },
+      {
+        id: "app-remains-provisional",
+        status: "open",
+        statement: "The app public request Contract is modeled, but broader app implementation behavior is not yet governed."
+      },
+      {
+        id: "legacy-device-bridge-remains-opaque",
+        status: "open",
+        statement: "The legacy device bridge remains opaque and outside governed Module implementation scope."
+      }
+    ]
+  );
+  assert.deepEqual(
+    profile.context.areas.find((area) => area.id === "legacy-device-bridge"),
+    { id: "legacy-device-bridge", kind: "declared-gap-affect" }
+  );
+  assert.deepEqual(
+    profile.relations.gapAffects.filter((relation) => (
+      relation.gapRef === "legacy-device-bridge-remains-opaque"
+        && relation.targetRef === "legacy-device-bridge"
+    )),
+    [{
+      gapRef: "legacy-device-bridge-remains-opaque",
+      targetKind: "declared-area",
+      targetRef: "legacy-device-bridge"
+    }],
+    "the CLI preserves the explicit unknown without inferring a modeled assurance state"
+  );
+
+  assert.throws(
+    () => parseArgs(["adopt", repoPath]),
+    (error) => error?.code === "UNKNOWN_COMMAND"
+  );
+  const keyFacts = collectKeyFacts(stream);
+  assert.deepEqual(
+    keyFacts.filter(({ normalized }) => normalized === "adopt" || normalized === "adoption"),
+    [],
+    "inspection introduces no special brownfield adoption field"
+  );
+  assert.deepEqual(
+    keyFacts.filter(({ normalized }) => AGGREGATE_ASSURANCE_KEYS.has(normalized)),
+    [],
+    "Profile keys preserve orthogonal facts and never introduce aggregate assurance"
+  );
+  assert.deepEqual(
+    keyFacts.filter(({ normalized }) => normalized === "complete").map(({ path: keyPath }) => keyPath),
+    ["$.complete"],
+    "complete is only the CLI stream traversal marker, never a Profile assurance conclusion"
+  );
+});
+
 test("the packed CLI installs as an executable entrypoint", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "legatura-package-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -234,6 +435,44 @@ function fixtureIo() {
     },
     stdout: () => output
   };
+}
+
+async function createBrownfieldReferenceFixture(t) {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-brownfield-cli-"));
+  const repoPath = path.join(fixtureRoot, "repo");
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  await cp(BROWNFIELD_REFERENCE_ROOT, repoPath, { recursive: true });
+  await runGit(repoPath, "init", "--quiet");
+  await runGit(repoPath, "config", "user.name", "Legatura Brownfield Proof");
+  await runGit(repoPath, "config", "user.email", "brownfield-proof@legatura.test");
+  await runGit(repoPath, "add", ".");
+  await runGit(repoPath, "commit", "--quiet", "-m", "fixture: brownfield reference");
+  return repoPath;
+}
+
+function collectKeyFacts(value, currentPath = "$", facts = []) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => collectKeyFacts(entry, `${currentPath}[${index}]`, facts));
+    return facts;
+  }
+  if (!value || typeof value !== "object") return facts;
+  for (const [key, child] of Object.entries(value)) {
+    const keyPath = `${currentPath}.${key}`;
+    facts.push({
+      path: keyPath,
+      normalized: key.toLowerCase().replace(/[^a-z]/gu, "")
+    });
+    collectKeyFacts(child, keyPath, facts);
+  }
+  return facts;
+}
+
+function compareIds(left, right) {
+  return left.id.localeCompare(right.id);
+}
+
+function runGit(repoPath, ...args) {
+  return execFileAsync("git", args, { cwd: repoPath });
 }
 
 function architectureProfileWindowFixture({
@@ -318,3 +557,5 @@ function architectureProfileFixture(changeIds = []) {
   };
   return { ...content, profileDigest: canonicalDigest(content) };
 }
+
+export const BROWNFIELD_ADOPTION_LOCAL_WORKBENCH_PROOF_VERSION = 1;
