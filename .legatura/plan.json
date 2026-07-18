@@ -316,7 +316,7 @@
     {
       "id": "LGT-014",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "Architecture Acceptance Profiles remain inspectable as accepted history grows by traversing authenticated, snapshot-bound, hard-bounded windows whose exact Kernel semantics are only projected by CLI, loopback HTTP, and browser adapters.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1223,6 +1223,51 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-014-T2",
+      "outcomeRef": "LGT-014",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "The prior sealed Change Kernel and Local Workbench Packages now cover both frozen LGT-014 Criteria and close the authenticated traversal and browser DOM Gaps through their exact fixed proof Claims without using this Plan Amendment as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt014-implement-profile-window-kernel",
+          "acceptanceDigest": "sha256:d2832854cb5e4c2034d85d8f1a9df8402d1d35e561d6c8e2df8bbfb19c247167"
+        },
+        {
+          "changeId": "lgt014-implement-profile-window-workbench",
+          "acceptanceDigest": "sha256:3ade1c768efb08ea1ffbee382cbf89a05273e791081c985a545a36ae55548bb2"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-014-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Change Kernel Package directly proves one stabilized composite snapshot per request, Change-id window selection before Profile facts or historical Provider compilation, fixed resource ceilings, complete unchanged-snapshot traversal, and fail-closed authenticated continuations through the fixed Kernel proof Gate.",
+            "residualUncertainty": "Continuations deliberately remain process-local and abort on source drift; portable Accepted history and authenticated multi-writer coordination remain separate open trust concerns."
+          }
+        },
+        {
+          "criterionRef": "LGT-014-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Local Workbench Package directly proves a pure exact window view model, strict bounded CLI and loopback HTTP traversal, current-page browser state, selected-Change Workbench projection, and a DOM workflow covering replacement, cross-snapshot rejection, opaque-token redaction, and late-response discard without aggregate assurance.",
+            "residualUncertainty": "The DOM proof is semantic rather than pixel-perfect, while browser identity, remote transport, and portable continuations remain outside the frozen LGT-014 boundary."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "architecture-profile-window-traversal-not-proven",
+          "rationale": "The fixed Kernel and Local Workbench Profile-window proof commands in the two prior sealed Packages directly cover both declared proof Claims and the durable cross-module traversal resolution."
+        },
+        {
+          "gapRef": "browser-projection-not-e2e-tested",
+          "rationale": "The fixed Local Workbench browser proof command in the prior sealed Package directly covers the declared DOM workflow proof Claim without introducing a snapshot-test wall."
+        }
+      ]
     }
   ],
   "changeRules": {

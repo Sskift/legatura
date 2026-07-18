@@ -36,18 +36,26 @@
     },
     {
       "id": "browser-projection-not-e2e-tested",
-      "status": "open",
+      "status": "closed",
       "affects": ["local-workbench"],
       "owner": "module-maintainer",
       "statement": "The browser projection has no DOM-level test proving that it preserves Project Model and Change semantics.",
       "proofClaimRefs": [
         "architecture-profile-browser-dom-workflow-is-exercised"
       ],
-      "expansionTrigger": "Before Local Workbench becomes governed."
+      "expansionTrigger": "Before Local Workbench becomes governed.",
+      "resolution": "The fixed Local Workbench proof now drives a loopback HTTP Profile window through the browser adapter and a real DOM: a successor replaces rather than accumulates the current page, cross-snapshot and malformed envelopes fail closed without replacing it, stale continuation errors redact the opaque token, and late responses cannot overwrite a newer generation.",
+      "closedBy": [
+        {
+          "changeId": "lgt014-implement-profile-window-workbench",
+          "acceptanceDigest": "sha256:3ade1c768efb08ea1ffbee382cbf89a05273e791081c985a545a36ae55548bb2"
+        }
+      ],
+      "reopenTrigger": "Reopen if the DOM workflow no longer executes through loopback HTTP and the production adapter, if a successor can append or replace across source mismatch, if continuation material can be decoded or rendered, or if late responses can overwrite a newer page."
     },
     {
       "id": "architecture-profile-window-traversal-not-proven",
-      "status": "open",
+      "status": "closed",
       "affects": ["change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The only Kernel Profile query compiles every Change record and every referenced frozen Governance Baseline into one result under one 2 MiB and aggregate route-query budget; the repository's real accepted history already exceeds that shape, and there is no authenticated snapshot-bound continuation or adapter traversal proof.",
@@ -55,7 +63,19 @@
         "architecture-profile-window-proof-rejects-query-attacks",
         "architecture-profile-window-adapter-proof-rejects-semantic-drift"
       ],
-      "expansionTrigger": "Before LGT-014 implementation begins or any Profile history beyond one legal window is presented."
+      "expansionTrigger": "Before LGT-014 implementation begins or any Profile history beyond one legal window is presented.",
+      "resolution": "Change Kernel now selects a canonical Change-id window from one stabilized composite source before Profile facts or historical route Providers are compiled, enforces fixed record and output ceilings, and issues process-authenticated source-bound continuations. The pure Local Workbench view model plus strict CLI, loopback HTTP, and browser controller preserve each window and traverse without retaining full history or recompiling governance semantics.",
+      "closedBy": [
+        {
+          "changeId": "lgt014-implement-profile-window-kernel",
+          "acceptanceDigest": "sha256:d2832854cb5e4c2034d85d8f1a9df8402d1d35e561d6c8e2df8bbfb19c247167"
+        },
+        {
+          "changeId": "lgt014-implement-profile-window-workbench",
+          "acceptanceDigest": "sha256:3ade1c768efb08ea1ffbee382cbf89a05273e791081c985a545a36ae55548bb2"
+        }
+      ],
+      "reopenTrigger": "Reopen if any Profile read materializes unselected history before windowing, repeats source observation per record, emits beyond fixed ceilings, accepts malformed, modified, expired, unissued, cross-process, cross-snapshot, or cross-query continuations, writes the Store during reads, or lets adapters decode cursors, merge snapshots, accumulate all pages, or recompile governance semantics."
     },
     {
       "id": "workbench-input-requirements-not-projected",
