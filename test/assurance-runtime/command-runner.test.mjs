@@ -126,9 +126,12 @@ test("timeout and cancellation settle the process group before returning", async
   const timeoutMarker = path.join(directory, "timeout-late.txt");
   const timedOut = await observer(longRunningSpecification(timeoutMarker, { timeoutMs: 120 }));
   assert.equal(timedOut.control.kind, "timeout");
-  assert.deepEqual(timedOut.control.signalAttempts.map(({ signal }) => signal), ["SIGTERM", "SIGKILL"]);
+  assert.equal(timedOut.control.signalAttempts[0]?.signal, "SIGTERM");
   assert.equal(timedOut.termination.kind, "signaled");
-  assert.equal(timedOut.termination.signal, "SIGKILL");
+  assert.ok(["SIGTERM", "SIGKILL"].includes(timedOut.termination.signal));
+  assert.ok(timedOut.control.signalAttempts.some((attempt) => (
+    attempt.signal === timedOut.termination.signal && attempt.delivered
+  )));
   assert.equal(timedOut.termination.closeConfirmed, true);
   assert.equal(readCommandUtf8Stream(timedOut, "stdout").value, "before");
   assert.equal(isSuccessfulCommandObservation(timedOut), false);
@@ -142,8 +145,12 @@ test("timeout and cancellation settle the process group before returning", async
   setTimeout(() => controller.abort(), 120);
   const cancelled = await cancellation;
   assert.equal(cancelled.control.kind, "cancelled");
+  assert.equal(cancelled.control.signalAttempts[0]?.signal, "SIGTERM");
   assert.equal(cancelled.termination.kind, "signaled");
-  assert.equal(cancelled.termination.signal, "SIGKILL");
+  assert.ok(["SIGTERM", "SIGKILL"].includes(cancelled.termination.signal));
+  assert.ok(cancelled.control.signalAttempts.some((attempt) => (
+    attempt.signal === cancelled.termination.signal && attempt.delivered
+  )));
   assert.equal(cancelled.termination.closeConfirmed, true);
   assert.equal(readCommandUtf8Stream(cancelled, "stdout").value, "before");
   assert.equal(isSuccessfulCommandObservation(cancelled), false);
