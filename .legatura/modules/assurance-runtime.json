@@ -10,12 +10,21 @@
     "entrypoints": [
       "canonicalStringify(value)",
       "canonicalDigest(value)",
+      "observeCommand(commandRunner, specification)",
+      "createLocalCommandObserver(options)",
+      "isSuccessfulCommandObservation(observation)",
+      "readCommandUtf8Stream(observation, stream, options)",
+      "COMMAND_OBSERVATION_PROOF_VERSION",
       "executeCommand(runner, specification)",
       "normalizeGateCommand(value)",
       "readGitBinding(repoPath, runner)"
     ],
     "invariants": [
       "Observations never decide whether a Change is acceptable.",
+      "Command Observation v2 keeps support, control trigger, confirmed close, actual termination, and two raw-byte streams orthogonal; captured text is never the authority.",
+      "The local-direct-node-posix-v1 profile supports direct argv only on Linux or macOS under Node major 22, 24, or 25; every other profile or host is reported unsupported before spawn.",
+      "Timeout and cancellation request bounded process-group termination, retain prior stream bytes, and do not return a confirmed observation until close; an unconfirmed close cannot become successful.",
+      "Injected runner reports are strictly normalized and bounded; permissive ok flags, contradictory exit and signal facts, and unknown result shapes cannot synthesize success.",
       "Failed or truncated Git observations fail closed.",
       "One repository observation emits a bounded complete canonical tracked-path set and exact digest, or reports the binding unavailable on command failure, truncation, malformed paths, duplicates, or resource-limit exhaustion."
     ]

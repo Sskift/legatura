@@ -22,6 +22,14 @@
     {
       "id": "command-observation-is-explicit",
       "statement": "A declared command returns explicit exit status, stdout, stderr, signal, and truncation state without deciding acceptance."
+    },
+    {
+      "id": "command-observation-is-terminal-state-complete",
+      "statement": "Under the declared local-direct-node-posix-v1 support profile, one command invocation returns one bounded schema-v2 observation that keeps support, control trigger, confirmed close, actual exit or signal, and each raw byte stream's capture, observed length, digest, strict UTF-8 validity, and truncation facts orthogonal."
+    },
+    {
+      "id": "unsupported-command-observations-fail-closed",
+      "statement": "Only a supported direct-argv observation with no control trigger, confirmed close, natural exit code zero, and internally consistent raw-byte stream facts can be classified as successful; unsupported profiles, malformed adapter reports, timeout, cancellation, start failure, signal termination, or unconfirmed close remain non-positive."
     }
   ]
 }
