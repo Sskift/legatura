@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
+import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { createKernel } from "../../src/core/index.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -25,6 +26,19 @@ const SOURCE_BINDING_KEYS = [
   "schemaVersion",
   "trackedPathFactsDigest"
 ];
+const BROWNFIELD_REFERENCE_ROOT = path.resolve(
+  import.meta.dirname,
+  "../../examples/brownfield-app-apk-relay"
+);
+const BROWNFIELD_GAP_IDS = [
+  "app-remains-provisional",
+  "apk-remains-provisional",
+  "legacy-device-bridge-remains-opaque"
+];
+const BROWNFIELD_RELAY_CLAIM = {
+  id: "relay-preserves-correlation-id",
+  statement: "Relay preserves the app request correlation id in the delivery envelope and returned acknowledgement."
+};
 
 test("Kernel enforces one digest-bound ownership product through a narrowed governed lifecycle", async (t) => {
   const repoPath = await createGovernedFixture();
@@ -120,6 +134,138 @@ test("Kernel enforces one digest-bound ownership product through a narrowed gove
     assert.deepEqual(Object.keys(material.analysis.currentSourceBinding).sort(), SOURCE_BINDING_KEYS);
     assert.ok(material.analysis.decisions.length >= 2);
   }
+});
+
+test("an ordinary relay Change accepts the bounded brownfield reference without concealing its Gaps", async (t) => {
+  const repoPath = await createBrownfieldReferenceFixture(t);
+  const kernel = createKernel({ repoPath });
+  const knowledgeClosure = {
+    status: "complete",
+    noNewKnowledge: true,
+    rationale: "The semantics-preserving relay edit introduces no future-relevant project knowledge."
+  };
+  const candidate = await kernel.createChange({
+    id: "bounded-brownfield-relay-change",
+    title: "Preserve relay correlation identity through its declared Contracts",
+    primaryModule: "relay",
+    changeKind: "implementation",
+    planRefs: ["LGT-001"],
+    claims: [BROWNFIELD_RELAY_CLAIM],
+    knowledgeClosure
+  });
+  assertExactOpenBrownfieldGaps(
+    candidate.governanceBaseline.knowledgeGaps,
+    "the frozen Governance Baseline"
+  );
+
+  const relayPath = path.join(repoPath, "relay/index.mjs");
+  const originalRelay = await readFile(relayPath, "utf8");
+  const editedRelay = originalRelay
+    .replace(
+      "    const delivery = await deliver({\n      correlationId: request.correlationId,",
+      "    const correlationId = request.correlationId;\n    const delivery = await deliver({\n      correlationId,"
+    )
+    .replace(
+      "    return {\n      correlationId: request.correlationId,",
+      "    return {\n      correlationId,"
+    );
+  assert.notEqual(editedRelay, originalRelay, "the proof must exercise a real relay implementation edit");
+  await writeFile(relayPath, editedRelay, "utf8");
+
+  const compiled = await kernel.compileChange(candidate.id);
+  assert.deepEqual(
+    compiled.outcomeAlignment.contributions.map(({ outcomeRef, criterionRef, claimRefs }) => ({
+      outcomeRef,
+      criterionRef,
+      claimRefs
+    })),
+    [{
+      outcomeRef: "LGT-001",
+      criterionRef: "LGT-001-C1",
+      claimRefs: ["relay-preserves-correlation-id"]
+    }]
+  );
+  assert.equal(compiled.outcomeAlignment.status, "complete");
+  assert.deepEqual(
+    compiled.contextCapsule.dependencyContracts.map((contract) => contract.id).sort(),
+    ["apk-delivery-port", "app-relay-request"]
+  );
+  assert.deepEqual(
+    compiled.contextCapsule.dependencies
+      .map(({ module, interfaceRef, access }) => ({ module, interfaceRef, access })),
+    [
+      { module: "app", interfaceRef: "app-relay-request", access: "interface-only" },
+      { module: "apk", interfaceRef: "apk-delivery-port", access: "interface-only" }
+    ]
+  );
+  assert.deepEqual(
+    compiled.contextCapsule.publicContracts.map((contract) => contract.id),
+    ["relay-routing"]
+  );
+  assert.ok(compiled.contextCapsule.scope.read.include.every((pathRef) => (
+    !pathRef.startsWith("app/")
+      && !pathRef.startsWith("apk/")
+      && !pathRef.startsWith("legacy/")
+  )));
+  assert.deepEqual(compiled.scopeAnalysis.touchedPaths, ["relay/index.mjs"]);
+  assert.deepEqual(compiled.scopeAnalysis.inModuleWriteScope, ["relay/index.mjs"]);
+  assert.deepEqual(compiled.scopeAnalysis.outOfScopePaths, []);
+  assert.deepEqual(compiled.scopeAnalysis.modelAmendmentPaths, []);
+  assert.deepEqual(compiled.scopeAnalysis.opaquePaths, []);
+  assert.deepEqual(compiled.scopeAnalysis.preExistingPaths, []);
+  assertExactOpenBrownfieldGaps(compiled.contextCapsule.knowledgeGaps, "the compiled Context Capsule");
+
+  const gate = await kernel.runGate(candidate.id, "minimum");
+  assert.equal(gate.status, "passed");
+  assert.equal(
+    gate.gateRuns.find((run) => run.gateId === "minimum")?.status,
+    "passed"
+  );
+  const accepted = await kernel.acceptChange(candidate.id, {
+    authority: "relay-maintainer",
+    decidedBy: "brownfield-change-kernel-proof",
+    decisionType: "case-decision",
+    status: "approved",
+    rationale: "The bounded relay edit, focused Gate Evidence, and explicit residual Gaps are accepted."
+  });
+  assert.equal(accepted.state, "Accepted");
+  const packageContent = accepted.acceptance.package;
+  assert.equal(accepted.acceptance.digest, canonicalDigest(packageContent));
+  assert.deepEqual(packageContent.contextCapsule, accepted.contextCapsule);
+  assert.deepEqual(packageContent.scopeAnalysis, accepted.scopeAnalysis);
+  assert.deepEqual(packageContent.governanceBaseline, candidate.governanceBaseline);
+  assert.deepEqual(packageContent.knowledgeClosure, knowledgeClosure);
+  assert.deepEqual(packageContent.scopeAnalysis.touchedPaths, ["relay/index.mjs"]);
+  assert.deepEqual(packageContent.scopeAnalysis.outOfScopePaths, []);
+  const relayGateEvidence = packageContent.evidence.find((evidence) => (
+    evidence.provenance?.gateId === "minimum"
+      && evidence.provenance?.commandId === "relay-correlation-proof"
+  ));
+  assert.ok(relayGateEvidence, "the Accepted Package seals the ordinary relay Gate command");
+  assert.deepEqual(relayGateEvidence.directSupportsClaimIds, ["relay-preserves-correlation-id"]);
+  assert.deepEqual(
+    packageContent.contextCapsule.compiledFrom.pathOwnership,
+    accepted.contextCapsule.compiledFrom.pathOwnership
+  );
+  assert.deepEqual(
+    packageContent.scopeAnalysis.pathOwnership.frozenSourceBinding,
+    packageContent.baseline.pathOwnership
+  );
+  assert.deepEqual(
+    packageContent.scopeAnalysis.pathOwnership.currentSourceBinding,
+    packageContent.baseline.pathOwnership
+  );
+  assertExactOpenBrownfieldGaps(
+    packageContent.governanceBaseline.knowledgeGaps,
+    "the Accepted Package Governance Baseline"
+  );
+  assertExactOpenBrownfieldGaps(
+    packageContent.contextCapsule.knowledgeGaps,
+    "the Accepted Package Context Capsule"
+  );
+
+  const current = await kernel.inspectProject();
+  assertExactOpenBrownfieldGaps(current.knowledgeGaps, "the current reference Project Model");
 });
 
 test("Kernel keeps ownership denial dimensions distinct and rejects policy drift before Gate execution", async (t) => {
@@ -354,6 +500,19 @@ async function createGovernedFixture() {
   return repoPath;
 }
 
+async function createBrownfieldReferenceFixture(t) {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-brownfield-kernel-"));
+  const repoPath = path.join(fixtureRoot, "repo");
+  t.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  await cp(BROWNFIELD_REFERENCE_ROOT, repoPath, { recursive: true });
+  await git(repoPath, "init", "--quiet");
+  await git(repoPath, "config", "user.name", "Legatura Brownfield Proof");
+  await git(repoPath, "config", "user.email", "brownfield-proof@legatura.test");
+  await git(repoPath, "add", ".");
+  await git(repoPath, "commit", "--quiet", "-m", "fixture: brownfield reference");
+  return repoPath;
+}
+
 function completeKnowledgeClosure() {
   return {
     status: "complete",
@@ -409,6 +568,24 @@ function assertNoOpaqueProductState(value) {
   visit(value);
 }
 
+function assertExactOpenBrownfieldGaps(gaps, location) {
+  assert.deepEqual(
+    gaps.map((gap) => ({
+      id: gap.id,
+      status: gap.status,
+      hasClosedBy: Object.hasOwn(gap, "closedBy"),
+      hasResolution: Object.hasOwn(gap, "resolution")
+    })),
+    BROWNFIELD_GAP_IDS.map((id) => ({
+      id,
+      status: "open",
+      hasClosedBy: false,
+      hasResolution: false
+    })),
+    location
+  );
+}
+
 function countingCommandRunner() {
   let bindingRoundCount = 0;
   let gateExecutionCount = 0;
@@ -448,3 +625,5 @@ async function writeJson(filePath, value) {
 async function git(cwd, ...args) {
   await execFileAsync("git", args, { cwd });
 }
+
+export const BROWNFIELD_ADOPTION_CHANGE_KERNEL_PROOF_VERSION = 1;
