@@ -57,7 +57,7 @@
       "id": "S1",
       "name": "Self-Proving Project Model",
       "status": "active",
-      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018"]
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018", "LGT-019"]
     },
     {
       "id": "S2",
@@ -451,6 +451,53 @@
         "Treating priority, assignment, deadlines, or task progress as Outcome revisions",
         "Combining any Outcome Revision with any Outcome status Transition in one Amendment",
         "A generic event bus or Project Model migration framework"
+      ]
+    },
+    {
+      "id": "LGT-019",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Every Local Workbench authoring and acceptance input is a bounded, source-bound Kernel projection, while Profile traversal fails completely and canonically at process and browser boundaries without reconstructing governance semantics.",
+      "dependsOn": ["LGT-014"],
+      "acceptance": {
+        "activationCriterionRefs": [],
+        "claimRefs": [
+          "workbench-semantics-are-kernel-compiled",
+          "workbench-projects-kernel-semantics",
+          "architecture-profile-windows-are-snapshot-bound-and-complete"
+        ],
+        "gapRefs": ["workbench-input-requirements-not-projected"],
+        "exitCriteria": [
+          "One stabilized Workbench query projects the complete selectable Plan Outcome options and exact per-Change Knowledge Closure and authority-decision input requirements alongside Claims, routes, and lifecycle actions; every requirement is bounded and source-bound, and no adapter filters raw Plan facts or invents acceptance policy.",
+          "CLI, loopback HTTP, and browser adapters preserve the Kernel requirement projection and remain failure-complete: JSON inspection stays syntactically valid on a later-window failure, an initial browser refresh cannot retain a prior page as current, and a successor failure preserves the last valid page with a structured bounded error.",
+          "Profile windows use one explicit runtime-independent Change-id ordering and reject continuations issued in the future as well as malformed, modified, expired, unissued, cross-process, cross-snapshot, and cross-query continuations."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-019-C1",
+            "statement": "One stabilized Workbench query projects the complete selectable Plan Outcome options and exact per-Change Knowledge Closure and authority-decision input requirements alongside Claims, routes, and lifecycle actions; every requirement is bounded and source-bound, and no adapter filters raw Plan facts or invents acceptance policy.",
+            "claimRefs": ["workbench-semantics-are-kernel-compiled"],
+            "gapRefs": ["workbench-input-requirements-not-projected"]
+          },
+          {
+            "id": "LGT-019-C2",
+            "statement": "CLI, loopback HTTP, and browser adapters preserve the Kernel requirement projection and remain failure-complete: JSON inspection stays syntactically valid on a later-window failure, an initial browser refresh cannot retain a prior page as current, and a successor failure preserves the last valid page with a structured bounded error.",
+            "claimRefs": ["workbench-projects-kernel-semantics"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-019-C3",
+            "statement": "Profile windows use one explicit runtime-independent Change-id ordering and reject continuations issued in the future as well as malformed, modified, expired, unissued, cross-process, cross-snapshot, and cross-query continuations.",
+            "claimRefs": ["architecture-profile-windows-are-snapshot-bound-and-complete"],
+            "gapRefs": []
+          }
+        ]
+      },
+      "nonGoals": [
+        "Turning browser forms into a second policy engine",
+        "Portable continuations or portable Accepted history",
+        "Adding aggregate assurance, confidence, score, percentage, health, readiness, or green-light conclusions",
+        "Claim-sensitive Minimum Gate pruning; that remains conditional LGT-015 work"
       ]
     },
     {
