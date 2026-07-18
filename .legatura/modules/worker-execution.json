@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "worker-execution",
+  "name": "Worker Execution",
+  "status": "provisional",
+  "summary": "Compiles and validates bounded provider-neutral Worker Execution values without scheduling workers or deciding whether their output is acceptable.",
+  "factAuthority": "worker-execution-facts",
+  "decisionAuthority": "module-maintainer",
+  "interface": {
+    "entrypoints": [
+      "compileWorkSpecification(input)",
+      "createExecutionRecord(workSpecification)",
+      "applyExecutionEvent(record, event)",
+      "validateWorkerExecutionDocument(value)",
+      "WORKER_EXECUTION_SCHEMA_VERSION",
+      "WORKER_EXECUTION_INTERFACE_PROOF_VERSION",
+      "WORKER_EXECUTION_LIMITS"
+    ],
+    "invariants": [
+      "Work Specifications, Context Expansion Requests, Worker Reports, and Execution Records are closed, schema-versioned, bounded, canonical values with reproducible content digests.",
+      "Execution events form one append-only sequence bound to the exact Work Specification and prior Execution Record digest; conflicting replay, reordering, cross-execution reuse, and post-terminal append fail closed.",
+      "A Context Expansion Request records only a request and cannot grant scope, replace a Context Capsule, or claim recomputed impact.",
+      "Requested capabilities, declared control mode, and observed enforcement remain separate facts; this Module cannot construct an enforced capability fact without a future compiler-authenticated controller product.",
+      "Worker Reports and Execution Records are non-authoritative observations and cannot contain Evidence, Knowledge Closure, an Authority Decision, acceptance, Claim satisfaction, or aggregate assurance semantics.",
+      "Provider, model, session, transcript, message, tool-call, source-body, stdout, stderr, and open extension payloads do not cross the Worker Execution Interface."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/worker-execution/**",
+      "test/worker-execution/**"
+    ],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "test/worker-execution/interface.test.mjs",
+      "command": "node --test test/worker-execution/interface.test.mjs"
+    }
+  ],
+  "publicContracts": ["worker-execution-interface"],
+  "dependencies": []
+}

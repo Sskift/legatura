@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "worker-execution-interface",
+  "name": "Worker Execution Interface",
+  "owner": "worker-execution",
+  "consumers": ["change-kernel"],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent", "domain-language", "assurance-policy"],
+  "claims": [
+    {
+      "id": "worker-execution-values-are-canonical-bounded-and-provider-neutral",
+      "statement": "The Worker Execution Interface accepts and emits only closed, schema-versioned, bounded canonical Work Specifications, Context Expansion Requests, Worker Reports, and Execution Records whose source bindings, sequence, capability facts, artifact references, and terminal facts are explicit; provider, model, session, transcript, source-body, and extension payloads are rejected."
+    },
+    {
+      "id": "worker-execution-conformance-is-deterministic-and-fail-closed",
+      "statement": "One deterministic pure conformance Interface accepts the canonical lifecycle and fails closed on malformed, over-limit, duplicate, reordered, stale, cross-execution, capability-escalating, expansion-bypassing, contradictory, truncated-as-complete, or post-terminal inputs without spawning a worker."
+    },
+    {
+      "id": "worker-execution-observations-cannot-self-ratify",
+      "statement": "Worker Reports and Execution Records remain observations only: they cannot create Evidence, approve Knowledge Closure, issue an Authority Decision, waive a Verification Obligation, satisfy a Claim, or move a Change to Accepted, while requested capabilities, declared controls, and observed enforcement remain distinct facts."
+    },
+    {
+      "id": "worker-execution-interface-proof-rejects-semantic-attacks",
+      "statement": "The fixed Worker Execution Interface proof accepts one canonical non-authoritative lifecycle and rejects lifecycle, digest-chain, replay, scope-escalation, expansion self-grant, provider-leakage, authority-injection, truncation, contradiction, and resource-exhaustion attacks."
+    }
+  ]
+}

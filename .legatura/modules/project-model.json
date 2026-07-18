@@ -87,6 +87,8 @@
       ".legatura/gates/minimum.json",
       ".legatura/gates/full.json",
       ".legatura/gates/brownfield-adoption.json",
+      ".legatura/modules/worker-execution.json",
+      ".legatura/contracts/worker-execution-interface.json",
       "examples/brownfield-app-apk-relay/**",
       ".legatura/modules/project-model.json",
       ".legatura/contracts/project-model-interface.json"

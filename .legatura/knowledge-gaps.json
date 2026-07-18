@@ -281,6 +281,33 @@
       "expansionTrigger": "Before remote workers, multi-user acceptance, or signed attestations."
     },
     {
+      "id": "worker-execution-interface-not-proven",
+      "status": "open",
+      "affects": ["worker-execution"],
+      "owner": "governance-maintainer",
+      "statement": "The provider-neutral Worker Execution values and pure append-only lifecycle are declared but do not yet have one fixed conformance proof that rejects semantic, authority, digest-chain, and resource-boundary attacks.",
+      "proofClaimRefs": [
+        "worker-execution-interface-proof-rejects-semantic-attacks"
+      ],
+      "expansionTrigger": "Before LGT-020 can become achieved or any worker Adapter consumes the Interface."
+    },
+    {
+      "id": "worker-capability-enforcement-not-proven",
+      "status": "open",
+      "affects": ["worker-execution"],
+      "owner": "governance-maintainer",
+      "statement": "No declared local execution profile independently proves that filesystem, process, network, or secret capability limits are enforced at the worker execution boundary rather than merely observed or requested.",
+      "expansionTrigger": "Before LGT-022 is activated or any capability profile is described as enforced."
+    },
+    {
+      "id": "authority-identity-not-authenticated",
+      "status": "open",
+      "affects": ["change-kernel", "identity-provider"],
+      "owner": "governance-maintainer",
+      "statement": "Local Authority decidedBy values are unauthenticated assertions without a signed identity binding or independent identity provider fact.",
+      "expansionTrigger": "Before remote workers, multi-user acceptance, or signed attestations rely on Authority identity."
+    },
+    {
       "id": "brownfield-adoption-not-proven",
       "status": "closed",
       "affects": ["project-model", "change-kernel", "local-workbench"],

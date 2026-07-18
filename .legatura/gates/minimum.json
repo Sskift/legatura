@@ -7,7 +7,8 @@
     "assurance-runtime",
     "project-model",
     "change-kernel",
-    "local-workbench"
+    "local-workbench",
+    "worker-execution"
   ],
   "commands": [
     {
@@ -177,6 +178,43 @@
       },
       "residualUncertainty": [
         "Browser DOM behavior and the real HTTP-to-Kernel lifecycle remain full-Gate concerns."
+      ]
+    },
+    {
+      "id": "worker-execution-interface-proof",
+      "appliesTo": ["worker-execution"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const protocol = await import('./src/worker-execution/protocol.mjs'); if (protocol.WORKER_EXECUTION_INTERFACE_PROOF_VERSION !== 1) throw new Error('Worker Execution Interface proof version 1 is not implemented.'); await import('./test/worker-execution/interface.test.mjs');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "worker-execution-values-are-canonical-bounded-and-provider-neutral",
+        "worker-execution-conformance-is-deterministic-and-fail-closed",
+        "worker-execution-observations-cannot-self-ratify",
+        "worker-execution-interface-proof-rejects-semantic-attacks"
+      ],
+      "oracle": {
+        "kind": "worker-execution-interface-proof-exit",
+        "description": "The fixed Worker Execution protocol version and its canonical lifecycle plus semantic attack table must exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "malformed, over-limit, contradictory, reordered, stale, cross-execution, or post-terminal values",
+          "capability escalation or a Context Expansion Request granting its own scope",
+          "provider, model, session, transcript, source-body, or open extension payload leakage",
+          "Worker Report or Execution Record fields that claim Evidence, Knowledge Closure, Authority, Claim satisfaction, or acceptance"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof is pure and spawns no real worker or provider Adapter.",
+        "Filesystem, process, network, and secret capabilities are not independently enforced until LGT-022.",
+        "Local Authority identities remain unauthenticated and Worker observations do not prove work correctness."
       ]
     }
   ]

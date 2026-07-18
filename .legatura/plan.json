@@ -601,21 +601,48 @@
       "id": "LGT-020",
       "stage": "S2",
       "status": "planned",
-      "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
+      "outcome": "A deep provider-neutral Worker Execution Interface canonically validates and records bounded Work Specifications, Context Expansion Requests, Worker Reports, and Execution Records as non-authoritative observations, with deterministic conformance and no capability, Evidence, Knowledge Closure, or acceptance authority.",
       "dependsOn": ["LGT-011", "LGT-013", "LGT-018"],
       "acceptance": {
-        "claimRefs": [],
-        "gapRefs": ["worker-and-identity-trust-opaque"],
+        "claimRefs": [
+          "worker-execution-values-are-canonical-bounded-and-provider-neutral",
+          "worker-execution-conformance-is-deterministic-and-fail-closed",
+          "worker-execution-observations-cannot-self-ratify"
+        ],
+        "gapRefs": ["worker-execution-interface-not-proven"],
         "exitCriteria": [
-          "Worker inputs, capabilities, expansions, observations, and outputs are durably represented.",
-          "A deterministic conformance harness rejects lifecycle, capability, expansion, or report semantics that violate the Interface.",
-          "Provider-specific details are absent from the Kernel-facing Work Specification, Worker Report, and Execution Record."
+          "The Interface accepts and emits only schema-versioned, bounded, canonical, provider-neutral Work Specification, Context Expansion Request, Worker Report, and Execution Record values whose execution identity, sequence, prior-record digest, capability-profile reference, observations, artifact references, and terminal facts are explicit, while transcript, source-body, provider-session, and model-specific fields are absent.",
+          "One deterministic conformance harness accepts the canonical lifecycle and fails closed on malformed, over-limit, duplicate, reordered, stale, cross-execution, capability-escalating, expansion-bypassing, truncated-as-complete, contradictory, or post-terminal inputs without spawning a worker.",
+          "Worker Reports and Execution Records remain observations only: they cannot create Evidence, approve Knowledge Closure, issue an Authority Decision, waive a Verification Obligation, or move a Change to Accepted, and requested capabilities, declared controls, and observed enforcement remain distinct facts."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-020-C1",
+            "statement": "The Interface accepts and emits only schema-versioned, bounded, canonical, provider-neutral Work Specification, Context Expansion Request, Worker Report, and Execution Record values whose execution identity, sequence, prior-record digest, capability-profile reference, observations, artifact references, and terminal facts are explicit, while transcript, source-body, provider-session, and model-specific fields are absent.",
+            "claimRefs": ["worker-execution-values-are-canonical-bounded-and-provider-neutral"],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-020-C2",
+            "statement": "One deterministic conformance harness accepts the canonical lifecycle and fails closed on malformed, over-limit, duplicate, reordered, stale, cross-execution, capability-escalating, expansion-bypassing, truncated-as-complete, contradictory, or post-terminal inputs without spawning a worker.",
+            "claimRefs": ["worker-execution-conformance-is-deterministic-and-fail-closed"],
+            "gapRefs": ["worker-execution-interface-not-proven"]
+          },
+          {
+            "id": "LGT-020-C3",
+            "statement": "Worker Reports and Execution Records remain observations only: they cannot create Evidence, approve Knowledge Closure, issue an Authority Decision, waive a Verification Obligation, or move a Change to Accepted, and requested capabilities, declared controls, and observed enforcement remain distinct facts.",
+            "claimRefs": ["worker-execution-observations-cannot-self-ratify"],
+            "gapRefs": []
+          }
         ]
       },
       "nonGoals": [
-        "Worker scheduling",
-        "Provider-specific transcript storage",
-        "Proving adapter independence; that belongs to LGT-023"
+        "Worker scheduling, queueing, retry, concurrency, or master coordination.",
+        "Spawning a real worker or implementing a provider Adapter; scripted and real Adapter parity belongs to LGT-023.",
+        "Materializing Context Capsules or applying and recomputing Context Expansion; that belongs to LGT-021.",
+        "Enforcing filesystem, process, network, or secret capabilities or claiming an OS sandbox; that belongs to LGT-022.",
+        "Authenticating identities, changing Authority Decision semantics, or granting a worker acceptance authority.",
+        "Provider transcript, log, source-body, or production Execution Record storage."
       ]
     },
     {
@@ -1170,6 +1197,48 @@
         "outcome"
       ],
       "rationale": "Replace the Context Expansion-dependent legacy exit list with stable materialized-reference, ordinary Kernel lifecycle, and existing CLI inspection Criteria before activation; later owner-scoped Changes must declare proof Claims, fixed routes, and implementation without claiming Worker read enforcement.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-020-R2",
+      "outcomeRef": "LGT-020",
+      "amendmentChangeId": "lgt020-revise-worker-execution-interface-boundary-v2",
+      "governanceBaselineDigest": "sha256:2b3ec7876bc4a5f4a0483a66f20a8a7834ddaded9ef96d0cbd14f8415fdfe0b4",
+      "previousDefinition": {
+        "id": "LGT-020",
+        "stage": "S2",
+        "outcome": "A deep Worker Execution Interface defines Work Specification, Context Expansion Request, Worker Report, and Execution Record without granting acceptance authority.",
+        "dependsOn": ["LGT-011", "LGT-013", "LGT-018"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "A deterministic conformance harness rejects lifecycle, capability, expansion, or report semantics that violate the Interface.",
+            "Provider-specific details are absent from the Kernel-facing Work Specification, Worker Report, and Execution Record.",
+            "Worker inputs, capabilities, expansions, observations, and outputs are durably represented."
+          ],
+          "claimRefs": [],
+          "gapRefs": ["worker-and-identity-trust-opaque"]
+        },
+        "nonGoals": [
+          "Provider-specific transcript storage",
+          "Proving adapter independence; that belongs to LGT-023",
+          "Worker scheduling"
+        ]
+      },
+      "previousDefinitionDigest": "sha256:d5a80d94c75a62449aa449aa7a836fda62666886427339e31cb1113cf3450794",
+      "currentDefinitionDigest": "sha256:cc7369bacc60247aa35ad43c1488f4afd6b7f2e4ec50ad74f8923c937dc6919a",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "acceptance.gapRefs",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Freeze one provider-neutral, bounded, non-authoritative Worker Execution protocol before activation; separate semantic conformance from future Context execution, capability enforcement, provider Adapters, persistence, scheduling, and authenticated identity.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],

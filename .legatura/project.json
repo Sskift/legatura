@@ -53,6 +53,11 @@
         "id": "local-workbench-facts",
         "module": "local-workbench",
         "owns": "CLI, loopback HTTP interface, browser projection, and package delivery behavior."
+      },
+      {
+        "id": "worker-execution-facts",
+        "module": "worker-execution",
+        "owns": "Canonical provider-neutral Work Specifications, Context Expansion Requests, Worker Reports, Execution Records, and their lifecycle conformance."
       }
     ],
     "decision": [
@@ -85,13 +90,13 @@
       {
         "module": "local-workbench",
         "reason": "CLI and HTTP behavior are tested, but the browser UI lacks DOM-level end-to-end verification."
+      },
+      {
+        "module": "worker-execution",
+        "reason": "The provider-neutral protocol and semantic conformance boundary are declared, but no real worker Adapter, Context Expansion executor, capability controller, scheduler, or authenticated identity exists yet."
       }
     ],
     "opaque": [
-      {
-        "module": "worker-execution",
-        "reason": "Worker spawning and filesystem capability enforcement do not exist yet."
-      },
       {
         "module": "identity-provider",
         "reason": "Local decidedBy values are not authenticated or signed."
