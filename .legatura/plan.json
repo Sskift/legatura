@@ -301,17 +301,35 @@
       "id": "LGT-013",
       "stage": "S1",
       "status": "planned",
-      "outcome": "Assurance Runtime support boundaries for timeout, encoding, truncation, cancellation, and platforms are explicit and fail closed.",
+      "outcome": "A declared local direct-process support profile produces bounded terminal-state-complete Command Observations, and the Kernel fails closed on unsupported, controlled, malformed, or unconfirmed outcomes.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
-        "claimRefs": ["command-observation-is-explicit"],
+        "claimRefs": [
+          "command-observation-is-explicit",
+          "evidence-cannot-self-ratify"
+        ],
         "gapRefs": ["subprocess-boundary-not-characterized"],
         "exitCriteria": [
-          "Every supported process outcome is represented without losing exit, signal, timeout, stream, or truncation state.",
-          "Unsupported environments are reported as unsupported rather than treated as assured."
+          "The declared local direct-process profile yields one bounded raw-byte Command Observation that keeps support, control trigger, confirmed close, actual exit or signal, and per-stream capture, length, digest, encoding, and truncation facts orthogonal for natural exit, signal, timeout, cancellation, start failure, and output pressure; unsupported profiles, malformed adapter reports, controlled termination, or unconfirmed quiescence cannot become positive Gate Evidence."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-013-C1",
+            "statement": "The declared local direct-process profile yields one bounded raw-byte Command Observation that keeps support, control trigger, confirmed close, actual exit or signal, and per-stream capture, length, digest, encoding, and truncation facts orthogonal for natural exit, signal, timeout, cancellation, start failure, and output pressure; unsupported profiles, malformed adapter reports, controlled termination, or unconfirmed quiescence cannot become positive Gate Evidence.",
+            "claimRefs": [
+              "command-observation-is-explicit",
+              "evidence-cannot-self-ratify"
+            ],
+            "gapRefs": ["subprocess-boundary-not-characterized"]
+          }
         ]
       },
-      "nonGoals": ["A distributed job runner"]
+      "nonGoals": [
+        "A distributed job runner",
+        "OS sandboxing or preventing descendants that deliberately escape the observed process group",
+        "Shell-command portability or Windows support without a separate conformance profile",
+        "Treating captured text as authoritative instead of raw bytes"
+      ]
     },
     {
       "id": "LGT-014",
@@ -1000,6 +1018,42 @@
         "outcome"
       ],
       "rationale": "Replace LGT-014's broad projection wording and already-closed legacy Profile Gap with stable window-traversal Criteria, the existing snapshot and assurance-dimension Claims, and explicit open traversal and DOM Gaps before activation; Module-owned window Contracts and fixed Closure routes must be declared in later Changes and this Revision grants neither implementation authority nor a lifecycle transition.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-013-R1",
+      "outcomeRef": "LGT-013",
+      "amendmentChangeId": "lgt013-revise-command-observation-boundary",
+      "governanceBaselineDigest": "sha256:abeadf8d0d59a0d4337fdfb5877f64aaf39174c14a0f915629fee515ccb78496",
+      "previousDefinition": {
+        "id": "LGT-013",
+        "stage": "S1",
+        "outcome": "Assurance Runtime support boundaries for timeout, encoding, truncation, cancellation, and platforms are explicit and fail closed.",
+        "dependsOn": ["LGT-010"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "Every supported process outcome is represented without losing exit, signal, timeout, stream, or truncation state.",
+            "Unsupported environments are reported as unsupported rather than treated as assured."
+          ],
+          "claimRefs": ["command-observation-is-explicit"],
+          "gapRefs": ["subprocess-boundary-not-characterized"]
+        },
+        "nonGoals": ["A distributed job runner"]
+      },
+      "previousDefinitionDigest": "sha256:0c021e16519533646957cb30e6cd72dfd55070eb727986b7afdc87da5bc04f30",
+      "currentDefinitionDigest": "sha256:8e9e486d554afd9a0dc703265b4632aa32e3f97c5e59754cfb76f48b76c3b89c",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Replace the legacy exit list with one stable Criterion that binds the existing Assurance Runtime and Change Kernel Claims to an explicit local direct-process profile and the open subprocess boundary before activation; later owner-scoped Changes must declare proof Claims, fixed routes, implementation, and Kernel adoption.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],
