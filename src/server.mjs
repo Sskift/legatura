@@ -199,6 +199,13 @@ async function handleApiRequest({ request, response, requestUrl, kernel, bodyLim
     if (segments.length === 4 && segments[3] === "accept") {
       assertMethod(method, ["POST"]);
       const decision = await readJsonObject(request, bodyLimitBytes);
+      if (!Object.hasOwn(decision, "inputRequirementsConfirmation")) {
+        throw new HttpError(
+          409,
+          "ACCEPTANCE_INPUT_CONFIRMATION_REQUIRED",
+          "Loopback Workbench acceptance requires the Kernel-issued input requirements confirmation."
+        );
+      }
       sendJson(response, 200, await kernel.acceptChange(changeId, decision));
       return;
     }

@@ -74,10 +74,12 @@ test("inspect streams exact Profile windows or bounded orthogonal dimension summ
     { kernelFactory }
   );
   assert.deepEqual(JSON.parse(jsonIo.stdout()), {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "architecture-profile-window-stream",
     windows: [expectedFirst, expectedSecond],
-    windowCount: 2
+    windowCount: 2,
+    complete: true,
+    error: null
   });
   assert.deepEqual(result, {
     status: "inspected",
@@ -134,6 +136,58 @@ test("inspect streams exact Profile windows or bounded orthogonal dimension summ
     ["inspectArchitectureProfileWindow", 2, {}],
     ["inspectArchitectureProfileWindow", 2, { cursor: "opaque-next-window" }]
   ]);
+
+  const failureCode = `PROFILE_WINDOW_opaque-next-window_${"X".repeat(160)}`;
+  const failureMessage = `The successor\nwindow failed for opaque-next-window: ${"x".repeat(600)}`;
+  const failure = Object.assign(new Error(failureMessage), {
+    code: failureCode,
+    details: {
+      cursor: "sensitive-failing-cursor",
+      providerOutput: "sensitive-provider-output"
+    }
+  });
+  const failedCalls = [];
+  const failureIo = fixtureIo();
+  await assert.rejects(
+    runCli(
+      ["inspect", "/repo", "--json"],
+      failureIo.io,
+      {
+        kernelFactory() {
+          return {
+            async inspectArchitectureProfileWindow(input) {
+              failedCalls.push(structuredClone(input));
+              if (Object.hasOwn(input, "cursor")) throw failure;
+              return firstWindow;
+            }
+          };
+        }
+      }
+    ),
+    (error) => error === failure
+  );
+  const failedDocument = JSON.parse(failureIo.stdout());
+  assert.deepEqual(failedDocument, {
+    schemaVersion: 2,
+    kind: "architecture-profile-window-stream",
+    windows: [expectedFirst],
+    windowCount: 1,
+    complete: false,
+    error: {
+      code: `${failureCode.replace("opaque-next-window", "[opaque continuation]").slice(0, 127)}\u2026`,
+      message: `${failureMessage
+        .replace("\n", " ")
+        .replace("opaque-next-window", "[opaque continuation]")
+        .slice(0, 511)}\u2026`
+    }
+  });
+  assert.deepEqual(Object.keys(failedDocument.error), ["code", "message"]);
+  assert.doesNotMatch(
+    JSON.stringify(failedDocument.error),
+    /opaque-next-window|sensitive-failing-cursor|sensitive-provider-output/u
+  );
+  assert.match(JSON.stringify(failedDocument.error), /\[opaque continuation\]/u);
+  assert.deepEqual(failedCalls, [{}, { cursor: "opaque-next-window" }]);
 });
 
 test("the packed CLI installs as an executable entrypoint", async (t) => {

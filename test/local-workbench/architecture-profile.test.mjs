@@ -20,14 +20,20 @@ import {
 } from "../../public/profile-window-controller.js";
 import {
   architectureProfileDimension,
+  compileWorkbenchAcceptanceRequest,
   receiveArchitectureProfileViewModel,
   receiveWorkbenchProjection,
   refreshAfterMutation,
   selectWorkbenchAction,
-  selectWorkbenchAuthoringModules
+  selectWorkbenchAcceptanceInputRequirements,
+  selectWorkbenchAuthoringModules,
+  selectWorkbenchChangeKindAuthoring,
+  selectWorkbenchChangeKinds,
+  selectWorkbenchPlanOutcomes
 } from "../../public/workbench-adapter.js";
 
 export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
+export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
 
 test("Local Workbench projects exact Profile dimensions and preserves Kernel Workbench actions", async (t) => {
   const profile = createProfile();
@@ -136,6 +142,12 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     kernel: {
       async inspectArchitectureProfileWindow(input) {
         calls.push(["inspectArchitectureProfileWindow", structuredClone(input)]);
+        if (!Object.hasOwn(input, "cursor") && profileMode === "initial-failure") {
+          const error = new Error("Initial Profile source is unavailable.");
+          error.code = "ARCHITECTURE_PROFILE_SOURCE_UNSTABLE";
+          error.statusCode = 409;
+          throw error;
+        }
         if (!Object.hasOwn(input, "cursor")) return firstWindow;
         assert.equal(input.cursor, opaqueCursor, "HTTP forwards the continuation as one opaque value");
         if (profileMode === "mismatched-source") return mismatchedWindow;
@@ -186,6 +198,21 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     browserAuthoring.authoring.modules,
     "the browser adapter preserves every authoring fact and its order"
   );
+  assert.strictEqual(
+    selectWorkbenchPlanOutcomes(browserAuthoring),
+    browserAuthoring.authoring.planOutcomes,
+    "Plan Outcomes cross the receiver seam without browser reconstruction"
+  );
+  assert.strictEqual(
+    selectWorkbenchChangeKinds(browserAuthoring),
+    browserAuthoring.authoring.changeKinds,
+    "the closed Change-kind collection is preserved as one Kernel-owned value"
+  );
+  assert.strictEqual(
+    selectWorkbenchChangeKindAuthoring(browserAuthoring, "implementation"),
+    browserAuthoring.authoring.changeKinds[0],
+    "Change-kind cardinality and eligibility remain Kernel-owned"
+  );
   const matchingChange = {
     id: "change-1",
     observation: { sourceSnapshotDigest: browserWorkbench.source.snapshotDigest }
@@ -195,6 +222,92 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     browserWorkbench.changes[0].actions.gates,
     "the browser adapter returns the Kernel action object without rebuilding eligibility"
   );
+  assert.strictEqual(
+    selectWorkbenchAcceptanceInputRequirements(browserWorkbench, matchingChange),
+    browserWorkbench.changes[0].actions.accept.inputRequirements,
+    "acceptance fields and bindings cross the receiver seam as one canonical object"
+  );
+  assert.equal(Object.isFrozen(browserAuthoring.authoring.modules[0].claims[0].acceptanceRoutes[0]), true);
+  assert.throws(
+    () => { browserAuthoring.authoring.modules[0].claims[0].selectable = false; },
+    TypeError,
+    "validated Workbench semantics cannot be rewritten after the receiver seam"
+  );
+  const readyProjection = createWorkbenchProjection(profile.source, "change-1");
+  const readyAccept = readyProjection.changes[0].actions.accept;
+  readyAccept.enabled = true;
+  readyAccept.disabledReasonCodes = [];
+  const readyRequirements = readyAccept.inputRequirements;
+  readyRequirements.available = true;
+  readyRequirements.disabledReasonCodes = [];
+  readyRequirements.binding.verificationSubjectDigest = canonicalDigest("verification-subject");
+  readyRequirements.knowledgeClosure.allowedModes = ["entries"];
+  readyRequirements.knowledgeClosure.requiredModelAmendmentRefs = [
+    ".legatura/knowledge-gaps.json"
+  ];
+  readyRequirements.knowledgeClosure.selectableKnowledgeGapRefs = ["gap-1"];
+  readyRequirements.authorityDecision.decisionOptions = [{
+    authorityRef: "module-maintainer",
+    decisionType: "normative-amendment",
+    requiredFields: ["amendmentRefs", "decidedBy", "rationale"]
+  }];
+  readyRequirements.authorityDecision.requiredAmendmentRefs = [
+    ".legatura/knowledge-gaps.json"
+  ];
+  const { requirementsDigest: _requirementsDigest, ...readyRequirementContent } = readyRequirements;
+  readyRequirements.requirementsDigest = canonicalDigest(readyRequirementContent);
+  const readyWorkbench = receiveWorkbenchProjection(readyProjection);
+  const acceptanceRequest = compileWorkbenchAcceptanceRequest(
+    readyWorkbench.changes[0].actions.accept.inputRequirements,
+    {
+      confirmed: true,
+      decisionOptionIndex: 0,
+      decidedBy: "actual-maintainer",
+      decisionReason: "Approve the exact modeled amendment.",
+      amendmentRefs: [],
+      expiresAt: "",
+      scope: "",
+      compensatingControls: [],
+      closureMode: "entries",
+      closureRationale: "The new Gap is durable Project Model knowledge.",
+      knowledgeGapRefs: ["gap-1"],
+      ephemeralStatements: ["One bounded request-local observation."]
+    }
+  );
+  assert.deepEqual(acceptanceRequest, {
+    inputRequirementsConfirmation: {
+      requirementsDigest: readyRequirements.requirementsDigest,
+      binding: structuredClone(readyRequirements.binding),
+    },
+    knowledgeClosure: {
+      status: "complete",
+      entries: [
+        {
+          kind: "model-amendment",
+          refs: [".legatura/knowledge-gaps.json"],
+          rationale: "The new Gap is durable Project Model knowledge."
+        },
+        {
+          kind: "model-gap",
+          refs: ["gap-1"],
+          rationale: "The new Gap is durable Project Model knowledge."
+        },
+        {
+          kind: "ephemeral",
+          statement: "One bounded request-local observation.",
+          rationale: "The new Gap is durable Project Model knowledge."
+        }
+      ]
+    },
+    authorityDecision: {
+      status: "approved",
+      authority: "module-maintainer",
+      decidedBy: "actual-maintainer",
+      decisionType: "normative-amendment",
+      rationale: "Approve the exact modeled amendment.",
+      amendmentRefs: [".legatura/knowledge-gaps.json"]
+    }
+  });
   const mismatchedChange = structuredClone(matchingChange);
   mismatchedChange.observation.sourceSnapshotDigest = canonicalDigest("other-snapshot");
   assert.equal(
@@ -202,6 +315,55 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     null,
     "independently stable but mismatched detail and Workbench snapshots fail closed"
   );
+  assert.equal(
+    selectWorkbenchAcceptanceInputRequirements(browserWorkbench, mismatchedChange),
+    null,
+    "acceptance input requirements share the same source-matching fail-closed seam"
+  );
+  assert.throws(
+    () => selectWorkbenchChangeKindAuthoring(browserAuthoring, "invented-kind"),
+    hasCode("BROWSER_PROJECTION_INVALID")
+  );
+
+  const workbenchAttacks = [
+    ["missing Plan collection", false, (value) => { delete value.authoring.planOutcomes; }],
+    ["missing closed Change kind", false, (value) => { value.authoring.changeKinds.pop(); }],
+    ["unknown Change kind", false, (value) => { value.authoring.changeKinds[0].id = "feature"; }],
+    ["forged nested Claim route", false, (value) => {
+      value.authoring.modules[0].claims[0].acceptanceRoutes[0].routeDigest = "sha256:short";
+    }],
+    ["inconsistent compile action", true, (value) => {
+      value.changes[0].actions.compile.enabled = false;
+    }],
+    ["overlapping Gate command partition", true, (value) => {
+      value.changes[0].actions.gates[0].skippedCommandIds = ["exact-command"];
+    }],
+    ["unknown acceptance field", true, (value) => {
+      value.changes[0].actions.accept.inputRequirements.browserGuess = true;
+    }],
+    ["forged source binding", true, (value) => {
+      value.changes[0].actions.accept.inputRequirements.binding.sourceSnapshotDigest = canonicalDigest("forged");
+    }],
+    ["unknown Closure mode", true, (value) => {
+      value.changes[0].actions.accept.inputRequirements.knowledgeClosure.allowedModes.push("assume");
+    }],
+    ["unknown Decision type", true, (value) => {
+      value.changes[0].actions.accept.inputRequirements.authorityDecision
+        .decisionOptions[0].decisionType = "green-light";
+    }],
+    ["invalid requirements digest", true, (value) => {
+      value.changes[0].actions.accept.inputRequirements.requirementsDigest = "sha256:short";
+    }]
+  ];
+  for (const [label, selected, mutate] of workbenchAttacks) {
+    const attacked = createWorkbenchProjection(profile.source, selected ? "change-1" : null);
+    mutate(attacked);
+    assert.throws(
+      () => receiveWorkbenchProjection(attacked),
+      hasCode("BROWSER_PROJECTION_INVALID"),
+      label
+    );
+  }
 
   const { document, window } = parseHTML(`<!doctype html><body>
     <ol id="profile-page"></ol>
@@ -221,6 +383,9 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
         item.textContent = change.id;
         return item;
       }));
+    },
+    clearPage() {
+      pageElement.replaceChildren();
     },
     elements: { status: statusElement, error: errorElement, next: nextElement }
   });
@@ -262,6 +427,12 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
     ["inspectArchitectureProfileWindow", {}],
     "refresh starts from the first window and never reuses a continuation"
   );
+  profileMode = "initial-failure";
+  const initialFailure = await controller.refresh();
+  assert.equal(initialFailure.status, "failed");
+  assert.equal(pageElement.textContent, "", "a failed initial refresh cannot leave stale Profile DOM");
+  assert.equal(controller.snapshot().current, null);
+  profileMode = "normal";
 
   const deferred = [];
   const renderedByGeneration = [];
@@ -313,13 +484,25 @@ test("Local Workbench projects exact Profile dimensions and preserves Kernel Wor
   );
   assert.doesNotMatch(
     browserSource,
-    /publicContracts|\.appliesTo|\.claimRefs|canCompile|canAccept|\.runnable|integrationGateIds/u,
+    /publicContracts|\.appliesTo|canCompile|canAccept|\.runnable|integrationGateIds/u,
     "browser source cannot regain raw Contract, Gate, or lifecycle compiler inputs"
   );
+  assert.doesNotMatch(
+    browserSource,
+    /requirePlanRefs|allowedChangeKinds|activePlanOutcomes|selectablePlanOutcomes|outcomeRequired|integrityChangeKinds/u,
+    "browser source cannot reconstruct Plan, Change-kind, or integrity eligibility"
+  );
   assert.match(browserSource, /selectWorkbenchAction/u);
+  assert.match(browserSource, /selectWorkbenchChangeKindAuthoring/u);
+  assert.match(browserSource, /selectWorkbenchAcceptanceInputRequirements/u);
+  assert.match(browserSource, /body:\s*JSON\.stringify\(acceptanceRequest\)/u);
+  assert.doesNotMatch(browserSource, /decidedBy:\s*authority\b/u);
   assert.match(browserSource, /refreshCanonicalStateAfterMutation/u);
   assert.match(browserSource, /workbench\?changeRef=/u);
   assert.match(browserSource, /createProfileWindowController/u);
+  assert.match(controllerSource, /clearPage\(\);/u);
+  assert.match(browserMarkup, /accept-decision-option/u);
+  assert.match(browserMarkup, /accept-closure-mode/u);
   assert.doesNotMatch(controllerSource, /\b(?:atob|btoa)\b|base64|JSON\.parse\([^)]*cursor/iu);
 
   view.dimensions.outcomes[0].statement = "caller mutation";
@@ -667,7 +850,8 @@ function createWorkbenchProjection(source, changeRef = null) {
             routeDigest: canonicalDigest("route")
           }]
         }]
-      }]
+      }],
+      ...createWorkbenchPlanAuthoring()
     },
     changes: changeRef === null ? [] : [{
       id: "change-1",
@@ -689,12 +873,115 @@ function createWorkbenchProjection(source, changeRef = null) {
         accept: {
           kind: "accept",
           enabled: false,
-          disabledReasonCodes: ["CHANGE_NOT_COMPILED", "CHANGE_NOT_EVIDENCE_READY"]
+          disabledReasonCodes: ["CHANGE_NOT_COMPILED", "CHANGE_NOT_EVIDENCE_READY"],
+          inputRequirements: createWorkbenchAcceptanceInputRequirements({
+            changeRef,
+            source,
+            governanceBaselineDigest: canonicalDigest("baseline")
+          })
         }
       }
     }]
   };
   return { ...content, projectionDigest: canonicalDigest(content) };
+}
+
+function createWorkbenchPlanAuthoring() {
+  const changeKind = ({
+    id,
+    selectable = true,
+    selectableOutcomeRefs = [],
+    minRefs = 1,
+    maxRefs = 1,
+    integrityRequired = false,
+    protectedClaimRefsByOutcome = []
+  }) => ({
+    id,
+    selectable,
+    disabledReasonCodes: selectable ? [] : ["PLAN_OUTCOME_UNAVAILABLE"],
+    planSelection: { minRefs, maxRefs, selectableOutcomeRefs },
+    integrityIncident: { required: integrityRequired, protectedClaimRefsByOutcome }
+  });
+  return {
+    schemaVersion: 1,
+    planOutcomes: [
+      { outcomeRef: "LGT-001", statement: "Implement one bounded fixture capability." },
+      { outcomeRef: "LGT-099", statement: "Restore one protected fixture Claim." }
+    ],
+    changeKinds: [
+      changeKind({
+        id: "implementation",
+        minRefs: 1,
+        maxRefs: 64,
+        selectableOutcomeRefs: ["LGT-001"]
+      }),
+      changeKind({ id: "plan-amendment", minRefs: 0, maxRefs: 0 }),
+      changeKind({
+        id: "regression-repair",
+        selectableOutcomeRefs: ["LGT-099"],
+        integrityRequired: true,
+        protectedClaimRefsByOutcome: [{
+          outcomeRef: "LGT-099",
+          claimRefs: ["claim-1"]
+        }]
+      }),
+      ...[
+        "security-containment",
+        "data-integrity-repair",
+        "acceptance-integrity-repair",
+        "entrypoint-restoration"
+      ].map((id) => changeKind({ id, selectable: false, integrityRequired: true }))
+    ]
+  };
+}
+
+function createWorkbenchAcceptanceInputRequirements({
+  changeRef,
+  source,
+  governanceBaselineDigest
+}) {
+  const content = {
+    schemaVersion: 1,
+    binding: {
+      changeRef,
+      sourceSnapshotDigest: source.snapshotDigest,
+      governanceBaselineDigest,
+      verificationSubjectDigest: null
+    },
+    available: false,
+    disabledReasonCodes: ["CHANGE_NOT_COMPILED"],
+    knowledgeClosure: {
+      required: true,
+      allowedModes: ["no-new-knowledge", "entries"],
+      entryKinds: ["model-amendment", "model-gap", "ephemeral"],
+      requiredModelAmendmentRefs: [],
+      selectableKnowledgeGapRefs: [],
+      requiredEntryFields: ["rationale"],
+      referenceOrStatementRequired: true
+    },
+    authorityDecision: {
+      required: true,
+      decisionOptions: [{
+        authorityRef: "module-maintainer",
+        decisionType: "case-decision",
+        requiredFields: ["decidedBy", "rationale"]
+      }],
+      requiredAmendmentRefs: [],
+      requiredAdoptedChangePaths: [],
+      requiredApprovedObligationIds: [],
+      outOfScopePaths: []
+    },
+    confirmation: {
+      required: true,
+      bindingFields: [
+        "changeRef",
+        "sourceSnapshotDigest",
+        "governanceBaselineDigest",
+        "verificationSubjectDigest"
+      ]
+    }
+  };
+  return { ...content, requirementsDigest: canonicalDigest(content) };
 }
 
 function emptyEntities() {

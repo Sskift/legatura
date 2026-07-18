@@ -35,10 +35,13 @@ const MAX_CURSOR_BYTES = 2048;
 export function createProfileWindowController({
   fetchJson,
   renderPage,
+  clearPage = () => {},
   endpoint = "/api/architecture-profile",
   elements = {},
 } = {}) {
-  if (typeof fetchJson !== "function" || typeof renderPage !== "function") {
+  if (typeof fetchJson !== "function"
+    || typeof renderPage !== "function"
+    || typeof clearPage !== "function") {
     throw controllerError(
       "PROFILE_WINDOW_CONTROLLER_INVALID",
       "Profile window controller requires fetchJson and renderPage functions.",
@@ -52,6 +55,7 @@ export function createProfileWindowController({
 
   async function refresh() {
     current = null;
+    clearPage();
     return requestWindow({ predecessor: null, cursor: null });
   }
 

@@ -28,6 +28,11 @@ const PROFILE_DIMENSIONS = Object.freeze([
   ["knowledgeGaps", "Knowledge gaps"]
 ]);
 
+const PROFILE_STREAM_ERROR_LIMITS = Object.freeze({
+  codeCharacters: 128,
+  messageCharacters: 512
+});
+
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (!command || command === "--help" || command === "-h" || command === "help") {
@@ -180,27 +185,64 @@ async function inspectArchitectureProfileWindows({ repoPath, json, io, kernel })
   if (json) {
     await writeOutput(
       io.stdout,
-      '{"schemaVersion":1,"kind":"architecture-profile-window-stream","windows":['
+      '{"schemaVersion":2,"kind":"architecture-profile-window-stream","windows":['
     );
   }
 
-  while (request !== null) {
-    const profileWindow = await kernel.inspectArchitectureProfileWindow(request);
-    const viewModel = compileArchitectureProfileWindowViewModel(profileWindow);
-    if (json) {
-      await writeOutput(io.stdout, `${windowCount === 0 ? "" : ","}${JSON.stringify(viewModel)}`);
-    } else {
-      await writeOutput(io.stdout, renderArchitectureProfileWindowSummary(viewModel, windowCount + 1));
+  try {
+    while (request !== null) {
+      const profileWindow = await kernel.inspectArchitectureProfileWindow(request);
+      const viewModel = compileArchitectureProfileWindowViewModel(profileWindow);
+      if (json) {
+        await writeOutput(io.stdout, `${windowCount === 0 ? "" : ","}${JSON.stringify(viewModel)}`);
+      } else {
+        await writeOutput(io.stdout, renderArchitectureProfileWindowSummary(viewModel, windowCount + 1));
+      }
+      windowCount += 1;
+      lastWindowDigest = viewModel.windowDigest;
+      request = readContinuationRequest(viewModel.continuation);
     }
-    windowCount += 1;
-    lastWindowDigest = viewModel.windowDigest;
-    request = readContinuationRequest(viewModel.continuation);
+  } catch (error) {
+    if (json) {
+      await writeOutput(
+        io.stdout,
+        `],"windowCount":${windowCount},"complete":false,"error":${JSON.stringify(compileProfileStreamError(error, request?.cursor))}}\n`
+      );
+    }
+    throw error;
   }
 
   if (json) {
-    await writeOutput(io.stdout, `],"windowCount":${windowCount}}\n`);
+    await writeOutput(
+      io.stdout,
+      `],"windowCount":${windowCount},"complete":true,"error":null}\n`
+    );
   }
   return { status: "inspected", repoPath, windowCount, lastWindowDigest };
+}
+
+function compileProfileStreamError(error, opaqueCursor) {
+  return {
+    code: boundProfileStreamErrorText(
+      typeof error?.code === "string" ? error.code : "CLI_ERROR",
+      PROFILE_STREAM_ERROR_LIMITS.codeCharacters,
+      opaqueCursor
+    ),
+    message: boundProfileStreamErrorText(
+      error instanceof Error ? error.message : "The Architecture Profile inspection failed.",
+      PROFILE_STREAM_ERROR_LIMITS.messageCharacters,
+      opaqueCursor
+    )
+  };
+}
+
+function boundProfileStreamErrorText(value, limit, opaqueCursor) {
+  const redacted = typeof opaqueCursor === "string" && opaqueCursor.length > 0
+    ? String(value).split(opaqueCursor).join("[opaque continuation]")
+    : String(value);
+  const text = redacted.replace(/[\u0000-\u001f\u007f]+/gu, " ").trim();
+  if (text.length <= limit) return text;
+  return `${text.slice(0, limit - 1)}\u2026`;
 }
 
 function renderArchitectureProfileWindowSummary(viewModel, sequence) {

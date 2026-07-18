@@ -548,26 +548,87 @@
 
         <div class="field-pair">
           <label class="field">
-            <span>决策职责 <small>Decision Authority</small></span>
-            <input id="accept-authority" name="authority" required placeholder="输入 Project Model 声明的 authority id" />
+            <span>授权路径 <small>Kernel Decision option</small></span>
+            <select id="accept-decision-option" name="decisionOption" required>
+              <option value="">正在读取 Kernel 输入要求…</option>
+            </select>
           </label>
           <label class="field">
-            <span>决定类型 <small>作用范围</small></span>
-            <input id="accept-decision-type" name="decisionType" required value="case-decision" placeholder="例如 case-decision" />
+            <span>决定人 <small>独立 human identity</small></span>
+            <input id="accept-decided-by" name="decidedBy" required autocomplete="off" placeholder="实际作出决定的人" />
           </label>
         </div>
 
-        <label class="field">
-          <span>决定理由 <small>必填</small></span>
-          <textarea id="accept-rationale" name="rationale" rows="3" required placeholder="说明为什么现有证据足以支持接纳，以及你接受了哪些剩余不确定性。"></textarea>
+        <label class="field" id="accept-decision-reason-field">
+          <span id="accept-decision-reason-label">决定理由 <small>Kernel required field</small></span>
+          <textarea id="accept-decision-reason" name="decisionReason" rows="3" required placeholder="说明这条授权决定的精确理由。"></textarea>
         </label>
 
-        <label class="field" id="accept-amendment-field">
-          <span>规范修订引用 <small>可选，每行一项</small></span>
-          <textarea id="accept-amendment-refs" name="amendmentRefs" rows="3" placeholder="引用 Knowledge Closure 中的 Model Amendment，或填写将被更新的规范对象。"></textarea>
-        </label>
+        <div id="accept-normative-fields" hidden>
+          <label class="field">
+            <span>规范修订引用 <small>Kernel exact references</small></span>
+            <textarea id="accept-amendment-refs" name="amendmentRefs" rows="3" readonly></textarea>
+          </label>
+        </div>
 
-        <p class="dialog-intro">Workbench 只提交你填写的决定；Authority、Decision Type、Knowledge Closure 与 Amendment 约束由 Kernel 精确校验。</p>
+        <div id="accept-adoption-fields" hidden>
+          <label class="field">
+            <span>接纳的既有改动 <small>Kernel exact paths</small></span>
+            <textarea id="accept-adopted-paths" name="adoptedChangePaths" rows="3" readonly></textarea>
+          </label>
+        </div>
+
+        <div id="accept-obligation-fields" hidden>
+          <label class="field">
+            <span>批准的跨 Claim 义务 <small>Kernel exact ids</small></span>
+            <textarea id="accept-approved-obligations" name="approvedObligationIds" rows="3" readonly></textarea>
+          </label>
+        </div>
+
+        <div id="accept-waiver-fields" hidden>
+          <div class="field-pair">
+            <label class="field">
+              <span>豁免到期时间 <small>expiresAt</small></span>
+              <input id="accept-waiver-expires-at" name="expiresAt" type="datetime-local" />
+            </label>
+            <label class="field">
+              <span>豁免范围 <small>scope</small></span>
+              <input id="accept-waiver-scope" name="scope" autocomplete="off" />
+            </label>
+          </div>
+          <label class="field">
+            <span>补偿控制 <small>每行一项</small></span>
+            <textarea id="accept-waiver-controls" name="compensatingControls" rows="3"></textarea>
+          </label>
+        </div>
+
+        <fieldset class="field claim-fieldset">
+          <legend>Knowledge Closure <small>Kernel declared mode</small></legend>
+          <label class="field">
+            <span>Closure 模式</span>
+            <select id="accept-closure-mode" name="closureMode" required></select>
+          </label>
+          <label class="field">
+            <span>Closure 理由 <small>必填</small></span>
+            <textarea id="accept-closure-rationale" name="closureRationale" rows="3" required></textarea>
+          </label>
+          <div id="accept-closure-entry-fields" hidden>
+            <label class="field" id="accept-model-amendment-field" hidden>
+              <span>必须归档的 Model amendment <small>Kernel exact paths</small></span>
+              <textarea id="accept-model-amendment-refs" rows="3" readonly></textarea>
+            </label>
+            <label class="field" id="accept-model-gap-field" hidden>
+              <span>本次登记的 Knowledge Gap <small>可多选</small></span>
+              <select id="accept-model-gap-refs" multiple></select>
+            </label>
+            <label class="field" id="accept-ephemeral-field" hidden>
+              <span>仅本次有效的知识 <small>可选，每行一项</small></span>
+              <textarea id="accept-ephemeral-statements" rows="3"></textarea>
+            </label>
+          </div>
+        </fieldset>
+
+        <p class="dialog-intro" id="accept-binding-summary">Workbench 只投影 Kernel 编译的输入要求。</p>
 
         <label class="confirmation-check">
           <input id="accept-confirmation" type="checkbox" required />

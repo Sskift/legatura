@@ -30,12 +30,7 @@ test("drives a real repository Change from HTTP creation through acceptance", as
     claims: [{
       id: "change-lifecycle-works",
       statement: "A governed Change can be accepted only after its minimum Gate passes."
-    }],
-    knowledgeClosure: {
-      status: "complete",
-      noNewKnowledge: true,
-      rationale: "The HTTP fixture introduces no reusable project knowledge."
-    }
+    }]
   });
   assert.equal(created.response.status, 201);
   assert.equal(created.body.state, "Candidate");
@@ -55,15 +50,32 @@ test("drives a real repository Change from HTTP creation through acceptance", as
   assert.equal(gate.body.status, "passed");
   assert.equal(gate.body.change.state, "EvidenceReady");
 
+  const workbench = await requestJson(
+    `${address.url}/api/workbench?changeRef=change-e2e`,
+    "GET"
+  );
+  assert.equal(workbench.response.status, 200, JSON.stringify(workbench.body));
+  const inputRequirements = workbench.body.changes[0].actions.accept.inputRequirements;
   const accepted = await requestJson(
     `${address.url}/api/changes/change-e2e/accept`,
     "POST",
     {
-      status: "approved",
-      authority: "maintainer",
-      decidedBy: "test-maintainer",
-      decisionType: "case-decision",
-      rationale: "Accept the exact fixture Change proven by its configured Gate."
+      inputRequirementsConfirmation: {
+        requirementsDigest: inputRequirements.requirementsDigest,
+        binding: inputRequirements.binding
+      },
+      knowledgeClosure: {
+        status: "complete",
+        noNewKnowledge: true,
+        rationale: "The HTTP fixture introduces no reusable project knowledge."
+      },
+      authorityDecision: {
+        status: "approved",
+        authority: "maintainer",
+        decidedBy: "test-maintainer",
+        decisionType: "case-decision",
+        rationale: "Accept the exact fixture Change proven by its configured Gate."
+      }
     }
   );
   assert.equal(accepted.body.state, "Accepted");

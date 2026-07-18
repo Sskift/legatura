@@ -15,6 +15,15 @@ test("serves public assets and the complete Change API on loopback", async (t) =
 
   const calls = [];
   const change = { id: "change-1", title: "Bound the change", status: "framed" };
+  const inputRequirementsConfirmation = {
+    requirementsDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    binding: {
+      changeRef: "change-1",
+      sourceSnapshotDigest: "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      governanceBaselineDigest: "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      verificationSubjectDigest: "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    }
+  };
   const firstProfileWindow = architectureProfileWindowFixture({
     changeIds: ["change-1"],
     hasMore: true,
@@ -149,13 +158,30 @@ test("serves public assets and the complete Change API on loopback", async (t) =
   assert.equal(gate.body.status, "evidence-ready");
   assert.equal(gate.body.gateId, "minimum");
 
-  const accepted = await requestJson(
+  const missingConfirmation = await requestJson(
     `${address.url}/api/changes/change-1/accept`,
     "POST",
     { authority: "maintainer", decidedBy: "human" }
   );
+  assert.equal(missingConfirmation.response.status, 409);
+  assert.equal(missingConfirmation.body.error.code, "ACCEPTANCE_INPUT_CONFIRMATION_REQUIRED");
+
+  const acceptanceRequest = {
+    inputRequirementsConfirmation,
+    knowledgeClosure: {
+      status: "complete",
+      noNewKnowledge: true,
+      rationale: "No reusable knowledge is introduced by the fixture."
+    },
+    authorityDecision: { authority: "maintainer", decidedBy: "human" }
+  };
+  const accepted = await requestJson(
+    `${address.url}/api/changes/change-1/accept`,
+    "POST",
+    acceptanceRequest
+  );
   assert.equal(accepted.body.status, "accepted");
-  assert.equal(accepted.body.decision.authority, "maintainer");
+  assert.equal(accepted.body.decision.authorityDecision.authority, "maintainer");
 
   assert.deepEqual(calls, [
     ["inspectProject"],
@@ -168,7 +194,7 @@ test("serves public assets and the complete Change API on loopback", async (t) =
     ["getChange", "change-1"],
     ["compileChange", "change-1", { primaryModule: "core" }],
     ["runGate", "change-1", "minimum"],
-    ["acceptChange", "change-1", { authority: "maintainer", decidedBy: "human" }]
+    ["acceptChange", "change-1", acceptanceRequest]
   ]);
 });
 

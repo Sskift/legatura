@@ -1,9 +1,14 @@
 import {
   architectureProfileDimension,
+  compileWorkbenchAcceptanceRequest,
   receiveWorkbenchProjection,
   refreshAfterMutation,
   selectWorkbenchAction,
+  selectWorkbenchAcceptanceInputRequirements,
   selectWorkbenchAuthoringModules,
+  selectWorkbenchChangeKinds,
+  selectWorkbenchChangeKindAuthoring,
+  selectWorkbenchPlanOutcomes,
 } from "./workbench-adapter.js";
 import { createProfileWindowController } from "./profile-window-controller.js";
 
@@ -32,13 +37,15 @@ const requestGeneration = {
 
 const $ = (selector) => document.querySelector(selector);
 
-const integrityChangeKinds = new Set([
-  "regression-repair",
-  "security-containment",
-  "data-integrity-repair",
-  "acceptance-integrity-repair",
-  "entrypoint-restoration",
-]);
+const CHANGE_KIND_LABELS = Object.freeze({
+  implementation: "能力实现",
+  "regression-repair": "回归修复",
+  "security-containment": "安全遏制",
+  "data-integrity-repair": "数据完整性修复",
+  "acceptance-integrity-repair": "验收不变量修复",
+  "entrypoint-restoration": "已发布入口恢复",
+  "plan-amendment": "Development Plan 修订",
+});
 
 const elements = {
   connection: $("#connection-state"),
@@ -78,6 +85,10 @@ const profileWindowController = createProfileWindowController({
   renderPage(page) {
     state.architectureProfile = page;
     state.architectureProfileError = null;
+    renderProjectState();
+  },
+  clearPage() {
+    state.architectureProfile = null;
     renderProjectState();
   },
   elements: {
@@ -455,6 +466,7 @@ async function loadWorkbench(changeRef = state.selectedChangeId) {
     state.workbench = null;
   } finally {
     if (generation !== requestGeneration.workbench) return;
+    renderCreateChangeKindOptions();
     renderCreateModuleOptions();
     renderChangeDetail();
   }
@@ -705,39 +717,47 @@ function projectPlan(project = state.project) {
   return firstPresent(project?.plan, project?.projectModel?.plan);
 }
 
-function activePlanOutcomes(project = state.project) {
-  return asArray(projectPlan(project)?.outcomes).filter(
-    (outcome) => normalizeStatus(outcome?.status) === "active",
-  );
-}
-
 function atlasActivePlanOutcomes() {
   return architectureProfileDimension(state.architectureProfile, "outcomes")
     .filter((outcome) => outcome?.status === "active");
-}
-
-function planRefsRequired(project = state.project) {
-  return project?.projectDocument?.changePolicy?.requirePlanRefs === true;
 }
 
 function selectedChangeKind() {
   return $("#new-change-kind")?.value || "implementation";
 }
 
-function selectablePlanOutcomes(project = state.project, changeKind = selectedChangeKind()) {
-  if (changeKind === "plan-amendment") return [];
-  return activePlanOutcomes(project).filter((outcome) => {
-    if (integrityChangeKinds.has(changeKind)) {
-      return outcome.kind === "integrity-maintenance"
-        && asArray(outcome.allowedChangeKinds).includes(changeKind);
-    }
-    return outcome.kind !== "integrity-maintenance";
-  });
+function selectedChangeKindAuthoring() {
+  return selectWorkbenchChangeKindAuthoring(state.workbench, selectedChangeKind());
 }
 
-function outcomeRequired(project = state.project, changeKind = selectedChangeKind()) {
-  return changeKind !== "plan-amendment"
-    && (planRefsRequired(project) || integrityChangeKinds.has(changeKind));
+function selectedPlanRefs() {
+  const select = $("#new-change-plan-ref");
+  if (!select) return [];
+  return [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+}
+
+function createPlanSelectionSatisfied(authoring = selectedChangeKindAuthoring()) {
+  if (!authoring?.selectable) return false;
+  const selection = authoring.planSelection;
+  const refs = selectedPlanRefs();
+  return refs.length >= selection.minRefs
+    && refs.length <= selection.maxRefs
+    && refs.every((ref) => selection.selectableOutcomeRefs.includes(ref));
+}
+
+function createAuthoringAvailable() {
+  return selectableAuthoringModules().length > 0
+    && selectedChangeKindAuthoring()?.selectable === true
+    && createPlanSelectionSatisfied();
+}
+
+function protectedClaimRefsForCurrentAuthoring() {
+  const authoring = selectedChangeKindAuthoring();
+  if (authoring?.integrityIncident?.required !== true) return null;
+  const selectedRefs = new Set(selectedPlanRefs());
+  return new Set(authoring.integrityIncident.protectedClaimRefsByOutcome
+    .filter((entry) => selectedRefs.has(entry.outcomeRef))
+    .flatMap((entry) => entry.claimRefs));
 }
 
 function renderProjectState() {
@@ -787,7 +807,7 @@ function renderProject(project) {
   renderKnowledgeGaps(project);
   renderProjectGates(project);
   renderCreateModuleOptions(project);
-  renderCreatePlanOptions(project);
+  renderCreatePlanOptions();
 }
 
 function workbenchAuthoringModules() {
@@ -800,6 +820,37 @@ function selectableAuthoringModules() {
 
 function disabledReasonSummary(value) {
   return Array.isArray(value) && value.length > 0 ? value.join(" · ") : "语义投影未授权";
+}
+
+function renderCreateChangeKindOptions() {
+  const select = $("#new-change-kind");
+  if (!select) return;
+  const previous = select.value;
+  const kinds = selectWorkbenchChangeKinds(state.workbench);
+  clear(select);
+  if (kinds.length === 0) {
+    select.append(createElement("option", { value: "", text: "Kernel 未投影 Change kind" }));
+    select.disabled = true;
+    renderCreatePlanOptions();
+    return;
+  }
+  for (const kind of kinds) {
+    select.append(createElement("option", {
+      value: kind.id,
+      text: `${CHANGE_KIND_LABELS[kind.id] || kind.id}${
+        kind.selectable ? "" : ` · ${disabledReasonSummary(kind.disabledReasonCodes)}`
+      }`,
+      disabled: !kind.selectable,
+      attributes: {
+        title: kind.selectable ? "" : disabledReasonSummary(kind.disabledReasonCodes),
+      },
+    }));
+  }
+  const selectableKinds = kinds.filter((kind) => kind.selectable === true);
+  const selected = selectableKinds.find((kind) => kind.id === previous) ?? selectableKinds[0];
+  if (selected) select.value = selected.id;
+  select.disabled = selectableKinds.length === 0;
+  renderCreatePlanOptions();
 }
 
 function renderCreateModuleOptions() {
@@ -840,49 +891,51 @@ function renderCreateModuleOptions() {
   renderCreateClaimOptions(select.value);
 }
 
-function renderCreatePlanOptions(project = state.project) {
+function renderCreatePlanOptions() {
   const select = $("#new-change-plan-ref");
   if (!select) return;
-  const previous = select.value;
-  const changeKind = selectedChangeKind();
-  const integrityRepair = integrityChangeKinds.has(changeKind);
-  const outcomes = selectablePlanOutcomes(project, changeKind);
-  const required = outcomeRequired(project, changeKind);
+  const previous = new Set([...select.selectedOptions].map((option) => option.value));
+  const authoring = selectedChangeKindAuthoring();
+  const planSelection = authoring?.planSelection;
+  const outcomesByRef = new Map(selectWorkbenchPlanOutcomes(state.workbench)
+    .map((outcome) => [outcome.outcomeRef, outcome]));
+  const selectableOutcomeRefs = planSelection?.selectableOutcomeRefs ?? [];
+  const integrityRepair = authoring?.integrityIncident?.required === true;
   const failureField = $("#integrity-failure-field");
   const failureInput = $("#new-change-observed-failure");
   failureField.hidden = !integrityRepair;
   failureInput.required = integrityRepair;
   if (!integrityRepair) failureInput.value = "";
   clear(select);
-  if (changeKind === "plan-amendment") {
-    select.append(createElement("option", { value: "", text: "计划修订不引用 Outcome" }));
+  if (!planSelection) {
+    select.append(createElement("option", { value: "", text: "Kernel 未投影 Plan 选择要求" }));
     select.disabled = true;
-    $("#new-change-plan-ref-help").textContent = "计划修订由治理 Authority 授权，不能使用正在编辑的计划自我授权。";
+    $("#new-change-plan-ref-help").textContent = "等待有效的 Workbench authoring projection。";
+    renderCreateClaimOptions($("#new-change-module")?.value);
     return;
   }
-  select.append(createElement("option", {
-    value: "",
-    text: outcomes.length
-      ? required ? "请选择本次 Change 推进的 Outcome" : "不绑定长期 Outcome"
-      : "没有 active Outcome",
-  }));
-  for (const outcome of outcomes) {
-    const id = String(outcome.id);
-    const detail = String(firstPresent(outcome.outcome, outcome.summary, outcome.title, ""));
+  select.multiple = planSelection.maxRefs > 1;
+  select.required = planSelection.minRefs > 0;
+  select.size = select.multiple ? Math.min(Math.max(selectableOutcomeRefs.length, 2), 6) : 1;
+  if (planSelection.minRefs === 0 && !select.multiple) {
+    select.append(createElement("option", { value: "", text: "不绑定长期 Outcome" }));
+  }
+  for (const outcomeRef of selectableOutcomeRefs) {
+    const outcome = outcomesByRef.get(outcomeRef);
+    const detail = String(outcome?.statement || "");
     select.append(createElement("option", {
-      value: id,
-      text: detail ? `${id} · ${detail}` : id,
+      value: outcomeRef,
+      text: detail ? `${outcomeRef} · ${detail}` : outcomeRef,
+      selected: previous.has(outcomeRef),
     }));
   }
-  if (outcomes.some((outcome) => String(outcome.id) === previous)) select.value = previous;
-  select.disabled = outcomes.length === 0;
-  $("#new-change-plan-ref-help").textContent = outcomes.length
-    ? required
-      ? "必须选择冻结 Governance Baseline 中的 active Outcome；planned Outcome 需先独立激活。"
-      : "项目未强制对齐，但可以显式记录这次 Change 推进的 active Outcome。"
-    : required
-      ? "计划策略要求对齐，但当前没有 active Outcome；Project Model 应停止变更创建。"
-      : "项目尚未声明可选的 active Outcome。";
+  select.disabled = planSelection.maxRefs === 0 || selectableOutcomeRefs.length === 0;
+  $("#new-change-plan-ref-help").textContent = planSelection.maxRefs === 0
+    ? "Kernel 声明此 Change kind 不接受 Outcome 引用。"
+    : selectableOutcomeRefs.length === 0
+      ? disabledReasonSummary(authoring.disabledReasonCodes)
+      : `Kernel 要求选择 ${planSelection.minRefs}–${planSelection.maxRefs} 个 Outcome。`;
+  renderCreateClaimOptions($("#new-change-module")?.value);
 }
 
 function renderCreateClaimOptions(moduleId) {
@@ -895,6 +948,7 @@ function renderCreateClaimOptions(moduleId) {
   }
   const module = workbenchAuthoringModules().find((item) => String(item?.id) === String(moduleId));
   const claims = Array.isArray(module?.claims) ? module.claims : [];
+  const protectedClaimRefs = protectedClaimRefsForCurrentAuthoring();
   if (claims.length === 0) {
     container.append(createElement("div", {
       className: "claim-picker-empty",
@@ -906,7 +960,8 @@ function renderCreateClaimOptions(moduleId) {
     const id = claim?.id;
     if (!id) continue;
     const statement = String(claim.statement || id);
-    const selectable = claim.selectable === true;
+    const protectedForIncident = protectedClaimRefs === null || protectedClaimRefs.has(String(id));
+    const selectable = claim.selectable === true && protectedForIncident;
     const routes = Array.isArray(claim.acceptanceRoutes) ? claim.acceptanceRoutes : [];
     const routeSummary = routes.map((route) => (
       `${route.gateId}/${route.commandId} · ${shortIdentifier(route.routeDigest, 18)}`
@@ -933,8 +988,16 @@ function renderCreateClaimOptions(moduleId) {
         ]),
         createElement("span", {
           className: `claim-oracle-state${selectable ? " has-gate" : ""}`,
-          text: selectable ? `${routes.length} 条精确路由` : disabledReasonSummary(claim.disabledReasonCodes),
-          attributes: { title: routeSummary || disabledReasonSummary(claim.disabledReasonCodes) },
+          text: selectable
+            ? `${routes.length} 条精确路由`
+            : protectedForIncident
+              ? disabledReasonSummary(claim.disabledReasonCodes)
+              : "不在所选 Outcome 的 protected Claims 中",
+          attributes: {
+            title: routeSummary || (protectedForIncident
+              ? disabledReasonSummary(claim.disabledReasonCodes)
+              : "Kernel 未将此 Claim 投影为所选完整性修复的 target"),
+          },
         }),
       ]),
     );
@@ -1140,6 +1203,10 @@ function changeIntent(change) {
 
 function workbenchChangeAction(kind, change = state.selectedChange) {
   return selectWorkbenchAction(state.workbench, change, kind);
+}
+
+function workbenchAcceptanceInputRequirements(change = state.selectedChange) {
+  return selectWorkbenchAcceptanceInputRequirements(state.workbench, change);
 }
 
 function projectWorkbenchAction(button, action) {
@@ -1744,19 +1811,141 @@ function openAcceptDialog() {
     toast(disabledReasonSummary(action?.disabledReasonCodes), "danger");
     return;
   }
+  const requirements = workbenchAcceptanceInputRequirements(state.selectedChange);
+  if (requirements?.available !== true) {
+    toast(disabledReasonSummary(requirements?.disabledReasonCodes), "danger");
+    return;
+  }
   elements.acceptError.hidden = true;
   elements.acceptError.textContent = "";
   $("#accept-dialog-change").textContent = changeTitle(state.selectedChange);
   projectWorkbenchAction(elements.submitAccept, action);
-
-  const existingDecision = state.selectedChange.authorityDecision || {};
-  $("#accept-authority").value = existingDecision.authority || "";
-  $("#accept-decision-type").value = existingDecision.decisionType || "case-decision";
-  $("#accept-rationale").value = existingDecision.rationale || "";
-  $("#accept-amendment-refs").value = asArray(existingDecision.amendmentRefs).join("\n");
+  renderAcceptanceRequirementForm(
+    requirements,
+    state.selectedChange.authorityDecision,
+    state.selectedChange.knowledgeClosure,
+  );
   $("#accept-confirmation").checked = false;
   if (typeof elements.acceptDialog.showModal === "function") elements.acceptDialog.showModal();
   else elements.acceptDialog.setAttribute("open", "");
+}
+
+function renderAcceptanceRequirementForm(requirements, existingDecision = {}, existingClosure = {}) {
+  const decisionSelect = $("#accept-decision-option");
+  clear(decisionSelect);
+  requirements.authorityDecision.decisionOptions.forEach((option, index) => {
+    decisionSelect.append(createElement("option", {
+      value: String(index),
+      text: `${option.authorityRef} · ${option.decisionType}`,
+      selected: option.authorityRef === existingDecision?.authority
+        && option.decisionType === existingDecision?.decisionType,
+    }));
+  });
+  decisionSelect.disabled = requirements.authorityDecision.decisionOptions.length === 0;
+  $("#accept-decided-by").value = existingDecision?.decidedBy || "";
+  $("#accept-decision-reason").value = existingDecision?.rationale || existingDecision?.reason || "";
+  $("#accept-amendment-refs").value = requirements.authorityDecision.requiredAmendmentRefs.length > 0
+    ? requirements.authorityDecision.requiredAmendmentRefs.join("\n")
+    : asArray(existingDecision?.amendmentRefs).join("\n");
+  $("#accept-adopted-paths").value = requirements.authorityDecision.requiredAdoptedChangePaths.join("\n");
+  $("#accept-approved-obligations").value = requirements.authorityDecision.requiredApprovedObligationIds.join("\n");
+  $("#accept-waiver-expires-at").value = existingDecision?.expiresAt || "";
+  $("#accept-waiver-scope").value = toDisplayText(existingDecision?.scope);
+  $("#accept-waiver-controls").value = asArray(existingDecision?.compensatingControls).join("\n");
+
+  const closureMode = $("#accept-closure-mode");
+  clear(closureMode);
+  const existingClosureMode = existingClosure?.noNewKnowledge === true
+    ? "no-new-knowledge"
+    : Array.isArray(existingClosure?.entries)
+      ? "entries"
+      : requirements.knowledgeClosure.allowedModes[0];
+  for (const mode of requirements.knowledgeClosure.allowedModes) {
+    closureMode.append(createElement("option", {
+      value: mode,
+      text: mode === "no-new-knowledge" ? "没有新增持久知识" : "逐项归档新增知识",
+      selected: mode === existingClosureMode,
+    }));
+  }
+  const closureEntries = Array.isArray(existingClosure?.entries) ? existingClosure.entries : [];
+  $("#accept-closure-rationale").value = existingClosure?.rationale
+    || closureEntries.find((entry) => isPresent(entry?.rationale))?.rationale
+    || "";
+  $("#accept-model-amendment-refs").value = requirements.knowledgeClosure.requiredModelAmendmentRefs.join("\n");
+  const gapSelect = $("#accept-model-gap-refs");
+  clear(gapSelect);
+  const selectedGapRefs = new Set(closureEntries
+    .filter((entry) => entry?.kind === "model-gap")
+    .flatMap((entry) => asArray(entry?.refs).map(String)));
+  for (const gapRef of requirements.knowledgeClosure.selectableKnowledgeGapRefs) {
+    gapSelect.append(createElement("option", {
+      value: gapRef,
+      text: gapRef,
+      selected: selectedGapRefs.has(gapRef),
+    }));
+  }
+  $("#accept-ephemeral-statements").value = closureEntries
+    .filter((entry) => entry?.kind === "ephemeral")
+    .map((entry) => entry?.statement)
+    .filter(isPresent)
+    .join("\n");
+  $("#accept-binding-summary").textContent = [
+    `requirements ${shortIdentifier(requirements.requirementsDigest, 24)}`,
+    ...requirements.confirmation.bindingFields.map((field) => (
+      `${field} ${shortIdentifier(requirements.binding[field], 18)}`
+    )),
+  ].join(" · ");
+  $("#accept-confirmation").required = requirements.confirmation.required === true;
+  renderAcceptConditionalFields();
+}
+
+function selectedAcceptanceDecisionOption(requirements = workbenchAcceptanceInputRequirements()) {
+  const index = Number.parseInt($("#accept-decision-option").value, 10);
+  return Number.isSafeInteger(index) ? requirements?.authorityDecision?.decisionOptions?.[index] : null;
+}
+
+function renderAcceptConditionalFields() {
+  const requirements = workbenchAcceptanceInputRequirements();
+  if (!requirements) return;
+  const option = selectedAcceptanceDecisionOption(requirements);
+  const requiredFields = new Set(option?.requiredFields ?? []);
+  const decisionReasonField = $("#accept-decision-reason-field");
+  const decisionReason = $("#accept-decision-reason");
+  const reasonRequired = requiredFields.has("rationale") || requiredFields.has("reason");
+  decisionReasonField.hidden = !reasonRequired;
+  decisionReason.required = reasonRequired;
+  $("#accept-decision-reason-label").textContent = requiredFields.has("reason")
+    ? "豁免理由 · reason"
+    : "决定理由 · rationale";
+
+  const amendmentRequired = requiredFields.has("amendmentRefs")
+    || requirements.authorityDecision.requiredAmendmentRefs.length > 0;
+  $("#accept-normative-fields").hidden = !amendmentRequired;
+  $("#accept-amendment-refs").required = amendmentRequired;
+  $("#accept-amendment-refs").readOnly = requirements.authorityDecision.requiredAmendmentRefs.length > 0;
+  $("#accept-adoption-fields").hidden = requirements.authorityDecision.requiredAdoptedChangePaths.length === 0;
+  $("#accept-obligation-fields").hidden = requirements.authorityDecision.requiredApprovedObligationIds.length === 0;
+
+  const waiverFields = ["expiresAt", "scope", "compensatingControls"];
+  const waiverRequired = waiverFields.some((field) => requiredFields.has(field));
+  $("#accept-waiver-fields").hidden = !waiverRequired;
+  $("#accept-waiver-expires-at").required = requiredFields.has("expiresAt");
+  $("#accept-waiver-scope").required = requiredFields.has("scope");
+  $("#accept-waiver-controls").required = requiredFields.has("compensatingControls");
+
+  const entryMode = $("#accept-closure-mode").value === "entries";
+  $("#accept-closure-entry-fields").hidden = !entryMode;
+  $("#accept-model-amendment-field").hidden = !entryMode
+    || requirements.knowledgeClosure.requiredModelAmendmentRefs.length === 0;
+  $("#accept-model-gap-field").hidden = !entryMode
+    || requirements.knowledgeClosure.selectableKnowledgeGapRefs.length === 0
+    || !requirements.knowledgeClosure.entryKinds.includes("model-gap");
+  $("#accept-ephemeral-field").hidden = !entryMode
+    || !requirements.knowledgeClosure.entryKinds.includes("ephemeral");
+}
+
+function readLineValues(selector) {
+  return $(selector).value.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
 function closeAcceptDialog() {
@@ -1768,17 +1957,32 @@ async function acceptSelectedChange(event) {
   event.preventDefault();
   const id = state.selectedChangeId;
   if (!id || !state.selectedChange) return;
-  const authority = $("#accept-authority").value;
-  const decisionType = $("#accept-decision-type").value;
-  const rationale = $("#accept-rationale").value.trim();
-  const amendmentRefs = $("#accept-amendment-refs").value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  if (!authority || !decisionType || !rationale || !$("#accept-confirmation").checked) {
+  const requirements = workbenchAcceptanceInputRequirements(state.selectedChange);
+  if (!requirements || requirements.available !== true || !$("#accept-confirmation").checked) {
     elements.acceptError.hidden = false;
-    elements.acceptError.textContent = "请填写决策职责、决定类型与理由，并确认接纳范围。Kernel 会校验其治理权限。";
+    elements.acceptError.textContent = "验收输入要求不可用，或尚未确认 Kernel 绑定的精确范围。";
+    return;
+  }
+  let acceptanceRequest;
+  try {
+    acceptanceRequest = compileWorkbenchAcceptanceRequest(requirements, {
+      confirmed: $("#accept-confirmation").checked,
+      decisionOptionIndex: Number.parseInt($("#accept-decision-option").value, 10),
+      decidedBy: $("#accept-decided-by").value,
+      decisionReason: $("#accept-decision-reason").value,
+      amendmentRefs: readLineValues("#accept-amendment-refs"),
+      expiresAt: $("#accept-waiver-expires-at").value,
+      scope: $("#accept-waiver-scope").value,
+      compensatingControls: readLineValues("#accept-waiver-controls"),
+      closureMode: $("#accept-closure-mode").value,
+      closureRationale: $("#accept-closure-rationale").value,
+      knowledgeGapRefs: [...$("#accept-model-gap-refs").selectedOptions]
+        .map((option) => option.value),
+      ephemeralStatements: readLineValues("#accept-ephemeral-statements"),
+    });
+  } catch (error) {
+    elements.acceptError.hidden = false;
+    elements.acceptError.textContent = errorMessage(error);
     return;
   }
 
@@ -1787,16 +1991,7 @@ async function acceptSelectedChange(event) {
   try {
     await api(`/api/changes/${encodeURIComponent(id)}/accept`, {
       method: "POST",
-      body: JSON.stringify({
-        authorityDecision: {
-          status: "approved",
-          authority,
-          decidedBy: authority,
-          decisionType,
-          rationale,
-          amendmentRefs,
-        },
-      }),
+      body: JSON.stringify(acceptanceRequest),
     });
     closeAcceptDialog();
     await refreshCanonicalStateAfterMutation({ detailId: id, includeProject: true });
@@ -1818,11 +2013,13 @@ async function acceptSelectedChange(event) {
 function openCreateDialog() {
   elements.createError.hidden = true;
   elements.createError.textContent = "";
+  renderCreateChangeKindOptions();
   renderCreateModuleOptions();
   renderCreatePlanOptions();
   const modulesAvailable = selectableAuthoringModules().length > 0;
-  const planAvailable = !outcomeRequired() || selectablePlanOutcomes().length > 0;
-  elements.submitCreate.disabled = !modulesAvailable || !planAvailable;
+  const kindAuthoring = selectedChangeKindAuthoring();
+  const planAvailable = createPlanSelectionSatisfied(kindAuthoring);
+  elements.submitCreate.disabled = !createAuthoringAvailable();
   if (!modulesAvailable) {
     elements.createError.hidden = false;
     elements.createError.textContent = state.workbenchError
@@ -1830,7 +2027,7 @@ function openCreateDialog() {
       : "Kernel 当前没有授权可用于创建 Change 的模块。";
   } else if (!planAvailable) {
     elements.createError.hidden = false;
-    elements.createError.textContent = "当前计划策略要求对齐，但没有 active Outcome。请先修订 Development Plan。";
+    elements.createError.textContent = disabledReasonSummary(kindAuthoring?.disabledReasonCodes);
   }
   if (typeof elements.createDialog.showModal === "function") elements.createDialog.showModal();
   else elements.createDialog.setAttribute("open", "");
@@ -1848,7 +2045,9 @@ async function createChange(event) {
   const intent = $("#new-change-intent").value.trim();
   const primaryModule = $("#new-change-module").value;
   const changeKind = selectedChangeKind();
-  const planRef = $("#new-change-plan-ref").value;
+  const kindAuthoring = selectedChangeKindAuthoring();
+  const planRefs = selectedPlanRefs();
+  const integrityIncidentRequired = kindAuthoring?.integrityIncident?.required === true;
   const observedFailure = $("#new-change-observed-failure").value.trim();
   const knownClaims = [...document.querySelectorAll('#new-change-known-claims input[name="knownClaim"]:checked')]
     .map((input) => ({ id: input.value, statement: input.dataset.statement }));
@@ -1869,13 +2068,13 @@ async function createChange(event) {
     $("#new-change-module").focus();
     return;
   }
-  if (outcomeRequired() && !planRef) {
+  if (!createPlanSelectionSatisfied(kindAuthoring)) {
     elements.createError.hidden = false;
-    elements.createError.textContent = "请选择一个 active Development Outcome。";
+    elements.createError.textContent = "所选 Outcome 数量不符合 Kernel 投影的 Plan cardinality。";
     $("#new-change-plan-ref").focus();
     return;
   }
-  if (integrityChangeKinds.has(changeKind) && !observedFailure) {
+  if (integrityIncidentRequired && !observedFailure) {
     elements.createError.hidden = false;
     elements.createError.textContent = "完整性修复必须记录一条具体、可审查的失败 Observation。";
     $("#new-change-observed-failure").focus();
@@ -1899,11 +2098,11 @@ async function createChange(event) {
         description: intent,
         primaryModule,
         changeKind,
-        planRefs: planRef ? [planRef] : [],
-        integrityTarget: integrityChangeKinds.has(changeKind)
+        planRefs,
+        integrityTarget: integrityIncidentRequired
           ? { claimRef: claims[0].id, failureEvidenceRef: "integrity-failure-observation" }
           : null,
-        evidence: integrityChangeKinds.has(changeKind) ? [{
+        evidence: integrityIncidentRequired ? [{
           id: "integrity-failure-observation",
           claim: claims[0],
           oracle: {
@@ -1942,9 +2141,7 @@ async function createChange(event) {
     elements.createError.textContent = errorMessage(error);
   } finally {
     setBusy(elements.submitCreate, false);
-    if (selectableAuthoringModules().length === 0 || (outcomeRequired() && selectablePlanOutcomes().length === 0)) {
-      elements.submitCreate.disabled = true;
-    }
+    elements.submitCreate.disabled = !createAuthoringAvailable();
   }
 }
 
@@ -1965,10 +2162,15 @@ function wireEvents() {
   });
   $("#new-change-kind").addEventListener("change", () => {
     renderCreatePlanOptions();
-    elements.submitCreate.disabled = selectableAuthoringModules().length === 0
-      || (outcomeRequired() && selectablePlanOutcomes().length === 0);
+    elements.submitCreate.disabled = !createAuthoringAvailable();
+  });
+  $("#new-change-plan-ref").addEventListener("change", () => {
+    renderCreateClaimOptions($("#new-change-module").value);
+    elements.submitCreate.disabled = !createAuthoringAvailable();
   });
   elements.acceptForm.addEventListener("submit", acceptSelectedChange);
+  $("#accept-decision-option").addEventListener("change", renderAcceptConditionalFields);
+  $("#accept-closure-mode").addEventListener("change", renderAcceptConditionalFields);
   elements.acceptDialog.addEventListener("click", (event) => {
     if (event.target === elements.acceptDialog) closeAcceptDialog();
   });
