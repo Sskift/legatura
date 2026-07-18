@@ -456,7 +456,7 @@
     {
       "id": "LGT-019",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "Every Local Workbench authoring and acceptance input is a bounded, source-bound Kernel projection, while Profile traversal fails completely and canonically at process and browser boundaries without reconstructing governance semantics.",
       "dependsOn": ["LGT-014"],
       "acceptance": {
@@ -1315,6 +1315,16 @@
           "rationale": "The fixed Local Workbench browser proof command in the prior sealed Package directly covers the declared DOM workflow proof Claim without introducing a snapshot-test wall."
         }
       ]
+    },
+    {
+      "id": "LGT-019-T1",
+      "outcomeRef": "LGT-019",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-014 is achieved and the complete LGT-019 definition plus its explicitly overdue Workbench input-requirements Gap were Accepted in an earlier Governance Baseline; this isolated Amendment freezes that unchanged definition before Contract declaration or implementation.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
