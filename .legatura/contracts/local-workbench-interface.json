@@ -34,6 +34,10 @@
     {
       "id": "workbench-projects-kernel-semantics",
       "statement": "The pure bounded Architecture Profile view model preserves Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap through exact identifiers and digests without aggregate assurance. Separately, CLI, HTTP, and browser adapters preserve the Change Kernel's complete canonical authoring and action projections, including selectable Claims, exact Gate and command route identifiers and digests, enabled state, and ordered workbenchDisabledReasonCodes, without omission, duplication, invention, or governance recomputation."
+    },
+    {
+      "id": "workbench-input-requirements-are-adapter-preserved",
+      "statement": "Local Workbench's pure receiver, loopback HTTP route, and browser preserve the Kernel's bounded source-bound authoring and selected-Change acceptance-input requirements exactly, including Change kinds, Plan-selection cardinality, selectable Outcome references, Knowledge Closure modes, Decision Authority and Decision-type choices, required fields, exact amendment or adoption references, closed reason codes, and confirmation binding. The browser renders and submits only those declared values and does not inspect raw Project Plan, authority, scope, Closure, or Change internals to reconstruct eligibility or acceptance policy."
     }
   ]
 }
