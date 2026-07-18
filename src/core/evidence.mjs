@@ -893,7 +893,9 @@ export function compileAuthorityDecisionOptions(expectedAuthorities = [], author
       const declaredTypes = Array.isArray(declaration?.may)
         ? declaration.may.map(readString).filter((type) => AUTHORITY_DECISION_TYPES.includes(type))
         : [];
-      const allowedTypes = declaredTypes.length > 0 ? [...new Set(declaredTypes)] : AUTHORITY_DECISION_TYPES;
+      const allowedTypes = declaredTypes.length > 0
+        ? [...new Set(declaredTypes)]
+        : [...AUTHORITY_DECISION_TYPES];
       return allowedTypes.sort(compareCodeUnits).map((decisionType) => ({
         authorityRef,
         decisionType,

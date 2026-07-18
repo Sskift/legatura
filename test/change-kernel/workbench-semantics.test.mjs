@@ -13,6 +13,7 @@ import {
 } from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import { compileChangePlanAuthoringProjection } from "../../src/core/change-compiler.mjs";
+import { compileAuthorityDecisionOptions } from "../../src/core/evidence.mjs";
 
 const execFileAsync = promisify(execFile);
 const PRIVATE_OUTPUT = "workbench-private-gate-output";
@@ -20,6 +21,12 @@ const PRIVATE_OUTPUT = "workbench-private-gate-output";
 export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
 
 test("Kernel compiles one bounded canonical Workbench semantic projection", async (t) => {
+  assert.deepEqual(
+    compileAuthorityDecisionOptions(["module-maintainer"], [{ id: "module-maintainer" }])
+      .map(({ decisionType }) => decisionType),
+    ["case-decision", "normative-amendment", "waiver"],
+    "default Decision options are sorted from a consumer-owned copy of the closed vocabulary"
+  );
   const repoPath = await createFixture();
   t.after(() => rm(repoPath, { recursive: true, force: true }));
 
