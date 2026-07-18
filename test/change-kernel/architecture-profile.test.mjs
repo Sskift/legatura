@@ -15,13 +15,18 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { createKernel } from "../../src/core/index.mjs";
+import {
+  ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION,
+  createKernel
+} from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
 import {
   CHANGE_STORE_LIMITS,
   createChangeStore
 } from "../../src/core/change-store.mjs";
 import { validateEvidenceCoverage } from "../../src/core/evidence.mjs";
+
+export { ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION };
 
 const execFileAsync = promisify(execFile);
 const SEALED_OUTPUT_SENTINEL = "sealed-private-gate-output";
@@ -530,6 +535,113 @@ test("Change queries observe sources independently of N and keep list bodies bou
       `Profile leaked route-provider resource field ${operationalField}`
     );
   }
+
+  let cursorNow = Date.UTC(2026, 6, 18, 0, 0, 0);
+  const windowKernel = createKernel({
+    repoPath: routeProductFixture.repoPath,
+    clock: () => new Date(cursorNow)
+  });
+  const firstWindow = await windowKernel.inspectArchitectureProfileWindow({ limit: 1 });
+  assert.equal(firstWindow.proofVersion, ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION);
+  assert.equal(firstWindow.kind, "architecture-profile-window");
+  assert.deepEqual(firstWindow.source, firstWindow.page.source);
+  assert.deepEqual(firstWindow.window, {
+    ordering: "change-id-v1",
+    offset: 0,
+    limit: 1,
+    returned: 1,
+    hasMore: true,
+    recordRefs: [{ id: "union-a" }]
+  });
+  assert.deepEqual(firstWindow.page.entities.changes.map((change) => change.id), ["union-a"]);
+  assert.ok(firstWindow.continuation?.cursor);
+  const {
+    windowDigest: firstWindowDigest,
+    continuation: firstContinuation,
+    ...firstWindowContent
+  } = firstWindow;
+  assert.equal(firstWindowDigest, canonicalDigest(firstWindowContent));
+  assert.equal(Buffer.byteLength(JSON.stringify(firstWindow), "utf8") < 2 * 1024 * 1024, true);
+
+  const secondWindow = await windowKernel.inspectArchitectureProfileWindow({
+    cursor: firstContinuation.cursor
+  });
+  assert.deepEqual(secondWindow.window.recordRefs, [{ id: "union-a-repeat" }]);
+  assert.deepEqual(
+    secondWindow.page.entities.changes.map((change) => change.id),
+    ["union-a-repeat"],
+    "a page compiles only its selected historical Change facts"
+  );
+  const thirdWindow = await windowKernel.inspectArchitectureProfileWindow({
+    cursor: secondWindow.continuation.cursor
+  });
+  assert.deepEqual(thirdWindow.window.recordRefs, [{ id: "union-b" }]);
+  assert.equal(thirdWindow.continuation, null);
+
+  const independentCounted = countingCommandRunner();
+  const independentKernel = createKernel({
+    repoPath: routeProductFixture.repoPath,
+    commandRunner: independentCounted.run
+  });
+  const independentFirst = await independentKernel.inspectArchitectureProfileWindow({ limit: 1 });
+  assert.equal(
+    independentCounted.observations(),
+    2,
+    "one Profile window acquires one two-round stabilized composite snapshot"
+  );
+  assert.equal(
+    independentFirst.windowDigest,
+    firstWindow.windowDigest,
+    "cursor randomness is excluded from the semantic window digest"
+  );
+  await assert.rejects(
+    independentKernel.inspectArchitectureProfileWindow({ cursor: firstContinuation.cursor }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_CURSOR_INVALID"
+      && error?.statusCode === 400
+  );
+  const tamperedCursor = `${firstContinuation.cursor.slice(0, -1)}${
+    firstContinuation.cursor.endsWith("A") ? "B" : "A"
+  }`;
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({ cursor: tamperedCursor }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_CURSOR_INVALID"
+      && error?.statusCode === 400
+  );
+
+  const routeProductSourcePath = path.join(routeProductFixture.repoPath, "src/index.mjs");
+  const routeProductSource = await readFile(routeProductSourcePath, "utf8");
+  await writeFile(routeProductSourcePath, `${routeProductSource}// cursor snapshot drift\n`, "utf8");
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({ cursor: firstContinuation.cursor }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_CURSOR_SNAPSHOT_MISMATCH"
+      && error?.statusCode === 409
+  );
+  await writeFile(routeProductSourcePath, routeProductSource, "utf8");
+
+  const defaultWindow = await windowKernel.inspectArchitectureProfileWindow();
+  assert.equal(defaultWindow.window.limit, 20);
+  assert.equal(defaultWindow.window.returned, 3);
+  assert.equal(defaultWindow.continuation, null);
+
+  cursorNow += 5 * 60 * 1000;
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({ cursor: firstContinuation.cursor }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_CURSOR_EXPIRED"
+      && error?.statusCode === 410
+  );
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({ limit: 33 }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID"
+      && error?.statusCode === 400
+  );
+  await assert.rejects(
+    windowKernel.inspectArchitectureProfileWindow({
+      cursor: independentFirst.continuation.cursor,
+      limit: 1
+    }),
+    (error) => error?.code === "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID"
+      && error?.statusCode === 400
+  );
 });
 
 test("bounded stabilization accepts A/B/B and fails closed on A/B/C", async (t) => {

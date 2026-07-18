@@ -102,14 +102,16 @@ test("Kernel consumes one Project Model Module Claim/Gate projection per stable 
 
   const counted = countingCommandRunner();
   const { value: projection, coverage } = await capturePreciseCoverage(() => (
-    createKernel({ repoPath, commandRunner: counted.run }).inspectWorkbenchProjection()
+    createKernel({ repoPath, commandRunner: counted.run }).inspectWorkbenchProjection({
+      changeRef: exactCandidate.id
+    })
   ));
 
-  assert.equal(counted.observations(), 2, "all records share one two-round stable source query");
+  assert.equal(counted.observations(), 2, "one selected record shares one stable source query");
   assert.equal(
     functionCalls(coverage, "/src/core/change-compiler.mjs", "compileClaimGateRouteIndex"),
     2,
-    "one current and one unique frozen product are compiled, independent of Change count"
+    "one current and one selected frozen product are compiled"
   );
   assert.equal(
     functionCalls(
@@ -118,7 +120,7 @@ test("Kernel consumes one Project Model Module Claim/Gate projection per stable 
       "projectCompiledModuleClaimGateIndex"
     ),
     2,
-    "one current and one unique frozen Module projection serve all Changes"
+    "one current and one selected frozen Module projection serve the requested Change"
   );
   for (const obsoleteFunction of [
     "compileWorkbenchAcceptanceGateScopeIndex",
@@ -173,7 +175,10 @@ test("Kernel consumes one Project Model Module Claim/Gate projection per stable 
   }]);
   assert.notEqual(exactAnnotations[0].routeDigest, canonicalDigest(currentExactRoute));
 
-  const crossActions = findById(projection.changes, crossCandidate.id).actions;
+  const crossProjection = await createKernel({ repoPath }).inspectWorkbenchProjection({
+    changeRef: crossCandidate.id
+  });
+  const crossActions = findById(crossProjection.changes, crossCandidate.id).actions;
   const crossAnnotations = crossActions.gates.flatMap((gate) => gate.claimRouteAnnotations);
   assert.deepEqual(crossAnnotations, [{
     obligationRef: "verify-cross-target",
@@ -190,7 +195,10 @@ test("Kernel consumes one Project Model Module Claim/Gate projection per stable 
   assert.deepEqual(exactActions.compile.disabledReasonCodes, []);
   assert.equal(exactActions.accept.enabled, false);
   assert.deepEqual(exactActions.accept.disabledReasonCodes, ["CHANGE_NOT_EVIDENCE_READY"]);
-  const claimlessActions = findById(projection.changes, "claimless-current").actions;
+  const claimlessProjection = await createKernel({ repoPath }).inspectWorkbenchProjection({
+    changeRef: "claimless-current"
+  });
+  const claimlessActions = findById(claimlessProjection.changes, "claimless-current").actions;
   assert.deepEqual(claimlessActions.compile.disabledReasonCodes, ["CHANGE_CLAIM_REQUIRED"]);
   assert.deepEqual(claimlessActions.accept.disabledReasonCodes, [
     "CHANGE_CLAIM_REQUIRED",

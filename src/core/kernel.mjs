@@ -1,5 +1,11 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import {
+  createHmac,
+  randomBytes,
+  randomUUID,
+  timingSafeEqual
+} from "node:crypto";
+import { types as utilTypes } from "node:util";
 import {
   ARCHITECTURE_PROFILE_LIMITS,
   compileArchitectureProfile
@@ -57,6 +63,15 @@ const ARCHITECTURE_PROFILE_QUERY_FACT_LIMIT = 32768;
 const ARCHITECTURE_PROFILE_MODEL_ROUTE_WORK_LIMIT = 32768;
 const WORKBENCH_ACTION_FACT_LIMIT = 65536;
 const WORKBENCH_PROJECTION_BYTE_LIMIT = 4 * 1024 * 1024;
+const ARCHITECTURE_PROFILE_WINDOW_DEFAULT_LIMIT = 20;
+const ARCHITECTURE_PROFILE_WINDOW_MAX_LIMIT = 32;
+const ARCHITECTURE_PROFILE_WINDOW_OUTPUT_BYTE_LIMIT = 2 * 1024 * 1024;
+const ARCHITECTURE_PROFILE_WINDOW_CURSOR_BYTE_LIMIT = 2 * 1024;
+const ARCHITECTURE_PROFILE_WINDOW_CURSOR_TTL_MS = 5 * 60 * 1000;
+const ARCHITECTURE_PROFILE_WINDOW_ORDERING = "change-id-v1";
+const ARCHITECTURE_PROFILE_WINDOW_PURPOSE = "architecture-profile-window";
+
+export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
 
 export const WORKBENCH_DISABLED_REASON_CODES = Object.freeze([
   "MODULE_NOT_GOVERNED",
@@ -80,6 +95,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   const resolvedRepoPath = path.resolve(repoPath);
   const store = createChangeStore(resolvedRepoPath);
   const now = () => readClock(clock);
+  const profileWindowCursor = createArchitectureProfileWindowCursor({
+    secret: randomBytes(32),
+    now: () => Date.parse(now())
+  });
   let operationQueue = Promise.resolve();
 
   function serializeOperation(operation) {
@@ -220,9 +239,48 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return compileArchitectureProfileFromSnapshot(snapshot);
   }
 
-  async function inspectWorkbenchProjection() {
+  async function inspectArchitectureProfileWindow(request) {
+    const query = readArchitectureProfileWindowRequest(request, profileWindowCursor);
     const snapshot = await inspectChangeQuery();
-    return compileWorkbenchProjectionFromSnapshot(snapshot);
+    const selection = selectArchitectureProfileRecordWindow(snapshot, query);
+    const page = compileArchitectureProfileFromSnapshot({
+      ...snapshot,
+      records: selection.records
+    });
+    const content = {
+      schemaVersion: 1,
+      proofVersion: ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION,
+      kind: ARCHITECTURE_PROFILE_WINDOW_PURPOSE,
+      source: page.source,
+      window: selection.window,
+      page
+    };
+    const result = {
+      ...content,
+      windowDigest: canonicalDigest(content),
+      continuation: selection.window.hasMore
+        ? profileWindowCursor.issue({
+            source: page.source,
+            offset: selection.nextOffset,
+            limit: selection.window.limit,
+            precedingRecordDigest: selection.precedingRecordDigest
+          })
+        : null
+    };
+    assertArchitectureProfileWindowOutputBound(result);
+    return cloneJson(result);
+  }
+
+  async function inspectWorkbenchProjection(request) {
+    const query = readWorkbenchProjectionRequest(request);
+    const snapshot = await inspectChangeQuery();
+    const records = query.changeRef == null
+      ? []
+      : selectWorkbenchChangeRecord(snapshot.records, query.changeRef);
+    return compileWorkbenchProjectionFromSnapshot(
+      { ...snapshot, records },
+      { changeRef: query.changeRef }
+    );
   }
 
   async function observeCurrentChangeScope(change, snapshot, frozenOwnership) {
@@ -1019,6 +1077,9 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     inspectArchitectureProfile: (...args) => (
       serializeOperation(() => inspectArchitectureProfile(...args))
     ),
+    inspectArchitectureProfileWindow: (...args) => (
+      serializeOperation(() => inspectArchitectureProfileWindow(...args))
+    ),
     listChanges: (...args) => serializeOperation(() => listChanges(...args)),
     createChange: (...args) => serializeOperation(() => createChange(...args)),
     getChange: (...args) => serializeOperation(() => getChange(...args)),
@@ -1041,6 +1102,345 @@ async function readStableObservation({ observe, code, message }) {
     observedDigests: digests,
     observationCount: digests.length
   });
+}
+
+function createArchitectureProfileWindowCursor({ secret, now }) {
+  return {
+    issue({ source, offset, limit, precedingRecordDigest }) {
+      const issuedAt = now();
+      const expiresAt = issuedAt + ARCHITECTURE_PROFILE_WINDOW_CURSOR_TTL_MS;
+      const payload = {
+        schemaVersion: 1,
+        proofVersion: ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION,
+        purpose: ARCHITECTURE_PROFILE_WINDOW_PURPOSE,
+        ordering: ARCHITECTURE_PROFILE_WINDOW_ORDERING,
+        source: cloneJson(source),
+        offset,
+        limit,
+        precedingRecordDigest,
+        issuedAt,
+        expiresAt
+      };
+      const payloadBytes = Buffer.from(JSON.stringify(payload), "utf8");
+      const payloadSegment = payloadBytes.toString("base64url");
+      const signatureSegment = signArchitectureProfileCursor(secret, payloadBytes)
+        .toString("base64url");
+      const cursor = `${payloadSegment}.${signatureSegment}`;
+      if (Buffer.byteLength(cursor, "utf8") > ARCHITECTURE_PROFILE_WINDOW_CURSOR_BYTE_LIMIT) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_WINDOW_LIMIT_EXCEEDED",
+          "Architecture Profile continuation exceeded its fixed byte limit.",
+          413,
+          {
+            dimension: "cursorBytes",
+            limit: ARCHITECTURE_PROFILE_WINDOW_CURSOR_BYTE_LIMIT,
+            observed: Buffer.byteLength(cursor, "utf8")
+          }
+        );
+      }
+      return { cursor, expiresAt: new Date(expiresAt).toISOString() };
+    },
+
+    read(cursor) {
+      if (typeof cursor !== "string"
+        || cursor.length === 0
+        || Buffer.byteLength(cursor, "utf8") > ARCHITECTURE_PROFILE_WINDOW_CURSOR_BYTE_LIMIT
+        || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u.test(cursor)) {
+        throwArchitectureProfileCursorInvalid("format");
+      }
+      const [payloadSegment, signatureSegment] = cursor.split(".");
+      let payloadBytes;
+      let suppliedSignature;
+      try {
+        payloadBytes = Buffer.from(payloadSegment, "base64url");
+        suppliedSignature = Buffer.from(signatureSegment, "base64url");
+      } catch {
+        throwArchitectureProfileCursorInvalid("encoding");
+      }
+      if (payloadBytes.toString("base64url") !== payloadSegment
+        || suppliedSignature.toString("base64url") !== signatureSegment
+        || suppliedSignature.byteLength !== 32) {
+        throwArchitectureProfileCursorInvalid("encoding");
+      }
+      const expectedSignature = signArchitectureProfileCursor(secret, payloadBytes);
+      if (!timingSafeEqual(suppliedSignature, expectedSignature)) {
+        throwArchitectureProfileCursorInvalid("signature");
+      }
+      let payload;
+      try {
+        payload = JSON.parse(payloadBytes.toString("utf8"));
+      } catch {
+        throwArchitectureProfileCursorInvalid("payload");
+      }
+      assertArchitectureProfileCursorPayload(payload);
+      if (now() >= payload.expiresAt) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_CURSOR_EXPIRED",
+          "Architecture Profile continuation has expired.",
+          410
+        );
+      }
+      return payload;
+    }
+  };
+}
+
+function signArchitectureProfileCursor(secret, payloadBytes) {
+  return createHmac("sha256", secret).update(payloadBytes).digest();
+}
+
+function readArchitectureProfileWindowRequest(request, cursorCodec) {
+  if (request === undefined) {
+    return { offset: 0, limit: ARCHITECTURE_PROFILE_WINDOW_DEFAULT_LIMIT, cursor: null };
+  }
+  const fields = readStrictQueryObject(
+    request,
+    ["limit", "cursor"],
+    "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+    "Architecture Profile window request"
+  );
+  if (Object.hasOwn(fields, "cursor")) {
+    if (Object.keys(fields).length !== 1) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+        "Architecture Profile continuation cannot be combined with a limit.",
+        400
+      );
+    }
+    const cursor = cursorCodec.read(fields.cursor);
+    return { offset: cursor.offset, limit: cursor.limit, cursor };
+  }
+  const limit = Object.hasOwn(fields, "limit")
+    ? fields.limit
+    : ARCHITECTURE_PROFILE_WINDOW_DEFAULT_LIMIT;
+  if (!Number.isSafeInteger(limit)
+    || limit < 1
+    || limit > ARCHITECTURE_PROFILE_WINDOW_MAX_LIMIT) {
+    throw kernelError(
+      "ARCHITECTURE_PROFILE_WINDOW_INPUT_INVALID",
+      "Architecture Profile window limit must be a positive safe integer within the fixed maximum.",
+      400,
+      { limit: ARCHITECTURE_PROFILE_WINDOW_MAX_LIMIT }
+    );
+  }
+  return { offset: 0, limit, cursor: null };
+}
+
+function readWorkbenchProjectionRequest(request) {
+  if (request === undefined) return { changeRef: null };
+  const fields = readStrictQueryObject(
+    request,
+    ["changeRef"],
+    "WORKBENCH_PROJECTION_INPUT_INVALID",
+    "Workbench projection request"
+  );
+  if (!Object.hasOwn(fields, "changeRef")) return { changeRef: null };
+  const changeRef = readString(fields.changeRef);
+  if (!changeRef || Buffer.byteLength(changeRef, "utf8") > 128) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_INPUT_INVALID",
+      "Workbench projection changeRef must be a bounded non-empty Change id.",
+      400
+    );
+  }
+  return { changeRef };
+}
+
+function readStrictQueryObject(value, allowedFields, code, label) {
+  if (!value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
+    throw kernelError(code, `${label} must be a strict plain object.`, 400);
+  }
+  const allowed = new Set(allowedFields);
+  const result = {};
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.has(key)) {
+      throw kernelError(code, `${label} contains unsupported fields.`, 400);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor
+      || !Object.hasOwn(descriptor, "value")
+      || descriptor.enumerable !== true) {
+      throw kernelError(code, `${label} requires enumerable data properties.`, 400);
+    }
+    result[key] = descriptor.value;
+  }
+  return result;
+}
+
+function assertArchitectureProfileCursorPayload(payload) {
+  let fields;
+  try {
+    fields = readStrictQueryObject(
+      payload,
+      [
+        "schemaVersion",
+        "proofVersion",
+        "purpose",
+        "ordering",
+        "source",
+        "offset",
+        "limit",
+        "precedingRecordDigest",
+        "issuedAt",
+        "expiresAt"
+      ],
+      "ARCHITECTURE_PROFILE_CURSOR_INVALID",
+      "Architecture Profile continuation payload"
+    );
+  } catch (error) {
+    if (error?.code === "ARCHITECTURE_PROFILE_CURSOR_INVALID") throw error;
+    throwArchitectureProfileCursorInvalid("payload");
+  }
+  if (Object.keys(fields).length !== 10
+    || fields.schemaVersion !== 1
+    || fields.proofVersion !== ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION
+    || fields.purpose !== ARCHITECTURE_PROFILE_WINDOW_PURPOSE
+    || fields.ordering !== ARCHITECTURE_PROFILE_WINDOW_ORDERING
+    || !Number.isSafeInteger(fields.offset)
+    || fields.offset < 1
+    || !Number.isSafeInteger(fields.limit)
+    || fields.limit < 1
+    || fields.limit > ARCHITECTURE_PROFILE_WINDOW_MAX_LIMIT
+    || !DIGEST_PATTERN.test(fields.precedingRecordDigest ?? "")
+    || !Number.isSafeInteger(fields.issuedAt)
+    || !Number.isSafeInteger(fields.expiresAt)
+    || fields.expiresAt <= fields.issuedAt) {
+    throwArchitectureProfileCursorInvalid("payload");
+  }
+  const source = fields.source;
+  if (!source || typeof source !== "object" || Array.isArray(source)
+    || Object.keys(source).sort().join(",") !== [
+      "changeStoreDigest",
+      "gitContentDigest",
+      "projectModelDigest",
+      "snapshotDigest"
+    ].sort().join(",")
+    || Object.values(source).some((digest) => !DIGEST_PATTERN.test(digest ?? ""))) {
+    throwArchitectureProfileCursorInvalid("source");
+  }
+}
+
+function throwArchitectureProfileCursorInvalid(reason) {
+  throw kernelError(
+    "ARCHITECTURE_PROFILE_CURSOR_INVALID",
+    "Architecture Profile continuation is invalid.",
+    400,
+    { reason }
+  );
+}
+
+function selectArchitectureProfileRecordWindow(snapshot, query) {
+  const source = architectureProfileSnapshotSource(snapshot);
+  if (query.cursor) {
+    for (const field of Object.keys(source)) {
+      if (query.cursor.source[field] !== source[field]) {
+        throw kernelError(
+          "ARCHITECTURE_PROFILE_CURSOR_SNAPSHOT_MISMATCH",
+          "Architecture Profile continuation belongs to a different composite source snapshot.",
+          409,
+          { field }
+        );
+      }
+    }
+  }
+  const records = [...snapshot.records].sort((left, right) => (
+    requireArchitectureProfileString(left?.id, "change.id")
+      .localeCompare(requireArchitectureProfileString(right?.id, "change.id"))
+  ));
+  for (let index = 1; index < records.length; index += 1) {
+    if (readString(records[index - 1]?.id) === readString(records[index]?.id)) {
+      throw kernelError(
+        "ARCHITECTURE_PROFILE_FACT_INVALID",
+        "Architecture Profile Change identities must be unique before window selection.",
+        422,
+        { changeRef: readString(records[index]?.id) ?? null }
+      );
+    }
+  }
+  if (query.offset > records.length) throwArchitectureProfileCursorInvalid("offset");
+  if (query.cursor) {
+    const preceding = records[query.offset - 1];
+    const precedingDigest = preceding
+      ? canonicalDigest({ id: requireArchitectureProfileString(preceding.id, "change.id") })
+      : null;
+    if (precedingDigest !== query.cursor.precedingRecordDigest) {
+      throwArchitectureProfileCursorInvalid("position");
+    }
+  }
+  const selected = records.slice(query.offset, query.offset + query.limit);
+  const recordRefs = selected.map((record) => ({
+    id: requireArchitectureProfileString(record.id, "change.id")
+  }));
+  const nextOffset = query.offset + selected.length;
+  const hasMore = nextOffset < records.length;
+  return {
+    records: selected,
+    nextOffset,
+    precedingRecordDigest: recordRefs.length > 0
+      ? canonicalDigest(recordRefs.at(-1))
+      : query.cursor?.precedingRecordDigest ?? null,
+    window: {
+      ordering: ARCHITECTURE_PROFILE_WINDOW_ORDERING,
+      offset: query.offset,
+      limit: query.limit,
+      returned: selected.length,
+      hasMore,
+      recordRefs
+    }
+  };
+}
+
+function architectureProfileSnapshotSource(snapshot) {
+  return {
+    snapshotDigest: requireArchitectureProfileDigest(snapshot.digest, "snapshot.digest"),
+    projectModelDigest: requireArchitectureProfileDigest(
+      snapshot.inspection?.digest,
+      "snapshot.projectModelDigest"
+    ),
+    gitContentDigest: requireArchitectureProfileDigest(
+      snapshot.inspection?.git?.contentDigest,
+      "snapshot.gitContentDigest"
+    ),
+    changeStoreDigest: requireArchitectureProfileDigest(
+      snapshot.changeStoreDigest,
+      "snapshot.changeStoreDigest"
+    )
+  };
+}
+
+function assertArchitectureProfileWindowOutputBound(value) {
+  const observed = Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (observed <= ARCHITECTURE_PROFILE_WINDOW_OUTPUT_BYTE_LIMIT) return;
+  throw kernelError(
+    "ARCHITECTURE_PROFILE_WINDOW_LIMIT_EXCEEDED",
+    "Architecture Profile window exceeded its fixed output byte limit.",
+    413,
+    {
+      dimension: "outputBytes",
+      limit: ARCHITECTURE_PROFILE_WINDOW_OUTPUT_BYTE_LIMIT,
+      observed
+    }
+  );
+}
+
+function selectWorkbenchChangeRecord(records, changeRef) {
+  const selected = records.filter((record) => readString(record?.id) === changeRef);
+  if (selected.length === 0) {
+    throw kernelError("CHANGE_NOT_FOUND", `Change ${changeRef} was not found.`, 404);
+  }
+  if (selected.length !== 1) {
+    throw kernelError(
+      "WORKBENCH_PROJECTION_FACT_INVALID",
+      "Workbench Change selection resolved to an ambiguous identity.",
+      422,
+      { changeRef }
+    );
+  }
+  return selected;
 }
 
 function projectChangeDetailForRead(change, snapshot) {
@@ -1176,7 +1576,7 @@ function compileArchitectureProfileBundleFromSnapshot(snapshot) {
   };
 }
 
-function compileWorkbenchProjectionFromSnapshot(snapshot) {
+function compileWorkbenchProjectionFromSnapshot(snapshot, { changeRef = null } = {}) {
   assertArchitectureProfileListBound(
     snapshot.records,
     ARCHITECTURE_PROFILE_LIMITS.changes,
@@ -1219,13 +1619,14 @@ function compileWorkbenchProjectionFromSnapshot(snapshot) {
     historicalModuleProjections
   };
   const content = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     source: {
       snapshotDigest: snapshot.digest,
       projectModelDigest: snapshot.inspection.digest,
       gitContentDigest: snapshot.inspection.git.contentDigest,
       changeStoreDigest: snapshot.changeStoreDigest
     },
+    selection: { changeRef },
     authoring: {
       modules: compileWorkbenchAuthoringModules(bundle, budget)
     },

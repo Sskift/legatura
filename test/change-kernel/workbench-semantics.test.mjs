@@ -54,12 +54,19 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   });
 
   const storeBefore = await snapshotStore(repoPath);
+  const authoringOnly = await createKernel({ repoPath }).inspectWorkbenchProjection();
+  assert.equal(authoringOnly.schemaVersion, 2);
+  assert.deepEqual(authoringOnly.selection, { changeRef: null });
+  assert.deepEqual(authoringOnly.changes, []);
   const counted = countingCommandRunner();
   const projection = await createKernel({ repoPath, commandRunner: counted.run })
-    .inspectWorkbenchProjection();
+    .inspectWorkbenchProjection({ changeRef: "ready-change" });
 
-  assert.equal(counted.observations(), 2, "N Changes share one two-round stabilized source query");
+  assert.equal(counted.observations(), 2, "one selected Change shares one stabilized source query");
   assert.deepEqual(await snapshotStore(repoPath), storeBefore, "Workbench inspection is read-only");
+  assert.equal(projection.schemaVersion, 2);
+  assert.deepEqual(projection.selection, { changeRef: "ready-change" });
+  assert.deepEqual(projection.changes.map((change) => change.id), ["ready-change"]);
   assert.equal(Object.hasOwn(projection, "architectureProfile"), false);
   assert.deepEqual(Object.keys(projection.source).sort(), [
     "changeStoreDigest",
@@ -156,7 +163,10 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
     "GATE_COMMAND_NOT_APPLICABLE"
   ]);
 
-  const claimless = findById(projection.changes, "claimless-change").actions;
+  const claimlessProjection = await createKernel({ repoPath }).inspectWorkbenchProjection({
+    changeRef: "claimless-change"
+  });
+  const claimless = findById(claimlessProjection.changes, "claimless-change").actions;
   assert.deepEqual(claimless.accept.disabledReasonCodes, [
     "CHANGE_CLAIM_REQUIRED",
     "CHANGE_NOT_COMPILED",
@@ -166,7 +176,9 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
 
   const storeBeforeDrift = await snapshotStore(repoPath);
   await writeFile(path.join(repoPath, "src/index.mjs"), "export const fixture = false;\n");
-  const drifted = await createKernel({ repoPath }).inspectWorkbenchProjection();
+  const drifted = await createKernel({ repoPath }).inspectWorkbenchProjection({
+    changeRef: "ready-change"
+  });
   assert.deepEqual(
     findById(drifted.changes, "ready-change").actions.accept.disabledReasonCodes,
     ["CHANGE_NOT_EVIDENCE_READY"],
@@ -181,8 +193,15 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   attacked.verificationObligations[0].mapping.routes.push(forgedFullRoute);
   await writeJson(readyPath, attacked);
   const storeBeforeRejectedQuery = await snapshotStore(repoPath);
+  const authoringWithRejectedHistory = await createKernel({ repoPath })
+    .inspectWorkbenchProjection();
+  assert.deepEqual(
+    authoringWithRejectedHistory.changes,
+    [],
+    "authoring-only inspection never compiles an unselected historical Provider"
+  );
   await assert.rejects(
-    createKernel({ repoPath }).inspectWorkbenchProjection(),
+    createKernel({ repoPath }).inspectWorkbenchProjection({ changeRef: "ready-change" }),
     (error) => error?.code === "WORKBENCH_VERIFICATION_PLAN_INVALID"
       && error?.statusCode === 422
   );
@@ -202,7 +221,7 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
   await writeJson(readyPath, hidden);
   const storeBeforeHiddenRouteQuery = await snapshotStore(repoPath);
   await assert.rejects(
-    createKernel({ repoPath }).inspectWorkbenchProjection(),
+    createKernel({ repoPath }).inspectWorkbenchProjection({ changeRef: "ready-change" }),
     (error) => error?.code === "WORKBENCH_VERIFICATION_PLAN_INVALID"
   );
   assert.deepEqual(
@@ -210,8 +229,12 @@ test("Kernel compiles one bounded canonical Workbench semantic projection", asyn
     storeBeforeHiddenRouteQuery,
     "an unmapped projection cannot hide an existing frozen acceptance route"
   );
+  await assert.rejects(
+    createKernel({ repoPath }).inspectWorkbenchProjection({ changeRef: "missing-change" }),
+    (error) => error?.code === "CHANGE_NOT_FOUND" && error?.statusCode === 404
+  );
 
-  const serialized = JSON.stringify([projection, drifted]);
+  const serialized = JSON.stringify([authoringOnly, projection, claimlessProjection, drifted]);
   for (const forbidden of [
     PRIVATE_OUTPUT,
     '"evidence":',

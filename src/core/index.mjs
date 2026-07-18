@@ -1,2 +1,6 @@
-export { createKernel, WORKBENCH_DISABLED_REASON_CODES } from "./kernel.mjs";
+export {
+  ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION,
+  createKernel,
+  WORKBENCH_DISABLED_REASON_CODES
+} from "./kernel.mjs";
 export { EVIDENCE_FIELDS } from "./evidence.mjs";
