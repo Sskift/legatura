@@ -282,7 +282,7 @@
     },
     {
       "id": "brownfield-adoption-not-proven",
-      "status": "open",
+      "status": "closed",
       "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "Legatura self-hosts its Project Model, but no materialized app/apk/relay reference directly proves exact incremental ownership and assurance boundaries, one ordinary relay Change through the unchanged Kernel lifecycle, and faithful projection through the existing CLI without whole-repository modeling or inferred completeness.",
@@ -291,7 +291,23 @@
         "brownfield-relay-change-uses-normal-lifecycle",
         "brownfield-inspection-preserves-explicit-unknowns"
       ],
-      "expansionTrigger": "Before Legatura is presented as a reusable framework for an existing software repository."
+      "expansionTrigger": "Before Legatura is presented as a reusable framework for an existing software repository.",
+      "resolution": "A fixed versioned app/apk/relay reference now compiles through the ordinary Project Model with exact ownership and assurance boundaries, exercises one relay-only Change through the unchanged Kernel lifecycle to an exact Accepted Package, and projects the same bounded facts through the existing inspect --json CLI without whole-repository inference or aggregate assurance.",
+      "closedBy": [
+        {
+          "changeId": "lgt016-materialize-brownfield-reference",
+          "acceptanceDigest": "sha256:54b2ac67616290323254d98b69b30769cb6a7c441ab181b35861b38f17b31a2c"
+        },
+        {
+          "changeId": "lgt016-accept-bounded-brownfield-change",
+          "acceptanceDigest": "sha256:cc3c02ca0cf81f7184ddff2e45b6d064d70eb736b30374edbece8bbc0d753255"
+        },
+        {
+          "changeId": "lgt016-inspect-brownfield-reference",
+          "acceptanceDigest": "sha256:4b525e21814683d7bb17c77b427929bab9e8c67152e048645e32f780485d6dee"
+        }
+      ],
+      "reopenTrigger": "Reopen if the versioned reference no longer validates exact total ownership and explicit provisional or opaque boundaries, if brownfield Changes gain lifecycle or acceptance exceptions, if dependency implementation enters initial relay Context, if reference Gaps are hidden or inferred closed, or if existing CLI inspection loses exact facts or introduces adoption-specific or aggregate assurance conclusions."
     },
     {
       "id": "workbench-projection-integrity-not-closed",

@@ -395,7 +395,7 @@
     {
       "id": "LGT-016",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "A versioned app/apk/relay brownfield reference proves incremental adoption through existing Legatura interfaces: relay is governed against public app and apk Contracts, provisional, opaque, and ungoverned areas remain explicit, and one relay Change reaches an Accepted Package without whole-repository modeling.",
       "dependsOn": ["LGT-011"],
       "acceptance": {
@@ -1652,6 +1652,59 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-016-T2",
+      "outcomeRef": "LGT-016",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "The three prior sealed Project Model, Change Kernel, and Local Workbench Packages now cover all frozen LGT-016 Criteria and close the root brownfield adoption Gap through its three exact owner proof Claims without using this Plan Amendment, Contract declarations, or route declarations as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt016-materialize-brownfield-reference",
+          "acceptanceDigest": "sha256:54b2ac67616290323254d98b69b30769cb6a7c441ab181b35861b38f17b31a2c"
+        },
+        {
+          "changeId": "lgt016-accept-bounded-brownfield-change",
+          "acceptanceDigest": "sha256:cc3c02ca0cf81f7184ddff2e45b6d064d70eb736b30374edbece8bbc0d753255"
+        },
+        {
+          "changeId": "lgt016-inspect-brownfield-reference",
+          "acceptanceDigest": "sha256:4b525e21814683d7bb17c77b427929bab9e8c67152e048645e32f780485d6dee"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-016-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Project Model Package materializes the fixed 18-path reference through the ordinary loader and ownership compiler, directly proving relay and repository governance as governed, app and apk as independent provisional Contract providers, legacy as an unmodeled opaque boundary with one non-authorizing disposition, exact total path assignment, a Contract-only relay Context, and fail-closed unknown-path handling.",
+            "residualUncertainty": "The proof compiles initial Context scope but deliberately does not claim operating-system read enforcement; app, apk, and legacy uncertainties remain three open Gaps inside the reference rather than being silently promoted."
+          }
+        },
+        {
+          "criterionRef": "LGT-016-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Change Kernel Package copies the versioned template into an independent Git repository and directly proves one ordinary relay Change uses the unchanged Candidate, compile, ownership, Outcome Contribution, Minimum Gate, Closure, relay-maintainer Decision, and acceptance seams; only relay/index.mjs changes, dependency implementations remain outside initial Context, and the exact Accepted Package retains all three open reference Gaps.",
+            "residualUncertainty": "The scenario is a local single-writer lifecycle and establishes neither Worker capability isolation nor authenticated identity; those remain the explicit LGT-020 and LGT-021 boundaries."
+          }
+        },
+        {
+          "criterionRef": "LGT-016-C3",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Local Workbench Package executes the installed source CLI inspect --json path against an independent reference Git repository and directly preserves the four modeled Module states, exact public Contracts and Claims, the relay Gate command route, all open Gaps, and the legacy declared unknown area while rejecting an adopt command and emitting no aggregate assurance keys.",
+            "residualUncertainty": "The semantic CLI Profile preserves legacy opacity through its exact open Gap and declared-area relation rather than inventing an opaque Module or exposing validation warnings; browser onboarding and pixel-perfect rendering remain outside this Criterion."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "brownfield-adoption-not-proven",
+          "rationale": "The three prior sealed owner Packages directly cover the root Gap's exact Project Model reference, ordinary Change Kernel lifecycle, and existing CLI projection proof Claims while leaving the reference repository's own provisional and opaque Gaps open."
+        }
+      ]
     }
   ],
   "changeRules": {
