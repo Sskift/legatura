@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "brownfield-adoption",
+  "name": "Brownfield Adoption Reference Proof Gate",
+  "purpose": "Produce direct owner-scoped Evidence that the fixed app/apk/relay reference uses ordinary Project Model, Change Kernel, and existing CLI boundaries without inferred completeness or Worker-read claims.",
+  "appliesTo": [
+    "project-model",
+    "change-kernel",
+    "local-workbench"
+  ],
+  "commands": [
+    {
+      "id": "brownfield-reference-project-model-proof",
+      "appliesTo": ["project-model"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/project-model/path-ownership.test.mjs'); if (proof.BROWNFIELD_ADOPTION_PROJECT_MODEL_PROOF_VERSION !== 1) throw new Error('The fixed Project Model brownfield adoption proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["brownfield-reference-model-is-explicit-and-bounded"],
+      "oracle": {
+        "kind": "node-brownfield-project-model-proof-exit",
+        "description": "The fixed Project Model path-ownership module must export proof version 1 only after the materialized reference boundary and unknown-path attack exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "brownfield-adoption-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "relay, app, apk, governance, legacy, or unknown tracked paths without one exact owner or non-authorizing disposition",
+          "app or apk presented as governed instead of provisional independent Contract providers",
+          "legacy implementation presented as modeled or writable instead of opaque and explicitly ungoverned",
+          "a relay initial Context Capsule containing app, apk, or legacy implementation paths"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof compiles declared initial Context scope; Worker materialization and filesystem read enforcement remain LGT-020 and LGT-021 concerns."
+      ]
+    },
+    {
+      "id": "brownfield-relay-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/change-kernel/path-ownership.test.mjs'); if (proof.BROWNFIELD_ADOPTION_CHANGE_KERNEL_PROOF_VERSION !== 1) throw new Error('The fixed Change Kernel brownfield adoption proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["brownfield-relay-change-uses-normal-lifecycle"],
+      "oracle": {
+        "kind": "node-brownfield-change-kernel-proof-exit",
+        "description": "The fixed Change Kernel path-ownership module must export proof version 1 only after a real relay-only create, compile, Minimum Gate, and accept lifecycle exits zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "brownfield-adoption-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a brownfield-specific lifecycle, scope, Evidence, Closure, authority, or acceptance bypass",
+          "an Accepted Change Package that touches app, apk, legacy, ungoverned, or unassigned implementation paths",
+          "dependency implementation paths exposed as initial relay Context instead of exact Contract facts",
+          "open reference Knowledge Gaps omitted, closed, or rewritten by the relay Change"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof uses one local single-writer reference repository and does not establish remote Worker or identity trust."
+      ]
+    },
+    {
+      "id": "brownfield-inspection-local-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/local-workbench/cli.test.mjs'); if (proof.BROWNFIELD_ADOPTION_LOCAL_WORKBENCH_PROOF_VERSION !== 1) throw new Error('The fixed Local Workbench brownfield inspection proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["brownfield-inspection-preserves-explicit-unknowns"],
+      "oracle": {
+        "kind": "node-brownfield-local-workbench-proof-exit",
+        "description": "The fixed CLI module must export proof version 1 only after inspect --json preserves exact reference states, Claims, routes, and open Gaps without inferred completeness."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "brownfield-adoption-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a special adoption command or browser onboarding requirement",
+          "loss or invention of governed, provisional, opaque, Contract, Gate-route, or open Knowledge Gap facts",
+          "an inferred completeness, score, percentage, confidence, health, readiness, or green-light conclusion",
+          "unbounded or non-canonical CLI Profile output"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof exercises semantic JSON inspection rather than browser onboarding or pixel-perfect rendering."
+      ]
+    }
+  ]
+}
