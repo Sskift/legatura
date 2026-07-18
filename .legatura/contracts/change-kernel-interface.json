@@ -33,6 +33,14 @@
       "statement": "The Change Kernel emits an Architecture Acceptance Profile only after a bounded stabilization check observes two consecutive identical composite digests over Project Model, Git content, and Change Store sources; it classifies Evidence as current only when the Evidence's Project Model, Git content, and verification-subject bindings match that stabilized source set, while sealed historical and invalid Evidence remain separate."
     },
     {
+      "id": "architecture-profile-windows-are-snapshot-bound-and-complete",
+      "statement": "Change Kernel selects each Architecture Profile record window from one stabilized composite Project Model, Git, and Change Store snapshot in canonical Change-id order before Profile facts or frozen-baseline route products are compiled; it enforces fixed per-window record, fact, provider-work, route-byte, and output-byte ceilings and emits an authenticated opaque continuation bound to the exact Kernel process, snapshot digest, query-shape digest, ordering policy, and last emitted Change. On an unchanged snapshot, successive Kernel-issued continuations visit every Change exactly once, while malformed, modified, expired, unissued, cross-process, cross-snapshot, or cross-query continuations fail closed without compiling facts or historical providers outside the selected window."
+    },
+    {
+      "id": "architecture-profile-window-proof-rejects-query-attacks",
+      "statement": "The fixed Change Kernel Profile-window proof rejects full-history materialization before selection, page-external fact or Provider work, omitted or duplicate unchanged-snapshot traversal, GET-time Store writes, output beyond hard ceilings, and malformed, modified, expired, unissued, cross-process, cross-snapshot, or cross-query continuations."
+    },
+    {
       "id": "workbench-semantics-are-kernel-compiled",
       "statement": "The Change Kernel compiles one bounded Workbench semantic projection from a stabilized composite Project Model, Git, and Change Store snapshot: authoring options contain the complete canonical set of exact Claims visible through each Module's owned or dependency Contracts and every acceptance-eligible Gate and command route projected for them by the same current Project Model route product as the Architecture Profile; existing-Change compile, Gate, and accept actions contain the complete canonical set permitted by the frozen Governance Baseline and Kernel lifecycle policy; their exact Claim-route annotations derive from the compiler-owned Verification Plan; and every unavailable action carries a non-empty duplicate-free disabled-reason code list containing only workbenchDisabledReasonCodes in workbenchDisabledReasonPrecedence order."
     },
