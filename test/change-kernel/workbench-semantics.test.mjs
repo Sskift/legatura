@@ -365,21 +365,104 @@ test("Workbench acceptance requirements are compiler-owned and accepted at the b
       }
     ]
   };
-  const accepted = await writer.acceptChange({
-    changeId: candidate.id,
-    knowledgeClosure,
-    authorityDecision: {
-      status: "approved",
-      authority: "module-maintainer",
-      decidedBy: "workbench-semantics-test",
-      decisionType: "normative-amendment",
-      amendmentRefs: [".legatura/knowledge-gaps.json"],
-      rationale: "Approve the exact governed fixture amendment."
-    }
+  const authorityDecision = {
+    status: "approved",
+    authority: "module-maintainer",
+    decidedBy: "workbench-semantics-test",
+    decisionType: "normative-amendment",
+    amendmentRefs: [".legatura/knowledge-gaps.json"],
+    rationale: "Approve the exact governed fixture amendment."
+  };
+  const projectedConfirmation = acceptanceInputConfirmation(requirements);
+  await writer.createChange({
+    id: "unrelated-store-change",
+    title: "Change the composite Store snapshot",
+    primaryModule: "core",
+    claims: [{ id: "core-correct", statement: "Core behavior remains correct." }]
   });
+  await assert.rejects(
+    writer.acceptChange({
+      changeId: candidate.id,
+      inputRequirementsConfirmation: projectedConfirmation,
+      knowledgeClosure,
+      authorityDecision
+    }),
+    (error) => error?.code === "ACCEPTANCE_INPUT_REQUIREMENTS_STALE"
+      && error?.statusCode === 409
+      && error?.details?.mismatchedFields?.includes("requirementsDigest")
+      && error?.details?.mismatchedFields?.includes("binding.sourceSnapshotDigest")
+  );
+  const unchanged = await writer.getChange(candidate.id);
+  assert.equal(unchanged.knowledgeClosure, null, "stale confirmation is rejected before Closure input");
+  assert.equal(unchanged.authorityDecision, null, "stale confirmation is rejected before Decision input");
+
+  const currentProjection = await writer.inspectWorkbenchProjection({ changeRef: candidate.id });
+  const currentRequirements = currentProjection.changes[0].actions.accept.inputRequirements;
+  const currentConfirmation = acceptanceInputConfirmation(currentRequirements);
+  const forgedDigest = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+  const confirmationAttacks = [
+    ["requirementsDigest", { ...currentConfirmation, requirementsDigest: forgedDigest }],
+    ["binding.changeRef", withConfirmationBinding(currentConfirmation, "changeRef", "other-change")],
+    ["binding.sourceSnapshotDigest", withConfirmationBinding(
+      currentConfirmation,
+      "sourceSnapshotDigest",
+      forgedDigest
+    )],
+    ["binding.governanceBaselineDigest", withConfirmationBinding(
+      currentConfirmation,
+      "governanceBaselineDigest",
+      forgedDigest
+    )],
+    ["binding.verificationSubjectDigest", withConfirmationBinding(
+      currentConfirmation,
+      "verificationSubjectDigest",
+      forgedDigest
+    )],
+    ["inputRequirementsConfirmation", { ...currentConfirmation, invented: true }]
+  ];
+  for (const [mismatch, inputRequirementsConfirmation] of confirmationAttacks) {
+    await assert.rejects(
+      writer.acceptChange({
+        changeId: candidate.id,
+        inputRequirementsConfirmation,
+        knowledgeClosure,
+        authorityDecision
+      }),
+      (error) => error?.code === "ACCEPTANCE_INPUT_REQUIREMENTS_STALE"
+        && error?.statusCode === 409
+        && error?.details?.mismatchedFields?.includes(mismatch)
+    );
+  }
+
+  const countedAcceptance = countingCommandRunner();
+  const accepted = await createKernel({ repoPath, commandRunner: countedAcceptance.run }).acceptChange({
+    changeId: candidate.id,
+    inputRequirementsConfirmation: currentConfirmation,
+    knowledgeClosure,
+    authorityDecision
+  });
+  assert.equal(
+    countedAcceptance.observations(),
+    2,
+    "confirmation and lifecycle validation share one stabilized composite acceptance snapshot"
+  );
   assert.equal(accepted.state, "Accepted");
   assert.deepEqual(accepted.acceptance.package.knowledgeClosure, knowledgeClosure);
 });
+
+function acceptanceInputConfirmation(requirements) {
+  return {
+    requirementsDigest: requirements.requirementsDigest,
+    binding: structuredClone(requirements.binding)
+  };
+}
+
+function withConfirmationBinding(confirmation, field, value) {
+  return {
+    ...confirmation,
+    binding: { ...confirmation.binding, [field]: value }
+  };
+}
 
 function assertWorkbenchInputRequirements(requirements, expected) {
   assert.equal(requirements.schemaVersion, 1);

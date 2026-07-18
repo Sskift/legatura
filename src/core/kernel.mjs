@@ -176,6 +176,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       code: "PROJECT_SNAPSHOT_UNSTABLE",
       message: "Project Model and Git sources did not stabilize within the bounded observation window."
     });
+    return compilePathOwnershipSnapshot(stable);
+  }
+
+  function compilePathOwnershipSnapshot(stable) {
     const validation = cloneJson(stable.inspection.validation);
     let pathOwnership = null;
     if (validation.valid && stable.git.available && hasPathOwnershipGovernance(stable.model)) {
@@ -200,9 +204,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       validation
     };
     return {
-      digest: stable.digest,
-      model: stable.model,
-      git: stable.git,
+      ...stable,
       validation,
       inspection,
       pathOwnership
@@ -229,17 +231,20 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         changeStoreDigest: changeStore.digest
       }),
       changeStoreDigest: changeStore.digest,
+      model: project.model,
+      git: project.git,
       inspection: project.inspection,
       records: changeStore.records
     };
   }
 
-  async function inspectChangeQuery() {
-    return readStableObservation({
+  async function inspectChangeQuery({ includePathOwnership = false } = {}) {
+    const stable = await readStableObservation({
       observe: observeChangeQueryOnce,
       code: "CHANGE_QUERY_SNAPSHOT_UNSTABLE",
       message: "Project Model, Git, and Change Store sources did not stabilize within the bounded observation window."
     });
+    return includePathOwnership ? compilePathOwnershipSnapshot(stable) : stable;
   }
 
   async function listChanges() {
@@ -431,7 +436,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     });
   }
 
-  async function assertGovernanceWatermarkCurrent(change) {
+  async function assertGovernanceWatermarkCurrent(change, snapshotRecords) {
     const frozenCatalog = assertPriorAcceptedPackageCatalog(change.priorAcceptedPackages);
     if (!frozenCatalog) {
       throw kernelError(
@@ -443,7 +448,8 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
 
     const governanceBaseline = readGovernanceBaseline(change);
-    const records = (await store.list()).filter((record) => record?.id !== change.id);
+    const records = (Array.isArray(snapshotRecords) ? snapshotRecords : await store.list())
+      .filter((record) => record?.id !== change.id);
     const frozenReferences = new Set(frozenCatalog.entries.map((entry) => canonicalDigest(entry)));
     const supersedingPackages = [];
 
@@ -773,11 +779,11 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
 
   async function acceptChange(idOrInput, optionalDecision) {
     const request = readAcceptanceRequest(idOrInput, optionalDecision);
-    let change = await requireChange(request.changeId);
-    const snapshot = await inspectStableProjectSnapshot();
+    const snapshot = await inspectChangeQuery({ includePathOwnership: true });
     const inspection = snapshot.inspection;
+    let change = requireSnapshotChange(snapshot, request.changeId);
     change = await refreshChangeForWrite(change, inspection);
-    await assertGovernanceWatermarkCurrent(change);
+    await assertGovernanceWatermarkCurrent(change, snapshot.records);
     assertValidProject(inspection);
     const frozenOwnership = compileFrozenPathOwnership(change);
     if (change.changeKind !== "plan-amendment" || change.compilation) {
@@ -801,6 +807,13 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         "CHANGE_SEALED",
         "A historically Accepted Package cannot be replaced; create a follow-up Change.",
         409
+      );
+    }
+
+    if (request.inputRequirementsConfirmation !== undefined) {
+      assertAcceptanceInputRequirementsConfirmation(
+        request.inputRequirementsConfirmation,
+        compileWorkbenchAcceptanceInputRequirements(change, snapshot, { observed: 0 })
       );
     }
 
@@ -917,6 +930,14 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       throw kernelError("CHANGE_NOT_FOUND", `Change not found: ${id}.`, 404, { changeId: id });
     }
     return change;
+  }
+
+  function requireSnapshotChange(snapshot, id) {
+    const change = snapshot.records.find((record) => readString(record?.id) === id);
+    if (!change) {
+      throw kernelError("CHANGE_NOT_FOUND", `Change not found: ${id}.`, 404, { changeId: id });
+    }
+    return cloneJson(change);
   }
 
   async function executeGate({ change, gate, model, git, observedAt, verificationSubjectDigest: subjectDigest }) {
@@ -2024,6 +2045,72 @@ function compileWorkbenchAcceptanceInputRequirements(record, snapshot, budget) {
     }
   };
   return { ...content, requirementsDigest: canonicalDigest(content) };
+}
+
+function assertAcceptanceInputRequirementsConfirmation(confirmation, currentRequirements) {
+  const bindingFields = [
+    "changeRef",
+    "sourceSnapshotDigest",
+    "governanceBaselineDigest",
+    "verificationSubjectDigest"
+  ];
+  if (currentRequirements?.confirmation?.required !== true
+    || canonicalDigest(currentRequirements.confirmation.bindingFields) !== canonicalDigest(bindingFields)) {
+    throw kernelError(
+      "WORKBENCH_INPUT_REQUIREMENT_INVALID",
+      "Kernel acceptance confirmation fields do not match the declared Workbench requirements.",
+      500
+    );
+  }
+
+  const observed = readExactConfirmationObject(
+    confirmation,
+    ["requirementsDigest", "binding"]
+  );
+  const observedBinding = observed && readExactConfirmationObject(observed.binding, bindingFields);
+  if (!observed || !observedBinding) {
+    throwAcceptanceInputRequirementsStale(["inputRequirementsConfirmation"]);
+  }
+
+  const mismatchedFields = [
+    ...(observed.requirementsDigest === currentRequirements.requirementsDigest
+      ? []
+      : ["requirementsDigest"]),
+    ...bindingFields.filter((field) => observedBinding[field] !== currentRequirements.binding[field])
+      .map((field) => `binding.${field}`)
+  ];
+  if (mismatchedFields.length > 0) {
+    throwAcceptanceInputRequirementsStale(mismatchedFields);
+  }
+}
+
+function readExactConfirmationObject(value, fields) {
+  if (!value
+    || typeof value !== "object"
+    || Array.isArray(value)
+    || utilTypes.isProxy(value)
+    || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) return null;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== fields.length
+    || keys.some((key) => typeof key !== "string" || !fields.includes(key))) return null;
+  const result = {};
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, field);
+    if (!descriptor
+      || !Object.hasOwn(descriptor, "value")
+      || descriptor.enumerable !== true) return null;
+    result[field] = descriptor.value;
+  }
+  return result;
+}
+
+function throwAcceptanceInputRequirementsStale(mismatchedFields) {
+  throw kernelError(
+    "ACCEPTANCE_INPUT_REQUIREMENTS_STALE",
+    "Acceptance input requirements changed or the confirmation is malformed; refresh the Workbench before accepting.",
+    409,
+    { mismatchedFields }
+  );
 }
 
 function compileWorkbenchGateAction({
@@ -5638,6 +5725,7 @@ function readAcceptanceRequest(idOrInput, optionalDecision) {
       changeId: idOrInput,
       authorityDecision: nestedDecision ?? directDecision ?? (optionObject ? undefined : optionalDecision),
       knowledgeClosure: optionObject?.knowledgeClosure,
+      inputRequirementsConfirmation: optionObject?.inputRequirementsConfirmation,
       integrate: optionObject?.integrate === true || optionObject?.integrated === true
     };
   }
@@ -5645,6 +5733,7 @@ function readAcceptanceRequest(idOrInput, optionalDecision) {
     changeId: readChangeId(idOrInput),
     authorityDecision: idOrInput.authorityDecision ?? idOrInput.decision,
     knowledgeClosure: idOrInput.knowledgeClosure,
+    inputRequirementsConfirmation: idOrInput.inputRequirementsConfirmation,
     integrate: idOrInput.integrate === true || idOrInput.integrated === true
   };
 }
