@@ -134,6 +134,70 @@
         "Browser DOM rendering and interaction remain outside this Gate and belong to LGT-014.",
         "Cross-workspace Accepted history portability remains an explicit Knowledge Gap."
       ]
+    },
+    {
+      "id": "workbench-input-requirements-change-kernel-proof",
+      "appliesTo": ["change-kernel"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/change-kernel/workbench-semantics.test.mjs'); if (proof.WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION !== 1) throw new Error('The fixed Change Kernel Workbench input-requirements proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-input-requirements-are-kernel-compiled"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Change Kernel Workbench semantics module must export proof version 1 only after compiler- and validator-owned input requirements are exercised."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-input-requirement-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "Plan Outcome eligibility or cardinality derived outside the compiler seam that enforces Change planRefs",
+          "acceptance-input requirements derived outside the lifecycle validators that enforce Closure, authority, Decision, scope, amendment, adoption, obligation, and confirmation semantics",
+          "omitted, invented, duplicate, unbounded, or cross-source Workbench input requirements",
+          "a selected Change whose requirements are compiled from current facts instead of its frozen Governance Baseline and one stabilized source query"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof covers one local single-writer stabilized Workbench query; authenticated identity and multi-writer coordination remain outside the current boundary.",
+        "Local Workbench projection and browser submission are proved separately."
+      ]
+    },
+    {
+      "id": "workbench-input-requirements-local-workbench-proof",
+      "appliesTo": ["local-workbench"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const proof = await import('./test/local-workbench/architecture-profile.test.mjs'); if (proof.WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION !== 1) throw new Error('The fixed Local Workbench input-requirements proof is not implemented.');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": ["workbench-input-requirements-are-adapter-preserved"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Local Workbench Profile module must export proof version 1 only after its adapter and DOM input-requirement scenario is exercised."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "workbench-input-requirement-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "browser filtering of raw Plan facts or invention of Closure, authority, Decision, amendment, adoption, obligation, or confirmation policy",
+          "loss, duplication, invention, or cross-source replacement of Kernel-declared authoring and acceptance-input requirements",
+          "submission of an Outcome, authority, Decision type, field, amendment, adoption, or Closure mode not declared by the selected source-bound projection",
+          "automatic substitution of a Decision Authority id for the independently supplied human actor"
+        ]
+      },
+      "residualUncertainty": [
+        "The DOM proof is semantic rather than a pixel-perfect or cross-browser visual test.",
+        "Authenticated human identity and portable Accepted history remain outside the current boundary."
+      ]
     }
   ]
 }

@@ -83,6 +83,10 @@
       "affects": ["change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The canonical Workbench projection owns Module, Claim, route, and Change-action semantics, but it does not yet project Plan authoring options or acceptance-input requirements; the browser still filters Plan choices from Project facts and submits opaque authority, decision-type, Closure, and amendment inputs for Kernel validation.",
+      "proofClaimRefs": [
+        "workbench-input-requirements-are-kernel-compiled",
+        "workbench-input-requirements-are-adapter-preserved"
+      ],
       "expansionTrigger": "The LGT-014 boundary was crossed without closing this Gap. LGT-019 must close it before Local Workbench becomes governed or any further Workbench authoring or acceptance surface expands."
     },
     {
