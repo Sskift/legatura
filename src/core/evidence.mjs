@@ -1,10 +1,15 @@
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
+import {
+  isSuccessfulCommandObservation,
+  readCommandUtf8Stream
+} from "./command-runner.mjs";
 
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/u;
 const EVIDENCE_COVERAGE_COLLECTION_LIMIT = 256;
 const EVIDENCE_COVERAGE_EVALUATION_LIMIT = 32768;
 const ELIGIBLE_ASSOCIATIONS_PER_EVIDENCE_LIMIT = 256;
 const ELIGIBLE_ASSOCIATIONS_TOTAL_LIMIT = 32768;
+const COMMAND_TEXT_PREVIEW_BYTE_LIMIT = 16 * 1024;
 
 export const KNOWLEDGE_CLOSURE_MODES = Object.freeze(["no-new-knowledge", "entries"]);
 export const KNOWLEDGE_CLOSURE_ENTRY_KINDS = Object.freeze([
@@ -469,14 +474,7 @@ export function createGateEvidence({
     })),
     supportBindings: cloneJson(supportBindings),
     oracle: cloneJson(command.oracle),
-    observation: {
-      status: result.exitCode === 0 ? "passed" : "failed",
-      exitCode: result.exitCode,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      ...(result.signal ? { signal: result.signal } : {}),
-      ...(result.truncated ? { truncated: true } : {})
-    },
+    observation: commandEvidenceObservation(result),
     provenance: {
       kind: "gate-command",
       observedAt,
@@ -492,6 +490,39 @@ export function createGateEvidence({
     discriminatoryPower: cloneJson(command.discriminatoryPower),
     residualUncertainty: cloneJson(command.residualUncertainty)
   });
+}
+
+function commandEvidenceObservation(result) {
+  const stdout = readCommandUtf8Stream(result, "stdout");
+  const stderr = readCommandUtf8Stream(result, "stderr");
+  const stdoutPreview = boundedCommandTextPreview(stdout);
+  const stderrPreview = boundedCommandTextPreview(stderr);
+  return {
+    status: isSuccessfulCommandObservation(result) ? "passed" : "failed",
+    exitCode: result.termination.kind === "exited"
+      ? result.termination.exitCode : null,
+    stdout: stdoutPreview.value,
+    stderr: stderrPreview.value,
+    supportStatus: result.support.status,
+    controlKind: result.control.kind,
+    terminationKind: result.termination.kind,
+    commandObservation: cloneJson(result),
+    ...(result.termination.kind === "signaled"
+      ? { signal: result.termination.signal } : {}),
+    ...((result.streams.stdout.truncated || result.streams.stderr.truncated)
+      ? { truncated: true } : {}),
+    ...((stdoutPreview.omitted || stderrPreview.omitted)
+      ? { textPreviewOmitted: true } : {}),
+    ...(!stdout.available ? { stdoutUnavailableReason: stdout.reasonCode } : {}),
+    ...(!stderr.available ? { stderrUnavailableReason: stderr.reasonCode } : {})
+  };
+}
+
+function boundedCommandTextPreview(projection) {
+  if (!projection.available) return { value: "", omitted: false };
+  return Buffer.byteLength(projection.value, "utf8") <= COMMAND_TEXT_PREVIEW_BYTE_LIMIT
+    ? { value: projection.value, omitted: false }
+    : { value: "", omitted: true };
 }
 
 function gateEvidenceApplicability(configured, primaryModule) {

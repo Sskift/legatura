@@ -6,3 +6,13 @@ export {
   WORKBENCH_INPUT_REQUIREMENT_REASON_CODES
 } from "./kernel.mjs";
 export { EVIDENCE_FIELDS } from "./evidence.mjs";
+export {
+  COMMAND_OBSERVATION_PROOF_VERSION,
+  COMMAND_OBSERVATION_SCHEMA_VERSION,
+  createLocalCommandObserver,
+  executeCommand,
+  isSuccessfulCommandObservation,
+  normalizeGateCommand,
+  observeCommand,
+  readCommandUtf8Stream
+} from "./command-runner.mjs";

@@ -19,7 +19,12 @@ import {
   validateIntegrityFailureEvidence
 } from "./change-compiler.mjs";
 import { createChangeStore } from "./change-store.mjs";
-import { executeCommand, normalizeGateCommand } from "./command-runner.mjs";
+import {
+  isSuccessfulCommandObservation,
+  normalizeGateCommand,
+  observeCommand,
+  readCommandUtf8Stream
+} from "./command-runner.mjs";
 import {
   KNOWLEDGE_CLOSURE_ENTRY_KINDS,
   KNOWLEDGE_CLOSURE_MODES,
@@ -959,13 +964,14 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     }
     for (const command of selectedCommands) {
       const specification = normalizeGateCommand(command.command);
-      const result = await executeWithTimeout({
+      const result = await observeGateCommand({
         ...specification,
         cwd: resolvedRepoPath,
         purpose: "gate",
         gateId: gate.id,
         commandId: command.id
       }, command.timeoutMs);
+      const successful = isSuccessfulCommandObservation(result);
       const obligationMappings = readObligationMappings(
         change.verificationObligations,
         command.claimRefs,
@@ -991,10 +997,16 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       commandResults.push({
         id: command.id,
         command: specification.display,
-        status: result.exitCode === 0 ? "passed" : "failed",
-        exitCode: result.exitCode,
+        status: successful ? "passed" : "failed",
+        exitCode: result.termination.kind === "exited"
+          ? result.termination.exitCode : null,
+        supportStatus: result.support.status,
+        controlKind: result.control.kind,
+        terminationKind: result.termination.kind,
+        observationDigest: canonicalDigest(result),
         evidenceId: item.id,
-        ...(result.signal ? { signal: result.signal } : {})
+        ...(result.termination.kind === "signaled"
+          ? { signal: result.termination.signal } : {})
       });
     }
     return {
@@ -1082,29 +1094,10 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     };
   }
 
-  async function executeWithTimeout(specification, timeoutMs) {
-    const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 300_000;
-    const controller = new AbortController();
-    let timer;
-    try {
-      return await Promise.race([
-        executeCommand(commandRunner, { ...specification, signal: controller.signal }),
-        new Promise((resolve) => {
-          timer = setTimeout(() => {
-            controller.abort();
-            resolve({ exitCode: 124, stdout: "", stderr: `Gate timed out after ${timeout}ms.` });
-          }, timeout);
-        })
-      ]);
-    } catch (error) {
-      return {
-        exitCode: controller.signal.aborted ? 124 : 1,
-        stdout: "",
-        stderr: error instanceof Error ? error.message : String(error)
-      };
-    } finally {
-      clearTimeout(timer);
-    }
+  async function observeGateCommand(specification, timeoutMs) {
+    const timeout = Number.isSafeInteger(timeoutMs) && timeoutMs > 0
+      ? timeoutMs : 300_000;
+    return observeCommand(commandRunner, { ...specification, timeoutMs: timeout });
   }
 
   return {
@@ -5041,7 +5034,7 @@ async function readObservedTouchedPaths(change, git, repoPath, commandRunner) {
   const currentHead = readString(git?.head);
   if (!baselineHead || !currentHead || baselineHead === currentHead) return worktreePaths;
 
-  const result = await executeCommand(commandRunner, {
+  const result = await observeCommand(commandRunner, {
     cwd: repoPath,
     purpose: "change-scope",
     command: "git",
@@ -5054,24 +5047,35 @@ async function readObservedTouchedPaths(change, git, repoPath, commandRunner) {
       "--",
       ".",
       ":(exclude).legatura/runtime/**"
-    ]
+    ],
+    timeoutMs: 300_000
   });
-  if (result.truncated) {
+  const stdout = readCommandUtf8Stream(result, "stdout");
+  const stderr = readCommandUtf8Stream(result, "stderr");
+  if (result.streams.stdout.truncated || result.streams.stderr.truncated) {
     throw kernelError(
       "GIT_CHANGESET_TRUNCATED",
       "Committed ChangeSet path output was truncated; scope cannot be proven safely.",
       409
     );
   }
-  if (result.exitCode !== 0) {
+  if (!isSuccessfulCommandObservation(result) || !stdout.available || !stderr.available) {
     throw kernelError(
       "GIT_CHANGESET_UNREADABLE",
       "Could not compare the current Git HEAD with the Change baseline.",
       409,
-      { baselineHead, currentHead, stderr: result.stderr }
+      {
+        baselineHead,
+        currentHead,
+        supportStatus: result.support.status,
+        controlKind: result.control.kind,
+        terminationKind: result.termination.kind,
+        stderr: stderr.available
+          ? stderr.value : result.termination.error?.message ?? stderr.reason
+      }
     );
   }
-  const committedPaths = result.stdout.split(/\r?\n/u).flatMap((line) => {
+  const committedPaths = stdout.value.split(/\r?\n/u).flatMap((line) => {
     if (!line) return [];
     const fields = line.split("\t");
     return fields.slice(1).map(decodeGitPath).filter(Boolean);

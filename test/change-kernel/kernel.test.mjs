@@ -913,7 +913,11 @@ async function createFixture() {
     appliesTo: ["core"],
     commands: [{
       id: "behavior",
-      command: "node -e \"require('node:fs').writeFileSync('gate-ran.txt','yes'); require('node:fs').unlinkSync('gate-ran.txt')\"",
+      command: [
+        process.execPath,
+        "-e",
+        "require('node:fs').writeFileSync('gate-ran.txt','yes'); require('node:fs').unlinkSync('gate-ran.txt')"
+      ],
       timeoutMs: 30_000,
       claimRefs: ["behavior-correct"],
       oracle: { kind: "fixture", description: "The fixture command exits zero." },

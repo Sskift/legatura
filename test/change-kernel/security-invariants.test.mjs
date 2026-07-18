@@ -70,6 +70,67 @@ test("self-reported manual Evidence cannot cover a Claim", async (t) => {
   );
 });
 
+test("Kernel accepts only terminal-complete Command Observations as positive Gate Evidence", async (t) => {
+  const fixture = await createFixture(t, { gateTimeoutMs: 20 });
+  const attacks = [
+    { id: "permissive-ok", result: () => ({ ok: true }), controlKind: "none" },
+    {
+      id: "exit-and-signal",
+      result: () => ({ exitCode: 0, signal: "SIGTERM", stdout: "", stderr: "" }),
+      controlKind: "none"
+    },
+    {
+      id: "unproved-truncation",
+      result: () => ({ exitCode: 0, stdout: "partial", stderr: "", truncated: true }),
+      controlKind: "none"
+    },
+    {
+      id: "unsettled-timeout",
+      result: () => new Promise(() => {}),
+      controlKind: "timeout"
+    }
+  ];
+
+  for (const attack of attacks) {
+    const kernel = createKernel({
+      repoPath: fixture.repoPath,
+      commandRunner: injectedGateRunner(attack.result)
+    });
+    const changeId = `command-observation-${attack.id}`;
+    await kernel.createChange(changeInput(changeId));
+    await kernel.compileChange(changeId);
+    const result = await kernel.runGate(changeId, "minimum");
+    const evidence = result.change.evidence.find((item) => (
+      item.provenance?.commandId === "minimum-command"
+    ));
+
+    assert.equal(result.status, "failed", attack.id);
+    assert.equal(result.change.state, "Submitted", attack.id);
+    assert.equal(evidence.observation.status, "failed", attack.id);
+    assert.equal(evidence.observation.controlKind, attack.controlKind, attack.id);
+    assert.equal(evidence.observation.terminationKind, "unconfirmed", attack.id);
+    assert.equal(evidence.observation.commandObservation.termination.closeConfirmed, false, attack.id);
+  }
+
+  const successfulKernel = createKernel({
+    repoPath: fixture.repoPath,
+    commandRunner: injectedGateRunner(() => ({ exitCode: 0, stdout: "", stderr: "" }))
+  });
+  await successfulKernel.createChange(changeInput("command-observation-exact-success"));
+  await successfulKernel.compileChange("command-observation-exact-success");
+  const successful = await successfulKernel.runGate(
+    "command-observation-exact-success",
+    "minimum"
+  );
+  const evidence = successful.change.evidence.find((item) => (
+    item.provenance?.commandId === "minimum-command"
+  ));
+  assert.equal(successful.status, "passed");
+  assert.equal(successful.change.state, "EvidenceReady");
+  assert.equal(evidence.observation.status, "passed");
+  assert.equal(evidence.observation.commandObservation.schemaVersion, 2);
+});
+
 test("frozen governance and Gap proof contracts are enforced across lifecycle boundaries", async (t) => {
   const fixture = await createFixture(t);
   const kernel = createKernel({ repoPath: fixture.repoPath });
@@ -688,7 +749,8 @@ async function createFixture(t, {
   gateAppliesTo = ["core"],
   moduleInclude = ["src/**"],
   proofContract = false,
-  gateWritesMarker = false
+  gateWritesMarker = false,
+  gateTimeoutMs
 } = {}) {
   const repoPath = await mkdtemp(path.join(os.tmpdir(), "legatura-security-"));
   const gateMarkerPath = path.join(
@@ -759,6 +821,7 @@ async function createFixture(t, {
       commands: [{
         id: "minimum-command",
         command: gateCommand,
+        ...(gateTimeoutMs === undefined ? {} : { timeoutMs: gateTimeoutMs }),
         claimRefs: [GATE_CLAIM_ID, ...(proofContract ? [GAP_PROOF_CLAIM_ID] : [])],
         oracle: {
           kind: "deterministic-process-exit",
@@ -789,6 +852,26 @@ async function createFixture(t, {
   await execFileAsync("git", ["add", "."], { cwd: repoPath });
   await execFileAsync("git", ["commit", "--quiet", "-m", "security baseline"], { cwd: repoPath });
   return { repoPath, gateMarkerPath };
+}
+
+function injectedGateRunner(gateResult) {
+  return async ({ command, args, cwd, env, signal, purpose }) => {
+    if (purpose === "gate") return gateResult();
+    try {
+      const result = await execFileAsync(command, args, {
+        cwd,
+        env: env ? { ...process.env, ...env } : process.env,
+        signal
+      });
+      return { exitCode: 0, stdout: result.stdout, stderr: result.stderr };
+    } catch (error) {
+      return {
+        exitCode: Number.isInteger(error?.code) ? error.code : 1,
+        stdout: typeof error?.stdout === "string" ? error.stdout : "",
+        stderr: typeof error?.stderr === "string" ? error.stderr : error?.message ?? String(error)
+      };
+    }
+  };
 }
 
 function writeJson(targetPath, value) {
