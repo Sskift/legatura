@@ -289,6 +289,14 @@
       "expansionTrigger": "Before Legatura is presented as a reusable framework for an existing software repository."
     },
     {
+      "id": "workbench-projection-integrity-not-closed",
+      "status": "open",
+      "affects": ["change-kernel", "local-workbench"],
+      "owner": "governance-maintainer",
+      "statement": "The Kernel projects generic Module Claim eligibility plus protected Claims by Outcome, so the browser still intersects them into final integrity-repair eligibility; browser receivers check digest shape without verifying projection content; and the governed disabled-reason vocabulary is behind the runtime closed set. The trusted loopback server still revalidates every mutation and the pure server Profile compiler rejects aggregate assurance, so this residual is projection integrity rather than an acceptance-authority bypass.",
+      "expansionTrigger": "Before LGT-016 is activated or any Workbench creation or Architecture Profile browser surface expands."
+    },
+    {
       "id": "planned-outcome-refinement-not-supported",
       "status": "closed",
       "affects": ["project-model", "change-kernel"],

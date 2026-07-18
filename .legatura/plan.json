@@ -58,7 +58,7 @@
       "id": "S1",
       "name": "Self-Proving Project Model",
       "status": "active",
-      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018", "LGT-019"]
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018", "LGT-019", "LGT-025"]
     },
     {
       "id": "S2",
@@ -517,6 +517,49 @@
         "Portable continuations or portable Accepted history",
         "Adding aggregate assurance, confidence, score, percentage, health, readiness, or green-light conclusions",
         "Claim-sensitive Minimum Gate pruning; that remains conditional LGT-015 work"
+      ]
+    },
+    {
+      "id": "LGT-025",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Workbench creation and Architecture Profile surfaces consume content-verified Kernel projections whose final Claim eligibility and orthogonal assurance facts are never reconstructed or collapsed in the browser.",
+      "dependsOn": ["LGT-018", "LGT-019"],
+      "acceptance": {
+        "activationCriterionRefs": [],
+        "claimRefs": [
+          "workbench-semantics-are-kernel-compiled",
+          "workbench-projects-kernel-semantics",
+          "architecture-profile-preserves-assurance-dimensions"
+        ],
+        "gapRefs": ["workbench-projection-integrity-not-closed"],
+        "exitCriteria": [
+          "For every supported Change kind, exact selected Plan Outcome, and primary Module, Change Kernel emits the final bounded selectable Claim options and ordered closed disabled reasons from the same compiler-owned Plan and Claim-route semantics that enforce Change creation; the browser performs only exact projection lookup.",
+          "Before any Workbench or Architecture Profile projection becomes browser state or DOM input, the browser verifies its canonical content digest and rejects stale semantic mutation, aggregate assurance injection, malformed selection routes, and vocabulary drift while preserving the same-origin loopback trust boundary."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-025-C1",
+            "statement": "For every supported Change kind, exact selected Plan Outcome, and primary Module, Change Kernel emits the final bounded selectable Claim options and ordered closed disabled reasons from the same compiler-owned Plan and Claim-route semantics that enforce Change creation; the browser performs only exact projection lookup.",
+            "claimRefs": ["workbench-semantics-are-kernel-compiled"],
+            "gapRefs": ["workbench-projection-integrity-not-closed"]
+          },
+          {
+            "id": "LGT-025-C2",
+            "statement": "Before any Workbench or Architecture Profile projection becomes browser state or DOM input, the browser verifies its canonical content digest and rejects stale semantic mutation, aggregate assurance injection, malformed selection routes, and vocabulary drift while preserving the same-origin loopback trust boundary.",
+            "claimRefs": [
+              "workbench-projects-kernel-semantics",
+              "architecture-profile-preserves-assurance-dimensions"
+            ],
+            "gapRefs": ["workbench-projection-integrity-not-closed"]
+          }
+        ]
+      },
+      "nonGoals": [
+        "Treating a SHA-256 content digest as remote-server authentication or a signature",
+        "Adding aggregate assurance, confidence, score, percentage, health, readiness, or green-light conclusions",
+        "Moving Plan, Contract, Gate, lifecycle, or acceptance policy into browser code",
+        "Expanding the Workbench beyond the declared loopback boundary"
       ]
     },
     {
