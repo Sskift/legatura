@@ -315,7 +315,7 @@
     {
       "id": "LGT-014",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "Architecture Acceptance Profiles remain inspectable as accepted history grows by traversing authenticated, snapshot-bound, hard-bounded windows whose exact Kernel semantics are only projected by CLI, loopback HTTP, and browser adapters.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1212,6 +1212,16 @@
           "rationale": "The fixed Project Model ownership Gate in the prior sealed proof Package directly covers the Gap's exact proof Claim and its durable resolution."
         }
       ]
+    },
+    {
+      "id": "LGT-014-T1",
+      "outcomeRef": "LGT-014",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-010 is achieved and the exact revised LGT-014 definition plus its explicit open traversal and DOM Gaps were Accepted in an earlier Governance Baseline; this isolated Amendment freezes that unchanged definition before any Module-owned Contract or implementation Change references it.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
