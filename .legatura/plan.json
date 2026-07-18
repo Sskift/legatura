@@ -300,7 +300,7 @@
     {
       "id": "LGT-013",
       "stage": "S1",
-      "status": "planned",
+      "status": "active",
       "outcome": "A declared local direct-process support profile produces bounded terminal-state-complete Command Observations, and the Kernel fails closed on unsupported, controlled, malformed, or unconfirmed outcomes.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
@@ -1432,6 +1432,16 @@
           "rationale": "The two prior sealed Kernel Packages and the Local Workbench Package directly cover the Gap's exact Kernel and adapter proof Claims, including the independently discovered confirmation TOCTOU and frozen default-Authority edge cases."
         }
       ]
+    },
+    {
+      "id": "LGT-013-T1",
+      "outcomeRef": "LGT-013",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-010 is achieved and the complete revised LGT-013 definition was Accepted in an earlier Governance Baseline; this isolated Amendment freezes that unchanged terminal-state-complete command observation Criterion before any owner-scoped Contract or implementation Change references it.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
