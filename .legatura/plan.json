@@ -316,19 +316,44 @@
       "id": "LGT-014",
       "stage": "S1",
       "status": "planned",
-      "outcome": "Human-facing projections preserve Kernel and Project Model semantics through one independently exercised high-value workflow.",
+      "outcome": "Architecture Acceptance Profiles remain inspectable as accepted history grows by traversing authenticated, snapshot-bound, hard-bounded windows whose exact Kernel semantics are only projected by CLI, loopback HTTP, and browser adapters.",
       "dependsOn": ["LGT-010"],
       "acceptance": {
-        "claimRefs": ["workbench-is-loopback-and-bounded"],
-        "gapRefs": ["browser-projection-not-e2e-tested", "architecture-acceptance-profile-not-projected"],
+        "claimRefs": [
+          "architecture-profile-binds-rechecked-source-snapshot",
+          "architecture-profile-preserves-assurance-dimensions"
+        ],
+        "gapRefs": [
+          "architecture-profile-window-traversal-not-proven",
+          "browser-projection-not-e2e-tested"
+        ],
         "exitCriteria": [
-          "A real DOM workflow proves the displayed architecture and Change facts match the underlying APIs.",
-          "No snapshot-test wall is introduced."
+          "Every Profile request compiles at most one canonical Change window from one stabilized composite snapshot below fixed record, fact, unique-baseline route-work, route-byte, and output-byte ceilings; successive Kernel-issued continuations over the unchanged snapshot visit every Change exactly once, and malformed, modified, unissued, stale, cross-snapshot, or cross-query continuations fail closed.",
+          "CLI, loopback HTTP, and one DOM browser workflow preserve exact per-window source bindings, facts, relations, bounds, digests, and opaque continuations while traversing all windows without omission, duplication, cross-snapshot coalescing, cursor decoding, governance recomputation, aggregate assurance, or unbounded presentation state."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-014-C1",
+            "statement": "Every Profile request compiles at most one canonical Change window from one stabilized composite snapshot below fixed record, fact, unique-baseline route-work, route-byte, and output-byte ceilings; successive Kernel-issued continuations over the unchanged snapshot visit every Change exactly once, and malformed, modified, unissued, stale, cross-snapshot, or cross-query continuations fail closed.",
+            "claimRefs": ["architecture-profile-binds-rechecked-source-snapshot"],
+            "gapRefs": ["architecture-profile-window-traversal-not-proven"]
+          },
+          {
+            "id": "LGT-014-C2",
+            "statement": "CLI, loopback HTTP, and one DOM browser workflow preserve exact per-window source bindings, facts, relations, bounds, digests, and opaque continuations while traversing all windows without omission, duplication, cross-snapshot coalescing, cursor decoding, governance recomputation, aggregate assurance, or unbounded presentation state.",
+            "claimRefs": ["architecture-profile-preserves-assurance-dimensions"],
+            "gapRefs": [
+              "architecture-profile-window-traversal-not-proven",
+              "browser-projection-not-e2e-tested"
+            ]
+          }
         ]
       },
       "nonGoals": [
-        "Pixel-perfect visual regression testing",
-        "Owning or recomputing Project Model facts instead of rendering their authoritative projection"
+        "Raising the whole-Profile 2 MiB or aggregate route-query ceiling to fit current history",
+        "Returning all accepted history in one payload or retaining unbounded browser or CLI state",
+        "Making continuations or ignored local Accepted history portable across Kernel processes, restarts, clones, or multi-writer workspaces",
+        "Pixel-perfect visual regression testing"
       ]
     },
     {
@@ -884,6 +909,49 @@
         "outcome"
       ],
       "rationale": "Replace the speculative path-ownership statement with stable exact Criteria, direct Fact and Module Claims, a fixed attack proof, and an explicit Context Capsule binding before the Outcome is activated.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-014-R1",
+      "outcomeRef": "LGT-014",
+      "amendmentChangeId": "lgt014-declare-profile-window-governance",
+      "governanceBaselineDigest": "sha256:01d63776fb702ffd610485bca391ad2d642a4232f7dd9b926f842b56ea0a433b",
+      "previousDefinition": {
+        "id": "LGT-014",
+        "stage": "S1",
+        "outcome": "Human-facing projections preserve Kernel and Project Model semantics through one independently exercised high-value workflow.",
+        "dependsOn": ["LGT-010"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "A real DOM workflow proves the displayed architecture and Change facts match the underlying APIs.",
+            "No snapshot-test wall is introduced."
+          ],
+          "claimRefs": ["workbench-is-loopback-and-bounded"],
+          "gapRefs": [
+            "architecture-acceptance-profile-not-projected",
+            "browser-projection-not-e2e-tested"
+          ]
+        },
+        "nonGoals": [
+          "Owning or recomputing Project Model facts instead of rendering their authoritative projection",
+          "Pixel-perfect visual regression testing"
+        ]
+      },
+      "previousDefinitionDigest": "sha256:3abbd30dae5b03753d5ef685d4633b503ff49208c27d9ef5a0fe2744b85877a2",
+      "currentDefinitionDigest": "sha256:fd1f58d9ccb9ad1cdfa03a6a4cd47e6defc4190127bfa457696d88405982e66b",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "acceptance.gapRefs",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Replace LGT-014's broad projection wording and already-closed legacy Profile Gap with stable window-traversal Criteria, the existing snapshot and assurance-dimension Claims, and explicit open traversal and DOM Gaps before activation; Module-owned window Contracts and fixed Closure routes must be declared in later Changes and this Revision grants neither implementation authority nor a lifecycle transition.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],
