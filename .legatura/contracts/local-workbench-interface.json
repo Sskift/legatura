@@ -36,6 +36,10 @@
       "statement": "The pure bounded Architecture Profile view model preserves Outcome, Criterion, Claim, Gate, Evidence currency, Residual Uncertainty, and Knowledge Gap through exact identifiers and digests without aggregate assurance. Separately, CLI, HTTP, and browser adapters preserve the Change Kernel's complete canonical authoring and action projections, including selectable Claims, exact Gate and command route identifiers and digests, enabled state, and ordered workbenchDisabledReasonCodes, without omission, duplication, invention, or governance recomputation."
     },
     {
+      "id": "brownfield-inspection-preserves-explicit-unknowns",
+      "statement": "For the fixed materialized app/apk/relay reference, the existing inspect --json path emits the Kernel's bounded canonical Architecture Profile windows whose view model preserves relay as governed, app and apk as independent provisional Contract providers, the legacy boundary as opaque, exact public Contract Claims and acceptance Gate routes, and all open Knowledge Gaps; it adds no adoption-specific command, inferred coverage, completeness, score, confidence, readiness, or green-light conclusion."
+    },
+    {
       "id": "workbench-browser-verifies-and-projects-kernel-content",
       "statement": "Before a Workbench projection, Architecture Profile view model, or Profile window becomes browser state or DOM input, the browser receiver recomputes its SHA-256 digest over the exact recursively key-sorted canonical content with the declared digest field omitted, rejects any mismatch, and rejects forbidden aggregate-assurance keys even if a payload is resealed. The creation form obtains final Claim selectable state, ordered closed reasons, and exact acceptance routes only through exact lookup of Kernel claimSelectionRoutes; it neither consumes protected-Claim sets nor invents eligibility or disabled explanations. These checks detect stale or corrupted same-origin loopback content and do not claim signatures, remote-server authentication, or authority."
     },
