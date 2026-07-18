@@ -396,18 +396,53 @@
       "id": "LGT-016",
       "stage": "S1",
       "status": "planned",
-      "outcome": "A brownfield repository can adopt Legatura incrementally, leaving unknown areas provisional or opaque while governing one bounded Module and Contract Change without whole-repository modeling.",
+      "outcome": "A versioned app/apk/relay brownfield reference proves incremental adoption through existing Legatura interfaces: relay is governed against public app and apk Contracts, provisional, opaque, and ungoverned areas remain explicit, and one relay Change reaches an Accepted Package without whole-repository modeling.",
       "dependsOn": ["LGT-011"],
       "acceptance": {
-        "claimRefs": [],
+        "activationCriterionRefs": [],
+        "claimRefs": [
+          "module-path-ownership-is-total-and-exclusive",
+          "change-kernel-consumes-validated-path-ownership",
+          "change-lifecycle-requires-preconditions",
+          "workbench-projects-kernel-semantics"
+        ],
         "gapRefs": ["brownfield-adoption-not-proven"],
         "exitCriteria": [
-          "An app, apk, and relay reference repository declares exact ownership and public Contracts while unrelated internals remain explicitly provisional or opaque.",
-          "One bounded Change reaches an Accepted Change Package without loading dependency implementation internals unless a recorded Context Expansion recomputes impact.",
-          "Adoption reports missing governance as Knowledge Gaps instead of inventing completeness."
+          "The versioned app/apk/relay reference materializes as a valid Project Model in which relay is governed, app and apk are independent provisional public-Contract providers, legacy internals are opaque, and every tracked path is assigned exactly once to a Module owner or an explicit non-authorizing ungoverned disposition.",
+          "Using the unchanged Change Kernel lifecycle, one ordinary relay Change compiles a Context Capsule that exposes dependency Contracts but no app, apk, or legacy implementation path, then reaches an exact Accepted Change Package without closing or concealing the reference repository's open Knowledge Gaps.",
+          "The existing CLI inspection path projects the materialized reference's exact Module assurance states, public Contract Claims, Gate routes, and open Knowledge Gaps without a special adoption command or an inferred completeness conclusion."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-016-C1",
+            "statement": "The versioned app/apk/relay reference materializes as a valid Project Model in which relay is governed, app and apk are independent provisional public-Contract providers, legacy internals are opaque, and every tracked path is assigned exactly once to a Module owner or an explicit non-authorizing ungoverned disposition.",
+            "claimRefs": ["module-path-ownership-is-total-and-exclusive"],
+            "gapRefs": ["brownfield-adoption-not-proven"]
+          },
+          {
+            "id": "LGT-016-C2",
+            "statement": "Using the unchanged Change Kernel lifecycle, one ordinary relay Change compiles a Context Capsule that exposes dependency Contracts but no app, apk, or legacy implementation path, then reaches an exact Accepted Change Package without closing or concealing the reference repository's open Knowledge Gaps.",
+            "claimRefs": [
+              "change-kernel-consumes-validated-path-ownership",
+              "change-lifecycle-requires-preconditions"
+            ],
+            "gapRefs": []
+          },
+          {
+            "id": "LGT-016-C3",
+            "statement": "The existing CLI inspection path projects the materialized reference's exact Module assurance states, public Contract Claims, Gate routes, and open Knowledge Gaps without a special adoption command or an inferred completeness conclusion.",
+            "claimRefs": ["workbench-projects-kernel-semantics"],
+            "gapRefs": []
+          }
         ]
       },
-      "nonGoals": ["Automatically inferring a complete architecture", "Requiring browser onboarding"]
+      "nonGoals": [
+        "Worker Execution Interface, Work Specification, Worker Report, Execution Record, capability, or provider semantics; those belong to LGT-020",
+        "Context Capsule materialization, filesystem read enforcement, or Context Expansion recording and impact recomputation; those belong to LGT-021",
+        "Automatically inferring complete architecture or ownership for unknown code",
+        "Adding a legatura adopt command or browser onboarding flow",
+        "Governing app, apk, or legacy implementation internals as part of the relay adoption proof"
+      ]
     },
     {
       "id": "LGT-017",
@@ -1098,6 +1133,43 @@
         "outcome"
       ],
       "rationale": "Replace the legacy exit list with one stable Criterion that binds the existing Assurance Runtime and Change Kernel Claims to an explicit local direct-process profile and the open subprocess boundary before activation; later owner-scoped Changes must declare proof Claims, fixed routes, implementation, and Kernel adoption.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-016-R1",
+      "outcomeRef": "LGT-016",
+      "amendmentChangeId": "lgt016-revise-brownfield-adoption-boundary",
+      "governanceBaselineDigest": "sha256:abd001f70c07e7e1c8249c98ad317c03185afddb0a1d6af130d4efc28553ce41",
+      "previousDefinition": {
+        "id": "LGT-016",
+        "stage": "S1",
+        "outcome": "A brownfield repository can adopt Legatura incrementally, leaving unknown areas provisional or opaque while governing one bounded Module and Contract Change without whole-repository modeling.",
+        "dependsOn": ["LGT-011"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "Adoption reports missing governance as Knowledge Gaps instead of inventing completeness.",
+            "An app, apk, and relay reference repository declares exact ownership and public Contracts while unrelated internals remain explicitly provisional or opaque.",
+            "One bounded Change reaches an Accepted Change Package without loading dependency implementation internals unless a recorded Context Expansion recomputes impact."
+          ],
+          "claimRefs": [],
+          "gapRefs": ["brownfield-adoption-not-proven"]
+        },
+        "nonGoals": ["Automatically inferring a complete architecture", "Requiring browser onboarding"]
+      },
+      "previousDefinitionDigest": "sha256:8499d20111c40fe1177679e0d9edd4dfd92ec3c1524aa8b5819765a58fc1bf61",
+      "currentDefinitionDigest": "sha256:beb60e39f6078bc89694708478b78b045a21f01991bdfe6f1ab01f443a3b2b0f",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Replace the Context Expansion-dependent legacy exit list with stable materialized-reference, ordinary Kernel lifecycle, and existing CLI inspection Criteria before activation; later owner-scoped Changes must declare proof Claims, fixed routes, and implementation without claiming Worker read enforcement.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],

@@ -283,9 +283,9 @@
     {
       "id": "brownfield-adoption-not-proven",
       "status": "open",
-      "affects": ["project-model", "local-workbench"],
+      "affects": ["project-model", "change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
-      "statement": "Legatura self-hosts its Project Model, but no real brownfield app, apk, and relay repository proves incremental adoption without whole-repository modeling.",
+      "statement": "Legatura self-hosts its Project Model, but no materialized app/apk/relay reference directly proves exact incremental ownership and assurance boundaries, one ordinary relay Change through the unchanged Kernel lifecycle, and faithful projection through the existing CLI without whole-repository modeling or inferred completeness.",
       "expansionTrigger": "Before Legatura is presented as a reusable framework for an existing software repository."
     },
     {
