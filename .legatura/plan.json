@@ -63,7 +63,7 @@
     {
       "id": "S2",
       "name": "Controlled Single-Worker Execution",
-      "status": "planned",
+      "status": "active",
       "outcomeRefs": ["LGT-020", "LGT-021", "LGT-022", "LGT-023", "LGT-024"]
     },
     {
@@ -600,7 +600,7 @@
     {
       "id": "LGT-020",
       "stage": "S2",
-      "status": "planned",
+      "status": "active",
       "outcome": "A deep provider-neutral Worker Execution Interface canonically validates and records bounded Work Specifications, Context Expansion Requests, Worker Reports, and Execution Records as non-authoritative observations, with deterministic conformance and no capability, Evidence, Knowledge Closure, or acceptance authority.",
       "dependsOn": ["LGT-011", "LGT-013", "LGT-018"],
       "acceptance": {
@@ -1774,6 +1774,16 @@
           "rationale": "The three prior sealed owner Packages directly cover the root Gap's exact Project Model reference, ordinary Change Kernel lifecycle, and existing CLI projection proof Claims while leaving the reference repository's own provisional and opaque Gaps open."
         }
       ]
+    },
+    {
+      "id": "LGT-020-T1",
+      "outcomeRef": "LGT-020",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-011, LGT-013, and LGT-018 are achieved, and the complete LGT-020 provider-neutral non-authoritative definition was Accepted through LGT-020-R2 in an earlier Governance Baseline; this isolated Amendment activates S2 and freezes that unchanged definition before protocol implementation.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
