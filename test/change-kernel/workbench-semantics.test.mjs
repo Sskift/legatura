@@ -8,6 +8,7 @@ import test from "node:test";
 
 import {
   createKernel,
+  WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION,
   WORKBENCH_DISABLED_REASON_CODES,
   WORKBENCH_INPUT_REQUIREMENT_REASON_CODES
 } from "../../src/core/index.mjs";
@@ -21,6 +22,7 @@ const PRIVATE_OUTPUT = "workbench-private-gate-output";
 export const WORKBENCH_INPUT_REQUIREMENTS_PROOF_VERSION = 1;
 
 test("Kernel compiles one bounded canonical Workbench semantic projection", async (t) => {
+  assert.equal(WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION, 1);
   assert.deepEqual(
     compileAuthorityDecisionOptions(["module-maintainer"], [{ id: "module-maintainer" }])
       .map(({ decisionType }) => decisionType),
