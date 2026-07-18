@@ -79,7 +79,7 @@
     },
     {
       "id": "workbench-input-requirements-not-projected",
-      "status": "open",
+      "status": "closed",
       "affects": ["change-kernel", "local-workbench"],
       "owner": "governance-maintainer",
       "statement": "The canonical Workbench projection owns Module, Claim, route, and Change-action semantics, but it does not yet project Plan authoring options or acceptance-input requirements; the browser still filters Plan choices from Project facts and submits opaque authority, decision-type, Closure, and amendment inputs for Kernel validation.",
@@ -87,7 +87,23 @@
         "workbench-input-requirements-are-kernel-compiled",
         "workbench-input-requirements-are-adapter-preserved"
       ],
-      "expansionTrigger": "The LGT-014 boundary was crossed without closing this Gap. LGT-019 must close it before Local Workbench becomes governed or any further Workbench authoring or acceptance surface expands."
+      "expansionTrigger": "The LGT-014 boundary was crossed without closing this Gap. LGT-019 must close it before Local Workbench becomes governed or any further Workbench authoring or acceptance surface expands.",
+      "resolution": "Change Kernel now compiles the complete bounded Plan-authoring and selected-Change acceptance-input requirement product from one stabilized composite Model, Git, and Store snapshot, and rechecks the exact requirements digest plus four-field human confirmation binding before applying Closure or Authority input. Local Workbench strictly receives and freezes the nested projection, renders only its Change kinds, Outcome cardinality, Claims, routes, Decision options, Closure modes, exact references, and disabled reasons, and submits the confirmed binding unchanged; CLI and browser Profile failures remain complete, bounded, and non-aggregate.",
+      "closedBy": [
+        {
+          "changeId": "lgt019-implement-kernel-input-requirements",
+          "acceptanceDigest": "sha256:90369556cd832cfe5b9f958097263e120b34f4ac6345a4959ceb242bcf879792"
+        },
+        {
+          "changeId": "lgt019-seal-acceptance-confirmation-proof",
+          "acceptanceDigest": "sha256:daf82c20ff52ab1489839a730173516db483eccd7f1e176cd9e8362f915411c0"
+        },
+        {
+          "changeId": "lgt019-adopt-workbench-input-projection",
+          "acceptanceDigest": "sha256:285ff30d728f4bbc7279f0401792ae5d619121d1ddedb08d27fb3c11004508e5"
+        }
+      ],
+      "reopenTrigger": "Reopen if Workbench input requirements stop sharing one stabilized source with Claim, route, and action semantics; if acceptance can apply Closure or Decision input without an exact current confirmation match; if adapters inspect raw Plan, Project Model, Gate, scope, or Change internals to invent eligibility; if Profile failure output becomes partial, unbounded, cursor-leaking, or aggregate; or if the browser can mutate a received canonical projection."
     },
     {
       "id": "architecture-acceptance-profile-not-projected",

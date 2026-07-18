@@ -456,7 +456,7 @@
     {
       "id": "LGT-019",
       "stage": "S1",
-      "status": "active",
+      "status": "achieved",
       "outcome": "Every Local Workbench authoring and acceptance input is a bounded, source-bound Kernel projection, while Profile traversal fails completely and canonically at process and browser boundaries without reconstructing governance semantics.",
       "dependsOn": ["LGT-014"],
       "acceptance": {
@@ -1325,6 +1325,59 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-019-T2",
+      "outcomeRef": "LGT-019",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "Prior sealed Change Kernel and Local Workbench Packages now cover all three frozen LGT-019 Criteria and close the Workbench input-requirements Gap through its two exact proof Claims without using this Plan Amendment as implementation proof.",
+      "packageRefs": [
+        {
+          "changeId": "lgt019-implement-kernel-input-requirements",
+          "acceptanceDigest": "sha256:90369556cd832cfe5b9f958097263e120b34f4ac6345a4959ceb242bcf879792"
+        },
+        {
+          "changeId": "lgt019-seal-acceptance-confirmation-proof",
+          "acceptanceDigest": "sha256:daf82c20ff52ab1489839a730173516db483eccd7f1e176cd9e8362f915411c0"
+        },
+        {
+          "changeId": "lgt019-adopt-workbench-input-projection",
+          "acceptanceDigest": "sha256:285ff30d728f4bbc7279f0401792ae5d619121d1ddedb08d27fb3c11004508e5"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-019-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Kernel implementation Package directly proves one stabilized Workbench query projects complete Plan selection and exact Closure, Authority, Decision, amendment, adoption, obligation, and confirmation requirements from the lifecycle policy seams; the later main-workspace proof Package directly rejects Store TOCTOU, all five confirmation-binding attacks, mutation before rejection, and frozen default-Authority option mutation.",
+            "residualUncertainty": "The proof is bounded to the local serialized Kernel and process-local Store; authenticated human identity and multi-process coordination remain the separate worker-and-identity-trust-opaque Gap."
+          }
+        },
+        {
+          "criterionRef": "LGT-019-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Local Workbench Package directly proves strict nested authoring and acceptance projection receipt, exact confirmation submission, parseable complete JSON after a later CLI window failure, initial browser refresh clearing, successor failure retention, bounded cursor-redacted errors, and removal of aggregate Profile assurance semantics.",
+            "residualUncertainty": "The DOM proof is semantic rather than pixel-perfect or cross-browser visual verification, while portable Accepted history remains the accepted-history-not-portable Gap."
+          }
+        },
+        {
+          "criterionRef": "LGT-019-C3",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The accepted Kernel implementation Package directly proves explicit code-unit Change-id ordering and rejects future-issued, malformed, modified, expired, unissued, cross-process, cross-snapshot, and cross-query continuations at the Kernel seam; the Local Package preserves the opaque continuation without adapter retry or decoding.",
+            "residualUncertainty": "Continuations deliberately remain process-local and depend on the local process clock; portable continuation and cross-workspace history are outside the frozen LGT-019 boundary."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "workbench-input-requirements-not-projected",
+          "rationale": "The two prior sealed Kernel Packages and the Local Workbench Package directly cover the Gap's exact Kernel and adapter proof Claims, including the independently discovered confirmation TOCTOU and frozen default-Authority edge cases."
+        }
+      ]
     }
   ],
   "changeRules": {
