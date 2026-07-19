@@ -21,11 +21,11 @@
     },
     {
       "id": "repository-source-product-binds-stable-exact-bytes",
-      "statement": "One opaque process-local Repository Source Product is issued only after two consecutive identical bounded composite observations bind the canonical repository identity and root, exact Git binding and tracked-path facts, one ordered exact concrete path set, and each regular file's byte length and content digest; its projection exposes no source bodies and every byte read requires the live product, so missing, extra, cross-repository, drifted, escaping, symlink, non-regular, unreadable, duplicate, malformed, forged, serialized, or over-limit input fails closed."
+      "statement": "One opaque process-local Repository Source Product is issued only after two consecutive identical bounded composite observations bind the private canonical repository identity, exact Git binding and tracked-path facts, one ordered exact concrete path set whose every member belongs to those tracked-path facts, and each regular file's byte length and content digest; file identity is validated before and after each read but reproducible manifests bind only paths and bytes, the body-free projection requires complete repository, Git, inventory, and path-set expectations, and every byte read requires the live product, so missing, extra, untracked, cross-repository, drifted, escaping, symlink, non-regular, unreadable, duplicate, malformed, forged, serialized, or over-limit input fails closed."
     },
     {
       "id": "repository-source-product-proof-rejects-binding-and-byte-attacks",
-      "statement": "The fixed Repository Source Product proof accepts identical consecutive observations and A/B/B stabilization with reproducible manifest and byte projections, and rejects A/B/C instability, repository or Git-binding substitution, tracked-inventory drift, path-set mismatch, byte drift, manifest mismatch, traversal, symlink, non-regular file, unreadable file, duplicate path, forged or serialized product, unknown byte read, mutation aliasing, and resource-exhaustion attacks."
+      "statement": "The fixed Repository Source Product proof accepts identical consecutive observations and A/B/B stabilization with reproducible manifest and defensive byte projections, and rejects A/B/C instability, incomplete expectations, repository or Git-binding substitution, tracked-inventory drift, untracked or mismatched path sets, read-time file replacement, byte or manifest drift, traversal, symlink, non-regular file, unreadable file, duplicate path, forged, proxied, cloned, or serialized product, unknown byte read, mutation aliasing, absolute-root leakage, and resource-exhaustion attacks."
     },
     {
       "id": "command-observation-is-explicit",

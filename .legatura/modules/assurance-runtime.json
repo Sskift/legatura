@@ -32,10 +32,10 @@
       "Injected runner reports are strictly normalized and bounded; permissive ok flags, contradictory exit and signal facts, and unknown result shapes cannot synthesize success.",
       "Failed or truncated Git observations fail closed.",
       "One repository observation emits a bounded complete canonical tracked-path set and exact digest, or reports the binding unavailable on command failure, truncation, malformed paths, duplicates, or resource-limit exhaustion.",
-      "Repository Source observation accepts only an ordered bounded list of canonical exact concrete paths; selector expansion and disclosure policy remain Context Kernel responsibilities.",
-      "Each source round binds the canonical real repository root, repository identity, exact Git binding and tracked-path facts, requested path set, regular-file metadata, byte lengths, and byte digests into one composite digest; only two consecutive identical digests within a bounded observation window may issue a product.",
+      "Repository Source observation v1 accepts only an ordered bounded list of canonical exact concrete paths whose every member belongs to the accepted round's exact tracked-path facts; untracked paths, selector expansion, and disclosure policy remain outside this product and Context Kernel owns scope compilation.",
+      "Each source round privately resolves and validates the real repository root and identity, exact Git binding and tracked-path facts, requested path set, and regular-file identity before and after reading; its reproducible manifest and composite observation bind only repository identity, Git and inventory digests, ordered paths, byte lengths, and byte digests, and only two consecutive identical composite digests within a bounded three-round window may issue a product.",
       "A Repository Source Product is an opaque process-local WeakMap-branded capability; a plain record, proxy, clone, serialized value, or product from another source binding cannot project a manifest or disclose bytes.",
-      "The public source projection contains exact repository, Git, inventory, path-set, manifest, and product bindings plus ordered path, byte-length, and content-digest entries, but never source bodies.",
+      "The public source projection requires a complete exact expected repository path, Git binding digest, tracked-path facts digest, and ordered path set; Assurance Runtime re-observes repository identity, rejects every missing or partial expectation, and emits only repository-identity, Git, inventory, path-set, manifest, and product digests plus ordered path, byte-length, and content-digest entries, never an absolute root or source body.",
       "Byte reads return defensive copies captured by the stable product and never re-read the filesystem; unknown paths, mutation aliasing, missing or extra entries, drift, traversal, symlink, non-regular or unreadable files, duplicates, malformed input, and resource exhaustion fail closed.",
       "Repository Source Products establish exact bounded local source facts only; they do not authorize scope, enforce filesystem access, infer semantic impact, settle Worker execution, create Evidence or Knowledge Closure, or decide acceptance."
     ]
@@ -45,6 +45,7 @@
       "src/core/canonical.mjs",
       "src/core/command-runner.mjs",
       "src/core/git-binding.mjs",
+      "src/core/repository-source.mjs",
       "test/assurance-runtime/command-runner.test.mjs",
       "test/assurance-runtime/git-binding.test.mjs",
       "test/assurance-runtime/tracked-path-observation.test.mjs",
