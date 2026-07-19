@@ -648,7 +648,7 @@
     {
       "id": "LGT-021",
       "stage": "S2",
-      "status": "planned",
+      "status": "active",
       "outcome": "From one compiled Change, frozen Git-visible repository inventory, and matching stable repository source, a deep Context Kernel deterministically commits a bounded content-addressed Context Session; only its unforgeable process-local controller Session product can append recorded-before-disclosure grant, deny, or compiler-derived redundant successors with neutral Project Model-derived Context Impact, while source-product issuance, Worker adoption, and filesystem enforcement remain separately owned capabilities.",
       "dependsOn": ["LGT-011", "LGT-013", "LGT-020"],
       "acceptance": {
@@ -2008,6 +2008,16 @@
           "rationale": "The prior sealed initial and reconstruction-hardening Packages jointly cover the Gap's exact semantic-attack proof Claim, including the three independently reproduced reconstruction bypasses, while leaving worker-capability-enforcement-not-proven, authority-identity-not-authenticated, and worker-and-identity-trust-opaque open."
         }
       ]
+    },
+    {
+      "id": "LGT-021-T1",
+      "outcomeRef": "LGT-021",
+      "from": "planned",
+      "to": "active",
+      "rationale": "LGT-011, LGT-013, and LGT-020 are achieved, and the complete LGT-021 source, controller-product, neutral-impact, append-only lineage, and separate Worker-adoption boundary was Accepted through LGT-021-R2 in an earlier Governance Baseline; this isolated Amendment freezes that unchanged definition before any owner declaration or implementation.",
+      "packageRefs": [],
+      "criterionAssessments": [],
+      "gapDispositions": []
     }
   ],
   "changeRules": {
