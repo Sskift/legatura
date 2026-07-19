@@ -324,6 +324,14 @@
       "expansionTrigger": "Before LGT-021 is achieved or any Worker Adapter receives a Context materialization."
     },
     {
+      "id": "change-store-history-storage-does-not-scale",
+      "status": "open",
+      "affects": ["change-kernel", "local-workbench", "project-model"],
+      "owner": "governance-maintainer",
+      "statement": "The local Change Store reached 66,319,152 of its 67,108,864-byte hard bound at 125 valid historical records because pretty JSON, duplicated root and sealed Accepted Package bodies, and full-body snapshot reads amplify exact logical history; an explicit lossless formatting pass recovered 16,753,779 bytes without changing the Store digest or node count, but no versioned single-copy codec, crash-safe migration, lifecycle overlay, or manifest-first selected-body query proves that history remains usable within fixed bounds.",
+      "expansionTrigger": "Before LGT-023 is activated, before accepted history again reaches 80 percent of the Store byte bound after explicit lossless compaction, or before any query claims bounded window work without a manifest-first body-loader proof."
+    },
+    {
       "id": "authority-identity-not-authenticated",
       "status": "open",
       "affects": ["change-kernel", "identity-provider"],

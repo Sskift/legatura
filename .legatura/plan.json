@@ -58,7 +58,7 @@
       "id": "S1",
       "name": "Self-Proving Project Model",
       "status": "active",
-      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018", "LGT-019", "LGT-025"]
+      "outcomeRefs": ["LGT-010", "LGT-011", "LGT-012", "LGT-013", "LGT-014", "LGT-015", "LGT-016", "LGT-017", "LGT-018", "LGT-019", "LGT-025", "LGT-026"]
     },
     {
       "id": "S2",
@@ -595,6 +595,51 @@
         "Adding aggregate assurance, confidence, score, percentage, health, readiness, or green-light conclusions",
         "Moving Plan, Contract, Gate, lifecycle, or acceptance policy into browser code",
         "Expanding the Workbench beyond the declared loopback boundary"
+      ]
+    },
+    {
+      "id": "LGT-026",
+      "stage": "S1",
+      "status": "planned",
+      "outcome": "Change Kernel preserves growing logical Change history in a versioned bounded Store representation that keeps one sealed Accepted Package plus an exact lifecycle overlay, migrates legacy records explicitly without changing any logical or acceptance digest, and stabilizes small manifests before hydrating only selected detail bodies for list and Profile windows.",
+      "dependsOn": ["LGT-010", "LGT-014", "LGT-018"],
+      "acceptance": {
+        "claimRefs": [
+          "accepted-package-binds-exact-content",
+          "architecture-profile-binds-rechecked-source-snapshot",
+          "architecture-profile-windows-are-snapshot-bound-and-complete"
+        ],
+        "gapRefs": ["change-store-history-storage-does-not-scale"],
+        "exitCriteria": [
+          "A versioned Store codec writes one physical sealed Accepted Package plus the minimal current lifecycle overlay, hydrates the unchanged logical Change record, supports mixed legacy and current records, and performs an explicit idempotent crash-safe compaction whose before and after logical record digests, Accepted Package seals, record counts, node counts, and hard bounds are identical; partial failure leaves a valid mixed Store and no read path performs migration.",
+          "List and Architecture Profile window queries stabilize a bounded source manifest before selection and open or hydrate only the selected logical record bodies, while detail reads alone return a selected full record; envelope bytes, physical bytes, hydrated bytes, JSON nodes, depth, selected bodies, and output remain independently hard-bounded and malformed, missing, extra, substituted, decompression-like, or resource-exhaustion inputs fail closed."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-026-C1",
+            "statement": "A versioned Store codec writes one physical sealed Accepted Package plus the minimal current lifecycle overlay, hydrates the unchanged logical Change record, supports mixed legacy and current records, and performs an explicit idempotent crash-safe compaction whose before and after logical record digests, Accepted Package seals, record counts, node counts, and hard bounds are identical; partial failure leaves a valid mixed Store and no read path performs migration.",
+            "claimRefs": ["accepted-package-binds-exact-content"],
+            "gapRefs": ["change-store-history-storage-does-not-scale"]
+          },
+          {
+            "id": "LGT-026-C2",
+            "statement": "List and Architecture Profile window queries stabilize a bounded source manifest before selection and open or hydrate only the selected logical record bodies, while detail reads alone return a selected full record; envelope bytes, physical bytes, hydrated bytes, JSON nodes, depth, selected bodies, and output remain independently hard-bounded and malformed, missing, extra, substituted, decompression-like, or resource-exhaustion inputs fail closed.",
+            "claimRefs": [
+              "architecture-profile-binds-rechecked-source-snapshot",
+              "architecture-profile-windows-are-snapshot-bound-and-complete"
+            ],
+            "gapRefs": ["change-store-history-storage-does-not-scale"]
+          }
+        ]
+      },
+      "nonGoals": [
+        "Deleting, expiring, or silently archiving historically Accepted Packages",
+        "Raising the 64 MiB Store bound as proof of scalability",
+        "Implicit migration or compaction during GET, list, Profile, or other read queries",
+        "Using gzip or another compressed body format before decompression and random-access bounds are independently proven",
+        "Replacing the prior Accepted Package catalog with a Merkle accumulator in the first codec slice",
+        "Making Accepted history portable across repository clones; that remains a separate open Gap",
+        "Changing Kernel logical Change records, Accepted Package contents, acceptance digests, lifecycle policy, or authority semantics"
       ]
     },
     {
