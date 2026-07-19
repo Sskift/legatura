@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "path-ownership",
-  "name": "Project Model Path and Context Impact Proof Gate",
-  "purpose": "Produce direct Evidence that tracked-path facts are exact, Module write ownership is total and exclusive, Context Capsules consume the same opaque ownership product, and Context Expansion Impact is derived only from neutral frozen structural inputs.",
+  "name": "Repository Source, Path, and Context Impact Proof Gate",
+  "purpose": "Produce direct Evidence that tracked-path facts and stable source bytes are exact, Module write ownership is total and exclusive, Context Capsules consume the same opaque ownership product, and Context Expansion Impact is derived only from neutral frozen structural inputs.",
   "appliesTo": ["assurance-runtime", "project-model", "change-kernel"],
   "commands": [
     {
@@ -27,6 +27,41 @@
       },
       "residualUncertainty": [
         "The proof characterizes the current-host Git adapter; cross-platform command and encoding boundaries remain an explicit Assurance Runtime Gap."
+      ]
+    },
+    {
+      "id": "repository-source-product-proof",
+      "appliesTo": ["assurance-runtime"],
+      "command": [
+        "node",
+        "--input-type=module",
+        "--eval",
+        "const source = await import('./src/core/repository-source.mjs'); if (source.REPOSITORY_SOURCE_PRODUCT_PROOF_VERSION !== 1) throw new Error('Repository Source Product proof version 1 is not implemented.'); await import('./test/assurance-runtime/tracked-path-observation.test.mjs');"
+      ],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "repository-source-product-binds-stable-exact-bytes",
+        "repository-source-product-proof-rejects-binding-and-byte-attacks"
+      ],
+      "oracle": {
+        "kind": "repository-source-product-proof-exit",
+        "description": "The fixed tracked-only Repository Source Product stabilization, projection, byte-read, and attack scenario must exist under proof version 1 and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "knowledge-gap-closure-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "A/B/C source observations or an unavailable Git binding treated as stable",
+          "missing or partial repository, Git, tracked-inventory, or exact path-set expectations",
+          "an untracked, missing, extra, duplicate, malformed, escaping, symlink, non-regular, unreadable, replaced, drifted, or over-limit source path",
+          "a forged, proxied, cloned, serialized, cross-repository, stale-binding, manifest-substituted, unknown-read, or mutation-aliasing product",
+          "a source projection, error, or coordination record that leaks an absolute repository root or source body"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof establishes bounded stable facts for tracked files under the local single-writer support boundary; it does not claim a concurrent-adversary filesystem snapshot, raw read enforcement, authenticated controller identity, or acceptance authority."
       ]
     },
     {

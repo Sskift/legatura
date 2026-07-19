@@ -312,6 +312,27 @@
       "expansionTrigger": "Before LGT-022 is activated or any capability profile is described as enforced."
     },
     {
+      "id": "repository-source-product-not-proven",
+      "status": "open",
+      "affects": ["assurance-runtime", "context-kernel", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "Assurance Runtime declares a tracked-only opaque stable Repository Source Product, but no fixed proof yet establishes exact repository identity, complete Git and tracked-inventory expectations, bounded adjacent source stabilization, regular-file TOCTOU checks, reproducible body-free manifests, non-forgeable process-local projection and byte reads, or defensive-copy behavior.",
+      "proofClaimRefs": [
+        "repository-source-product-proof-rejects-binding-and-byte-attacks"
+      ],
+      "blocksGapClosureRefs": [
+        "context-materialization-and-expansion-binding-not-proven"
+      ],
+      "blocksOutcomeTransitionRoutes": [
+        {
+          "outcomeRef": "LGT-021",
+          "from": "active",
+          "to": "achieved"
+        }
+      ],
+      "expansionTrigger": "Before the Context Kernel implementation consumes source bytes, before context-materialization-and-expansion-binding-not-proven closes, or before LGT-021 transitions from active to achieved."
+    },
+    {
       "id": "context-materialization-and-expansion-binding-not-proven",
       "status": "open",
       "affects": ["assurance-runtime", "context-kernel", "project-model", "worker-execution", "change-kernel"],
