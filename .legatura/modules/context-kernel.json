@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "id": "context-kernel",
+  "name": "Context Kernel",
+  "status": "provisional",
+  "summary": "Materializes exact bounded Context bytes and settles controller-owned Context Expansions atomically without interpreting acceptance or claiming filesystem isolation.",
+  "factAuthority": "context-kernel-facts",
+  "decisionAuthority": "module-maintainer",
+  "interface": {
+    "entrypoints": [
+      "createContextSession(input, options)",
+      "resolveContextExpansion(input, options)",
+      "validateContextKernelDocument(value)",
+      "CONTEXT_KERNEL_SCHEMA_VERSION",
+      "CONTEXT_KERNEL_PROOF_VERSION",
+      "CONTEXT_KERNEL_LIMITS"
+    ],
+    "invariants": [
+      "A Context Session binds one execution, compiled Change, logical Context Capsule, stable repository source product, exact content-addressed manifest, and compiler-derived Context Impact.",
+      "Source bodies live only in a bounded process-local delivery or content-addressed blob store; Context Session, Worker Execution, Change, HTTP, CLI, and Profile records carry manifests and digests rather than source bodies.",
+      "Initial materialization expands only the logical Capsule read scope into concrete regular-file entries, rejects symlink and path escape, and fails closed on missing, extra, ambiguous, drifted, unreadable, duplicate, malformed, or over-limit source facts.",
+      "A Worker-authored Context Expansion Request is inert; only a controller-owned settlement bound to the exact execution, request, prior Context Session, source product, and Project Model impact product may grant, deny, or mark it redundant.",
+      "A granted expansion is all-or-nothing, appends lineage and persistence before disclosure, preserves write scope, adds only exact authorized bytes, and records previous and next materialization and Context Impact digests.",
+      "Context Kernel owns disclosure facts, not raw filesystem enforcement, worker knowledge, semantic code impact, Evidence, Knowledge Closure, Outcome, Claim, Authority, or Change acceptance conclusions."
+    ]
+  },
+  "paths": {
+    "include": [
+      "src/context-kernel/**",
+      "test/context-kernel/**"
+    ],
+    "exclude": []
+  },
+  "focusedTests": [
+    {
+      "path": "test/context-kernel/interface.test.mjs",
+      "command": "node --test test/context-kernel/interface.test.mjs"
+    }
+  ],
+  "publicContracts": ["context-kernel-interface"],
+  "dependencies": [
+    {
+      "module": "project-model",
+      "via": "project-model-interface",
+      "access": "interface-only"
+    },
+    {
+      "module": "assurance-runtime",
+      "via": "assurance-runtime-interface",
+      "access": "interface-only"
+    }
+  ]
+}

@@ -312,6 +312,17 @@
       "expansionTrigger": "Before LGT-022 is activated or any capability profile is described as enforced."
     },
     {
+      "id": "context-materialization-and-expansion-binding-not-proven",
+      "status": "open",
+      "affects": ["context-kernel", "project-model", "worker-execution", "change-kernel"],
+      "owner": "governance-maintainer",
+      "statement": "No fixed proof binds a logical compiled Context Capsule to one exact bounded source-byte materialization or proves that only a controller-owned recorded-before-disclosure settlement can produce an append-only successor Context with compiler-derived Context Impact facts.",
+      "proofClaimRefs": [
+        "context-kernel-proof-rejects-source-scope-and-settlement-attacks"
+      ],
+      "expansionTrigger": "Before LGT-021 is achieved or any Worker Adapter receives a Context materialization."
+    },
+    {
       "id": "authority-identity-not-authenticated",
       "status": "open",
       "affects": ["change-kernel", "identity-provider"],

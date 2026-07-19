@@ -8,7 +8,8 @@
     "project-model",
     "change-kernel",
     "local-workbench",
-    "worker-execution"
+    "worker-execution",
+    "context-kernel"
   ],
   "commands": [
     {
@@ -215,6 +216,45 @@
         "The proof is pure and spawns no real worker or provider Adapter.",
         "Filesystem, process, network, and secret capabilities are not independently enforced until LGT-022.",
         "Local Authority identities remain unauthenticated and Worker observations do not prove work correctness."
+      ]
+    },
+    {
+      "id": "context-kernel-interface-proof",
+      "appliesTo": ["context-kernel"],
+      "command": ["node", "--test", "test/context-kernel/interface.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "context-capsule-cannot-broaden-scope",
+        "context-expansion-impact-is-derived-from-frozen-sources",
+        "context-materialization-binds-exact-authorized-bytes",
+        "context-expansion-is-recorded-before-content-disclosure",
+        "context-expansion-resolutions-cannot-be-worker-self-granted",
+        "context-session-lineage-is-append-only-and-non-authoritative",
+        "context-kernel-proof-rejects-source-scope-and-settlement-attacks",
+        "worker-execution-observations-cannot-self-ratify"
+      ],
+      "oracle": {
+        "kind": "context-kernel-interface-proof-exit",
+        "description": "The fixed Context Kernel cross-Interface proof must accept exact initial materialization and recorded-before-disclosure expansion while every declared source, scope, settlement, lineage, authority, and resource attack exits nonzero inside the scenario."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "context-materialization-and-expansion-binding-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "initial materialization that includes bytes outside the logical Context Capsule read scope",
+          "missing, extra, drifted, ambiguous, escaping, symlink, unreadable, duplicate, or over-limit source entries",
+          "a Worker request that grants its own scope, successor Context, or Context Impact",
+          "stale, cross-execution, cross-source, replayed, broadened, partial, or impact-substituted settlement",
+          "new source-byte disclosure before the exact expansion ledger and blob state persist",
+          "Context lineage that changes write scope or creates capability, semantic-impact, Evidence, Knowledge Closure, Authority, or acceptance conclusions"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof establishes the local Context delivery seam, not that a same-user Worker process cannot read the repository or acquire knowledge through another channel.",
+        "Raw filesystem read and write enforcement remains the worker-capability-enforcement-not-proven Gap and LGT-022 responsibility.",
+        "Real provider delivery, use of disclosed content, adapter parity, and intent-to-acceptance remain LGT-023 and LGT-024 responsibilities."
       ]
     }
   ]

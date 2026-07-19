@@ -3,7 +3,7 @@
   "id": "project-model-interface",
   "name": "Project Model Interface",
   "owner": "project-model",
-  "consumers": ["change-kernel"],
+  "consumers": ["change-kernel", "context-kernel"],
   "maturity": "governed",
   "normativeSources": ["product-intent", "long-term-plan", "domain-language", "assurance-policy"],
   "claims": [
@@ -22,6 +22,10 @@
     {
       "id": "context-capsule-binds-validated-path-ownership",
       "statement": "Generated Context Capsule write scope is projected only from an opaque, exact-Model-and-path-facts-bound ownership product for the primary Module; absent, forged, stale, ambiguous, disposition-only, or over-limit input fails closed."
+    },
+    {
+      "id": "context-expansion-impact-is-derived-from-frozen-sources",
+      "statement": "Given a frozen Project Model, its opaque exact path-ownership product, a current Context Session projection, and requested concrete paths, Project Model derives the exact newly disclosed path owners, Contract relations, Assurance crossings, disposition references, and Context Impact digest; worker or caller supplied owner, Module, Contract, assurance, semantic-impact, or verification classifications cannot substitute those facts."
     },
     {
       "id": "module-path-ownership-proof-rejects-coverage-and-binding-attacks",

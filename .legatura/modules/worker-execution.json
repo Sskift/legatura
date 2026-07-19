@@ -39,5 +39,11 @@
     }
   ],
   "publicContracts": ["worker-execution-interface"],
-  "dependencies": []
+  "dependencies": [
+    {
+      "module": "context-kernel",
+      "via": "context-kernel-interface",
+      "access": "interface-only"
+    }
+  ]
 }

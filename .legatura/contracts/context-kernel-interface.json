@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "context-kernel-interface",
+  "name": "Context Kernel Interface",
+  "owner": "context-kernel",
+  "consumers": ["change-kernel", "worker-execution"],
+  "maturity": "provisional",
+  "normativeSources": ["product-intent", "long-term-plan", "domain-language", "assurance-policy"],
+  "claims": [
+    {
+      "id": "context-materialization-binds-exact-authorized-bytes",
+      "statement": "Given one logical compiled Context Capsule and one stable exact repository source product, Context Kernel emits a bounded canonical content-addressed manifest and process-local delivery whose ordered concrete regular-file entries exactly cover the authorized initial read scope; missing, extra, drifted, escaping, ambiguous, symlink, unreadable, duplicate, malformed, or over-limit source facts fail closed."
+    },
+    {
+      "id": "context-expansion-is-recorded-before-content-disclosure",
+      "statement": "A Context Expansion grant persists an all-or-nothing settlement and append-only lineage bound to the exact execution, request, prior Context Session, stable source product, and Project Model impact product before any newly authorized source bytes are disclosed; persistence failure, stale binding, replay, partial grant, or scope broadening discloses no bytes."
+    },
+    {
+      "id": "context-expansion-resolutions-cannot-be-worker-self-granted",
+      "statement": "A Worker-authored Context Expansion Request remains inert and cannot supply its own grant, denial, successor Capsule, materialization, Context Impact, controller identity, or Authority; only a separately compiled controller settlement may advance Context Session bindings."
+    },
+    {
+      "id": "context-session-lineage-is-append-only-and-non-authoritative",
+      "statement": "Context Session records preserve exact previous and next materialization and Context Impact digests plus granted, denied, or redundant settlement facts, while source bodies remain out of coordination records and no Context fact creates Evidence, Knowledge Closure, Outcome or Claim satisfaction, an Authority Decision, capability enforcement, semantic code impact, or Change acceptance."
+    },
+    {
+      "id": "context-kernel-proof-rejects-source-scope-and-settlement-attacks",
+      "statement": "The fixed Context Kernel proof accepts one reproducible initial materialization and one exact recorded-before-disclosure expansion, and rejects forged, stale, cross-execution, cross-source, replayed, broadened, partially persisted, manifest/blob-mismatched, path-escaping, symlink, unowned, worker-self-granted, impact-substituted, and resource-exhaustion inputs."
+    }
+  ]
+}

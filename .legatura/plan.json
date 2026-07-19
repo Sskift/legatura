@@ -649,18 +649,64 @@
       "id": "LGT-021",
       "stage": "S2",
       "status": "planned",
-      "outcome": "A real worker consumes a materialized Context Capsule and every extra read becomes a recorded Context Expansion with recomputed impact.",
-      "dependsOn": ["LGT-020"],
+      "outcome": "From one stabilized repository source and one compiled Change, a deep Context Kernel deterministically emits a bounded content-addressed Context Materialization and settles Context Expansion Requests through controller-owned recorded-before-disclosure decisions into append-only successor Contexts with compiler-derived Context Impact; real Worker consumption and filesystem enforcement remain separate capabilities.",
+      "dependsOn": ["LGT-011", "LGT-020"],
       "acceptance": {
-        "claimRefs": ["context-capsule-cannot-broaden-scope"],
-        "gapRefs": [],
+        "claimRefs": [
+          "context-capsule-cannot-broaden-scope",
+          "context-materialization-binds-exact-authorized-bytes",
+          "context-expansion-is-recorded-before-content-disclosure",
+          "context-expansion-resolutions-cannot-be-worker-self-granted",
+          "context-expansion-impact-is-derived-from-frozen-sources",
+          "context-session-lineage-is-append-only-and-non-authoritative",
+          "worker-execution-observations-cannot-self-ratify"
+        ],
+        "gapRefs": ["context-materialization-and-expansion-binding-not-proven"],
         "exitCriteria": [
-          "Initial context is bounded and independently reproducible.",
-          "Dependency implementation paths are absent from initial context; reading them requires a recorded expansion that recomputes impact.",
-          "Out-of-capsule reads cannot become silent coordination knowledge."
+          "From one compiled logical Context Capsule and one stabilized exact repository source product, one bounded Context Kernel produces a canonical manifest and process-local delivery whose ordered concrete regular-file path, byte-length, and content-digest entries exactly cover the authorized initial read scope; identical inputs reproduce the same digest, while missing, extra, drifted, escaping, ambiguous, symlink, unreadable, duplicate, malformed, or over-limit input fails closed.",
+          "A Context Expansion Request remains inert until a controller-owned settlement bound to the exact execution, request, prior Context Session, stable source product, and Project Model impact product grants, denies, or marks it redundant; a grant persists exact append-only lineage before disclosing an all-or-nothing successor materialization, while stale, replayed, cross-execution, cross-source, broadened, partial, unowned, or Worker-forged settlement fails closed.",
+          "The successor preserves write scope and recomputes Context Impact from frozen authoritative sources as exact newly disclosed path owners, Contract relations, Assurance crossings, and disposition references; no Context fact claims raw capability enforcement, Worker knowledge, semantic code impact, Evidence, Knowledge Closure, Outcome or Claim satisfaction, Authority, or acceptance."
+        ],
+        "criteria": [
+          {
+            "id": "LGT-021-C1",
+            "statement": "From one compiled logical Context Capsule and one stabilized exact repository source product, one bounded Context Kernel produces a canonical manifest and process-local delivery whose ordered concrete regular-file path, byte-length, and content-digest entries exactly cover the authorized initial read scope; identical inputs reproduce the same digest, while missing, extra, drifted, escaping, ambiguous, symlink, unreadable, duplicate, malformed, or over-limit input fails closed.",
+            "claimRefs": [
+              "context-capsule-cannot-broaden-scope",
+              "context-materialization-binds-exact-authorized-bytes"
+            ],
+            "gapRefs": ["context-materialization-and-expansion-binding-not-proven"]
+          },
+          {
+            "id": "LGT-021-C2",
+            "statement": "A Context Expansion Request remains inert until a controller-owned settlement bound to the exact execution, request, prior Context Session, stable source product, and Project Model impact product grants, denies, or marks it redundant; a grant persists exact append-only lineage before disclosing an all-or-nothing successor materialization, while stale, replayed, cross-execution, cross-source, broadened, partial, unowned, or Worker-forged settlement fails closed.",
+            "claimRefs": [
+              "context-expansion-is-recorded-before-content-disclosure",
+              "context-expansion-resolutions-cannot-be-worker-self-granted"
+            ],
+            "gapRefs": ["context-materialization-and-expansion-binding-not-proven"]
+          },
+          {
+            "id": "LGT-021-C3",
+            "statement": "The successor preserves write scope and recomputes Context Impact from frozen authoritative sources as exact newly disclosed path owners, Contract relations, Assurance crossings, and disposition references; no Context fact claims raw capability enforcement, Worker knowledge, semantic code impact, Evidence, Knowledge Closure, Outcome or Claim satisfaction, Authority, or acceptance.",
+            "claimRefs": [
+              "context-expansion-impact-is-derived-from-frozen-sources",
+              "context-session-lineage-is-append-only-and-non-authoritative",
+              "worker-execution-observations-cannot-self-ratify"
+            ],
+            "gapRefs": []
+          }
         ]
       },
-      "nonGoals": ["Sending the whole repository to every worker"]
+      "nonGoals": [
+        "Spawning, prompting, or proving consumption by a real Worker or provider Adapter; that belongs to LGT-023.",
+        "Enforcing raw repository, filesystem, network, process, or secret access or claiming an OS sandbox; that belongs to LGT-022.",
+        "Claiming that a Worker lacks pretrained, cached, remembered, inferred, or externally acquired knowledge.",
+        "Allowing a Worker-authored request, report, observation, event, or record to grant its own Context Expansion.",
+        "Broadening write scope or any enforced capability through Context Expansion.",
+        "Inferring semantic code impact, verification sufficiency, Evidence, Knowledge Closure, Outcome or Claim satisfaction, Authority, or acceptance from Context facts.",
+        "Durable source-payload or transcript storage, scheduling, retry, concurrency, or master coordination."
+      ]
     },
     {
       "id": "LGT-022",
@@ -1239,6 +1285,45 @@
         "outcome"
       ],
       "rationale": "Freeze one provider-neutral, bounded, non-authoritative Worker Execution protocol before activation; separate semantic conformance from future Context execution, capability enforcement, provider Adapters, persistence, scheduling, and authenticated identity.",
+      "requiredAuthorityRef": "governance-maintainer"
+    },
+    {
+      "id": "LGT-021-R1",
+      "outcomeRef": "LGT-021",
+      "amendmentChangeId": "lgt021-define-context-kernel-boundary-v4",
+      "governanceBaselineDigest": "sha256:86fe0fc6a8c27e65306933b2760403aeea190c58c3ea37bd35ed33a1f1305e33",
+      "previousDefinition": {
+        "id": "LGT-021",
+        "stage": "S2",
+        "outcome": "A real worker consumes a materialized Context Capsule and every extra read becomes a recorded Context Expansion with recomputed impact.",
+        "dependsOn": ["LGT-020"],
+        "kind": null,
+        "allowedChangeKinds": [],
+        "acceptance": {
+          "activationCriterionRefs": [],
+          "criteria": [],
+          "exitCriteria": [
+            "Dependency implementation paths are absent from initial context; reading them requires a recorded expansion that recomputes impact.",
+            "Initial context is bounded and independently reproducible.",
+            "Out-of-capsule reads cannot become silent coordination knowledge."
+          ],
+          "claimRefs": ["context-capsule-cannot-broaden-scope"],
+          "gapRefs": []
+        },
+        "nonGoals": ["Sending the whole repository to every worker"]
+      },
+      "previousDefinitionDigest": "sha256:46b2fd9113c362cf3b79cdd21fdf0bb5ba01d213b5c595da9bd761c6c2d71b33",
+      "currentDefinitionDigest": "sha256:df7f86cc697a7a4d8b08ac467e1b8af433662366a9bd539c37c6c24af3594ddd",
+      "changedFields": [
+        "acceptance.claimRefs",
+        "acceptance.criteria",
+        "acceptance.exitCriteria",
+        "acceptance.gapRefs",
+        "dependsOn",
+        "nonGoals",
+        "outcome"
+      ],
+      "rationale": "Replace the circular real-Worker and unbounded silent-knowledge requirements with one deep Context Kernel boundary over exact materialization, controller-owned recorded-before-disclosure settlement, append-only lineage, and compiler-derived Context Impact before activation; real Adapter consumption and filesystem enforcement remain explicit later Outcomes and Gaps.",
       "requiredAuthorityRef": "governance-maintainer"
     }
   ],

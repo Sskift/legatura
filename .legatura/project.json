@@ -42,7 +42,7 @@
       {
         "id": "project-model-facts",
         "module": "project-model",
-        "owns": "Project Model and Development Plan interpretation, validation, Context Capsules, impact, and verification planning."
+        "owns": "Project Model and Development Plan interpretation, validation, logical Context Capsules, Context Impact semantics, and verification planning."
       },
       {
         "id": "change-kernel-facts",
@@ -58,6 +58,11 @@
         "id": "worker-execution-facts",
         "module": "worker-execution",
         "owns": "Canonical provider-neutral Work Specifications, Context Expansion Requests, Worker Reports, Execution Records, and their lifecycle conformance."
+      },
+      {
+        "id": "context-kernel-facts",
+        "module": "context-kernel",
+        "owns": "Canonical Context materializations, process-local deliveries, recorded-before-disclosure expansion settlements, and append-only Context Session lineage."
       }
     ],
     "decision": [
@@ -94,6 +99,10 @@
       {
         "module": "worker-execution",
         "reason": "The provider-neutral protocol and semantic conformance boundary are declared, but no real worker Adapter, Context Expansion executor, capability controller, scheduler, or authenticated identity exists yet."
+      },
+      {
+        "module": "context-kernel",
+        "reason": "The materialization, disclosure, settlement, and lineage boundary is declared, but its source observer, blob store, ledger, Context Impact compiler adoption, and fixed conformance proof are not yet implemented."
       }
     ],
     "opaque": [
