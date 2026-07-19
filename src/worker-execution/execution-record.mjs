@@ -43,16 +43,7 @@ export function createExecutionRecord(workSpecification) {
 export function applyExecutionEvent(record, eventInput) {
   const current = normalizeExecutionRecord(record);
   const event = compileEvent(current.workSpecification, eventInput);
-  const replayed = current.events.find((candidate) => candidate.eventId === event.eventId);
-  if (replayed) {
-    if (canonicalStringify(replayed) !== canonicalStringify(event)) {
-      throw protocolError(
-        "WORKER_EXECUTION_EVENT_REPLAY_CONFLICT",
-        `Event ${event.eventId} was replayed with different content.`
-      );
-    }
-    return current;
-  }
+  if (isExactEventReplay(current, event)) return current;
   assertEventEnvelope(current, event);
   return deepFreeze(appendCompiledEvent(current, event));
 }
@@ -106,6 +97,7 @@ function assertEventEnvelope(record, event) {
 }
 
 function appendCompiledEvent(record, event) {
+  if (isExactEventReplay(record, event)) return record;
   assertEventEnvelope(record, event);
   if (TERMINAL_STATES.has(record.state)) {
     throw protocolError(
@@ -137,6 +129,7 @@ function appendCompiledEvent(record, event) {
         "Context Expansion Request limit exceeded."
       );
     }
+    assertExpansionRequestBindings(record, event);
     if (record.events.some((candidate) => (
       candidate.kind === "context-expansion-requested"
       && candidate.request.id === event.request.id
@@ -205,6 +198,33 @@ function appendCompiledEvent(record, event) {
   return next;
 }
 
+function isExactEventReplay(record, event) {
+  const replayed = record.events.find((candidate) => candidate.eventId === event.eventId);
+  if (!replayed) return false;
+  if (canonicalStringify(replayed) !== canonicalStringify(event)) {
+    throw protocolError(
+      "WORKER_EXECUTION_EVENT_REPLAY_CONFLICT",
+      `Event ${event.eventId} was replayed with different content.`
+    );
+  }
+  return true;
+}
+
+function assertExpansionRequestBindings(record, event) {
+  const request = event.request;
+  if (request.executionRef !== record.executionId
+    || request.sequence !== event.sequence
+    || request.priorRecordDigest !== event.priorRecordDigest
+    || request.workSpecificationDigest !== record.workSpecification.workSpecificationDigest
+    || request.currentContextCapsuleDigest !== record.currentBindings.contextCapsuleDigest
+    || request.currentCapabilityProfileDigest !== record.currentBindings.capabilityProfileDigest) {
+    throw protocolError(
+      "WORKER_EXECUTION_BINDING_MISMATCH",
+      "Context Expansion Request does not bind the current Execution Record sources."
+    );
+  }
+}
+
 function assertReportBindings(record, report) {
   if (report.executionRef !== record.executionId
     || report.workSpecificationDigest !== record.workSpecification.workSpecificationDigest
@@ -228,6 +248,11 @@ function assertReportBindings(record, report) {
   if (report.artifactRefs.length > record.workSpecification.capabilityProfile.limits.artifactRefs) {
     throw protocolError("WORKER_EXECUTION_LIMIT_EXCEEDED", "Worker Report artifact limit exceeded.");
   }
+  const maximumBytes = Math.min(
+    WORKER_EXECUTION_LIMITS.workerReportBytes,
+    record.workSpecification.capabilityProfile.limits.reportBytes
+  );
+  assertDocumentBytes(report, maximumBytes, "Worker Report");
 }
 
 function assertObservationBindings(record, observation, workerReport) {

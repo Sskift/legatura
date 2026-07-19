@@ -315,6 +315,7 @@ function compileExpansionRequest(workSpecification, event, value) {
     id: normalizeIdentifier(value.id, "event.request.id"),
     executionRef: workSpecification.executionId,
     sequence: event.sequence,
+    priorRecordDigest: event.priorRecordDigest,
     workSpecificationDigest: workSpecification.workSpecificationDigest,
     currentContextCapsuleDigest: workSpecification.context.capsuleDigest,
     currentCapabilityProfileDigest: workSpecification.capabilityProfile.digest,
@@ -482,6 +483,7 @@ export function normalizeExpansionRequestDocument(value) {
     "expectedKnowledge",
     "id",
     "kind",
+    "priorRecordDigest",
     "reason",
     "requestedPaths",
     "schemaVersion",
@@ -498,6 +500,10 @@ export function normalizeExpansionRequestDocument(value) {
       minimum: 1,
       maximum: WORKER_EXECUTION_LIMITS.events
     }),
+    priorRecordDigest: normalizeDigest(
+      value.priorRecordDigest,
+      "contextExpansionRequest.priorRecordDigest"
+    ),
     workSpecificationDigest: normalizeDigest(
       value.workSpecificationDigest,
       "contextExpansionRequest.workSpecificationDigest"

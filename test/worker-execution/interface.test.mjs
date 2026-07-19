@@ -8,6 +8,7 @@ import {
   createExecutionRecord,
   validateWorkerExecutionDocument
 } from "../../src/worker-execution/protocol.mjs";
+import { canonicalDigest } from "../../src/worker-execution/canonical-value.mjs";
 
 const digest = (character) => `sha256:${character.repeat(64)}`;
 const DIGESTS = Object.freeze({
@@ -196,6 +197,29 @@ test("Worker Execution protocol is deterministic, bounded, and never self-author
     "WORKER_EXECUTION_DUPLICATE"
   );
 
+  const staleForkExpansion = structuredClone(validExpansion);
+  staleForkExpansion.events[1].request.priorRecordDigest = DIGESTS.attack;
+  staleForkExpansion.events[1].request = resealDocument(
+    staleForkExpansion.events[1].request,
+    "contextExpansionRequestDigest"
+  );
+  staleForkExpansion.events[1] = resealDocument(
+    staleForkExpansion.events[1],
+    "eventDigest"
+  );
+  staleForkExpansion.pendingExpansionRequestDigests = [
+    staleForkExpansion.events[1].request.contextExpansionRequestDigest
+  ];
+  staleForkExpansion.lastEventDigest = staleForkExpansion.events[1].eventDigest;
+  assertProtocolRefusal(
+    () => validateWorkerExecutionDocument(resealDocument(
+      staleForkExpansion,
+      "executionRecordDigest"
+    )),
+    "a resealed Context Expansion Request cannot cross same-Execution Record forks",
+    "WORKER_EXECUTION_BINDING_MISMATCH"
+  );
+
   const bypassReport = validWorkerReport(workSpecification);
   bypassReport.contextExpansionRequestDigests = [
     validExpansion.pendingExpansionRequestDigests[0]
@@ -283,6 +307,22 @@ test("Worker Execution protocol is deterministic, bounded, and never self-author
       sequence: running.nextSequence
     }),
     "the same event id with altered content is a replay conflict",
+    "WORKER_EXECUTION_EVENT_REPLAY_CONFLICT"
+  );
+
+  const duplicateEventIdentity = structuredClone(reported);
+  duplicateEventIdentity.events[1].eventId = duplicateEventIdentity.events[0].eventId;
+  duplicateEventIdentity.events[1] = resealDocument(
+    duplicateEventIdentity.events[1],
+    "eventDigest"
+  );
+  duplicateEventIdentity.lastEventDigest = duplicateEventIdentity.events[1].eventDigest;
+  assertProtocolRefusal(
+    () => validateWorkerExecutionDocument(resealDocument(
+      duplicateEventIdentity,
+      "executionRecordDigest"
+    )),
+    "record reconstruction rejects a resealed conflicting event identity",
     "WORKER_EXECUTION_EVENT_REPLAY_CONFLICT"
   );
 
@@ -406,15 +446,58 @@ test("Worker Execution protocol is deterministic, bounded, and never self-author
     "WORKER_EXECUTION_TERMINAL"
   );
 
-  const oversizedReport = validWorkerReport(workSpecification);
-  oversizedReport.summary = "x".repeat(specificationInput.capabilityProfile.limits.reportBytes + 1);
+  const narrowReportInput = structuredClone(specificationInput);
+  narrowReportInput.executionId = "execution-narrow-report-limit";
+  narrowReportInput.capabilityProfile.limits.reportBytes = 1024;
+  const narrowReportSpecification = compileWorkSpecification(narrowReportInput);
+  const narrowReportPrepared = createExecutionRecord(narrowReportSpecification);
+  const narrowReportRunning = applyExecutionEvent(
+    narrowReportPrepared,
+    eventFor(narrowReportPrepared, {
+      eventId: "event-narrow-report-started",
+      kind: "execution-started"
+    })
+  );
+  const oversizedReport = validWorkerReport(narrowReportSpecification);
+  oversizedReport.summary = "x".repeat(1500);
   assertProtocolRefusal(
-    () => applyExecutionEvent(running, eventFor(running, {
+    () => applyExecutionEvent(narrowReportRunning, eventFor(narrowReportRunning, {
       eventId: "event-oversized-report",
       kind: "worker-report-submitted",
       report: oversizedReport
     })),
     "the declared Report byte limit is enforced",
+    "WORKER_EXECUTION_LIMIT_EXCEEDED"
+  );
+
+  let resealedOversizedReport = structuredClone(reported.workerReport);
+  resealedOversizedReport.executionRef = narrowReportSpecification.executionId;
+  resealedOversizedReport.workSpecificationDigest =
+    narrowReportSpecification.workSpecificationDigest;
+  resealedOversizedReport.finalCapabilityProfileDigest =
+    narrowReportSpecification.capabilityProfile.digest;
+  resealedOversizedReport.summary = "x".repeat(1500);
+  resealedOversizedReport = resealDocument(resealedOversizedReport, "workerReportDigest");
+  const resealedOversizedEvent = resealDocument({
+    schemaVersion: 1,
+    kind: "worker-report-submitted",
+    eventId: "event-resealed-oversized-report",
+    executionRef: narrowReportRunning.executionId,
+    sequence: narrowReportRunning.nextSequence,
+    priorRecordDigest: narrowReportRunning.executionRecordDigest,
+    report: resealedOversizedReport
+  }, "eventDigest");
+  const resealedOversizedRecord = resealDocument({
+    ...structuredClone(narrowReportRunning),
+    events: [...narrowReportRunning.events, resealedOversizedEvent],
+    eventCount: narrowReportRunning.eventCount + 1,
+    nextSequence: narrowReportRunning.nextSequence + 1,
+    lastEventDigest: resealedOversizedEvent.eventDigest,
+    workerReport: resealedOversizedReport
+  }, "executionRecordDigest");
+  assertProtocolRefusal(
+    () => validateWorkerExecutionDocument(resealedOversizedRecord),
+    "record reconstruction cannot bypass the Capability Profile Report byte limit",
     "WORKER_EXECUTION_LIMIT_EXCEEDED"
   );
   const tooManyArtifacts = validWorkerReport(workSpecification);
@@ -561,6 +644,12 @@ function assertCanonicalDocument(value) {
   assert.deepEqual(canonical, value);
   assert.equal(Object.isFrozen(canonical), true);
   return canonical;
+}
+
+function resealDocument(value, digestField) {
+  const content = structuredClone(value);
+  delete content[digestField];
+  return { ...content, [digestField]: canonicalDigest(content) };
 }
 
 function assertProtocolRefusal(operation, message, expectedCode) {
