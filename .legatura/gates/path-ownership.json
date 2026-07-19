@@ -100,7 +100,7 @@
     {
       "id": "context-materialization-plan-proof",
       "appliesTo": ["project-model"],
-      "command": ["node", "--test", "test/project-model/context-materialization.test.mjs"],
+      "command": ["node", "--test", "test/project-model/context-impact.test.mjs"],
       "timeoutMs": 120000,
       "claimRefs": ["context-materialization-plan-is-derived-from-frozen-sources"],
       "oracle": {
