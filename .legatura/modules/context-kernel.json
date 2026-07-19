@@ -8,19 +8,23 @@
   "decisionAuthority": "module-maintainer",
   "interface": {
     "entrypoints": [
-      "createContextSession(input, options)",
-      "resolveContextExpansion(input, options)",
+      "createContextKernel(options)",
+      "kernel.createContextSession(input, options)",
+      "kernel.resolveContextExpansion(input, { controllerSessionProduct })",
+      "kernel.readContextDeliveryFile(deliveryProduct, pathRef)",
       "validateContextKernelDocument(value)",
       "CONTEXT_KERNEL_SCHEMA_VERSION",
       "CONTEXT_KERNEL_PROOF_VERSION",
       "CONTEXT_KERNEL_LIMITS"
     ],
     "invariants": [
-      "A Context Session binds one execution, compiled Change, logical Context Capsule, stable repository source product, exact content-addressed manifest, and compiler-derived Context Impact.",
-      "Source bodies live only in a bounded process-local delivery or content-addressed blob store; Context Session, Worker Execution, Change, HTTP, CLI, and Profile records carry manifests and digests rather than source bodies.",
-      "Initial materialization expands only the logical Capsule read scope into concrete regular-file entries, rejects symlink and path escape, and fails closed on missing, extra, ambiguous, drifted, unreadable, duplicate, malformed, or over-limit source facts.",
-      "A Worker-authored Context Expansion Request is inert; only a controller-owned settlement bound to the exact execution, request, prior Context Session, source product, and Project Model impact product may grant, deny, or mark it redundant.",
-      "A granted expansion is all-or-nothing, appends lineage and persistence before disclosure, preserves write scope, adds only exact authorized bytes, and records previous and next materialization and Context Impact digests.",
+      "A Context Session binds one execution, compiled Change, logical Context Capsule, frozen Git-visible path inventory, opaque Assurance Runtime Repository Source Product, exact content-addressed manifest, and compiler-derived Context Impact.",
+      "Source bodies live only in bounded process-lifetime content-addressed blob state and delivery products; Context Session, Worker Execution, Change, Store, HTTP, CLI, and Profile records carry manifests and digests rather than source bodies.",
+      "Initial materialization expands only the logical Capsule read scope over the frozen repository inventory, consumes the exact matching live source product, and fails closed on missing, extra, cross-repository, path-escaping, symlink, non-regular, ambiguous, drifted, unreadable, duplicate, malformed, forged, serialized, or over-limit source facts.",
+      "Session creation returns distinct unforgeable process-local controller and delivery products; the controller product stays outside Worker input, cannot be reconstructed from any plain record, and is the only resolution capability for that kernel instance and Session.",
+      "A Worker-authored Context Expansion Request is inert; the controller holder may choose only grant or deny, while redundancy, successor scope, source selection, manifest, Context Impact, and lineage are compiler-derived from exact frozen sources.",
+      "Every resolution through the process-local controller-product options seam appends a successor Session, atomically consumes the prior controller product, and returns a successor controller product; a grant is all-or-nothing and mints delivery only after process-lifetime blob commit and compare-and-swap lineage persistence, while deny or derived redundancy discloses no new bytes and failed commit leaves the prior controller product current.",
+      "Context Kernel does not settle or resume a Worker Execution Record; Adapter adoption of a successor Context belongs to LGT-023 and must not create a Worker Execution to Context Kernel dependency cycle.",
       "Context Kernel owns disclosure facts, not raw filesystem enforcement, worker knowledge, semantic code impact, Evidence, Knowledge Closure, Outcome, Claim, Authority, or Change acceptance conclusions."
     ]
   },
@@ -47,6 +51,11 @@
     {
       "module": "assurance-runtime",
       "via": "assurance-runtime-interface",
+      "access": "interface-only"
+    },
+    {
+      "module": "worker-execution",
+      "via": "worker-execution-interface",
       "access": "interface-only"
     }
   ]

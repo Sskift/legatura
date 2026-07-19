@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "path-ownership",
-  "name": "Module Path Ownership Proof Gate",
-  "purpose": "Produce direct Evidence that tracked-path facts are exact, Module write ownership is total and exclusive, and Context Capsules consume the same opaque ownership product.",
+  "name": "Project Model Path and Context Impact Proof Gate",
+  "purpose": "Produce direct Evidence that tracked-path facts are exact, Module write ownership is total and exclusive, Context Capsules consume the same opaque ownership product, and Context Expansion Impact is derived only from neutral frozen structural inputs.",
   "appliesTo": ["assurance-runtime", "project-model", "change-kernel"],
   "commands": [
     {
@@ -60,6 +60,34 @@
       "residualUncertainty": [
         "Read context may intentionally overlap; this Gate proves exclusive write ownership and does not infer architectural coupling from imports or file contents.",
         "The selector grammar is deliberately restricted to exact paths and literal recursive prefixes rather than general glob intersection."
+      ]
+    },
+    {
+      "id": "context-expansion-impact-proof",
+      "appliesTo": ["project-model"],
+      "command": ["node", "--test", "test/project-model/context-impact.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": [
+        "context-expansion-impact-is-derived-from-frozen-sources",
+        "context-expansion-impact-proof-rejects-binding-and-classification-attacks"
+      ],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Project Model neutral Context Expansion Impact compilation and attack scenario must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "context-expansion-impact-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "a Context Kernel Session object or caller classification substituted for neutral exact prior-path, request-path, ownership, Model, or source inputs",
+          "a forged, serialized, wrong-Model, stale-path-facts, stale-source, duplicate, malformed, already-disclosed, unowned, disposition-only, or over-limit impact input",
+          "a broadened owner, Module, Contract, assurance crossing, disposition, semantic-impact, verification, Evidence, or acceptance conclusion"
+        ]
+      },
+      "residualUncertainty": [
+        "The proof derives structural Context Impact from declared Model and ownership facts; it does not infer semantic code impact, verify source behavior, enforce reads, or decide acceptance."
       ]
     },
     {

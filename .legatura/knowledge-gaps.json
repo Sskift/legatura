@@ -314,10 +314,11 @@
     {
       "id": "context-materialization-and-expansion-binding-not-proven",
       "status": "open",
-      "affects": ["context-kernel", "project-model", "worker-execution", "change-kernel"],
+      "affects": ["assurance-runtime", "context-kernel", "project-model", "worker-execution", "change-kernel"],
       "owner": "governance-maintainer",
-      "statement": "No fixed proof binds a logical compiled Context Capsule to one exact bounded source-byte materialization or proves that only a controller-owned recorded-before-disclosure settlement can produce an append-only successor Context with compiler-derived Context Impact facts.",
+      "statement": "No fixed proof binds one stable opaque Assurance Runtime source-byte product to a logical compiled Context Capsule and exact materialization, derives neutral Context Impact from frozen Project Model sources, or proves that only an unforgeable process-local controller Session product can append a recorded-before-disclosure successor Context.",
       "proofClaimRefs": [
+        "context-expansion-impact-proof-rejects-binding-and-classification-attacks",
         "context-kernel-proof-rejects-source-scope-and-settlement-attacks"
       ],
       "expansionTrigger": "Before LGT-021 is achieved or any Worker Adapter receives a Context materialization."

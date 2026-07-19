@@ -3,7 +3,7 @@
   "id": "worker-execution-interface",
   "name": "Worker Execution Interface",
   "owner": "worker-execution",
-  "consumers": ["change-kernel"],
+  "consumers": ["change-kernel", "context-kernel"],
   "maturity": "provisional",
   "normativeSources": ["product-intent", "domain-language", "assurance-policy"],
   "claims": [

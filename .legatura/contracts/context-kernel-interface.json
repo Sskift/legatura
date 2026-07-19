@@ -3,21 +3,21 @@
   "id": "context-kernel-interface",
   "name": "Context Kernel Interface",
   "owner": "context-kernel",
-  "consumers": ["change-kernel", "worker-execution"],
+  "consumers": ["change-kernel"],
   "maturity": "provisional",
   "normativeSources": ["product-intent", "long-term-plan", "domain-language", "assurance-policy"],
   "claims": [
     {
       "id": "context-materialization-binds-exact-authorized-bytes",
-      "statement": "Given one logical compiled Context Capsule and one stable exact repository source product, Context Kernel emits a bounded canonical content-addressed manifest and process-local delivery whose ordered concrete regular-file entries exactly cover the authorized initial read scope; missing, extra, drifted, escaping, ambiguous, symlink, unreadable, duplicate, malformed, or over-limit source facts fail closed."
+      "statement": "Given one logical compiled Context Capsule, its frozen Git-visible path inventory, and one matching opaque Assurance Runtime Repository Source Product, Context Kernel emits a bounded canonical content-addressed manifest and process-local delivery whose ordered concrete regular-file entries exactly cover the authorized initial read scope; missing, extra, cross-repository, drifted, escaping, ambiguous, symlink, non-regular, unreadable, duplicate, malformed, forged, serialized, or over-limit source facts fail closed."
     },
     {
       "id": "context-expansion-is-recorded-before-content-disclosure",
-      "statement": "A Context Expansion grant persists an all-or-nothing settlement and append-only lineage bound to the exact execution, request, prior Context Session, stable source product, and Project Model impact product before any newly authorized source bytes are disclosed; persistence failure, stale binding, replay, partial grant, or scope broadening discloses no bytes."
+      "statement": "Every Context Expansion resolution made with the exact live controller Session product appends one successor Session and settlement bound to the exact execution, request, prior Session, stable source product, and Project Model impact product, atomically consumes the prior controller product, and returns a successor controller product; a grant commits exact process-lifetime blob state and compare-and-swap lineage before minting any newly authorized delivery, while denial or compiler-derived redundancy discloses no new bytes and persistence failure, stale binding, replay, partial grant, or scope broadening leaves the prior Session and controller current."
     },
     {
       "id": "context-expansion-resolutions-cannot-be-worker-self-granted",
-      "statement": "A Worker-authored Context Expansion Request remains inert and cannot supply its own grant, denial, successor Capsule, materialization, Context Impact, controller identity, or Authority; only a separately compiled controller settlement may advance Context Session bindings."
+      "statement": "A Worker-authored Context Expansion Request remains inert: resolution authority is possession of an opaque process-local controller Session product passed only through a process-local options seam, minted for the exact Context Kernel instance and current Session, and retained outside Worker input; no request, report, observation, Execution Record, digest, plain Session record, proxy, deserialized value, caller identity, or caller-supplied grant, successor, source, scope, materialization, or impact can mint, rehydrate, or substitute that product."
     },
     {
       "id": "context-session-lineage-is-append-only-and-non-authoritative",
@@ -25,7 +25,7 @@
     },
     {
       "id": "context-kernel-proof-rejects-source-scope-and-settlement-attacks",
-      "statement": "The fixed Context Kernel proof accepts one reproducible initial materialization and one exact recorded-before-disclosure expansion, and rejects forged, stale, cross-execution, cross-source, replayed, broadened, partially persisted, manifest/blob-mismatched, path-escaping, symlink, unowned, worker-self-granted, impact-substituted, and resource-exhaustion inputs."
+      "statement": "The fixed Context Kernel proof accepts one reproducible initial materialization and one exact recorded-before-disclosure grant, and rejects forged, serialized, proxied, wrong-kind, cross-instance, stale, consumed, cross-execution, cross-repository, cross-source, replayed, broadened, partially persisted, manifest/blob-mismatched, path-escaping, symlink, unowned, worker-self-granted, caller-self-granted, impact-substituted, storage-failed, and resource-exhaustion inputs."
     }
   ]
 }

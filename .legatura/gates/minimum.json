@@ -235,7 +235,7 @@
       ],
       "oracle": {
         "kind": "context-kernel-interface-proof-exit",
-        "description": "The fixed Context Kernel cross-Interface proof must accept exact initial materialization and recorded-before-disclosure expansion while every declared source, scope, settlement, lineage, authority, and resource attack exits nonzero inside the scenario."
+        "description": "The fixed Context Kernel cross-Interface proof must accept exact initial materialization and one controller-product-authorized recorded-before-disclosure expansion while every declared source, scope, capability-product, settlement, lineage, authority, storage, and resource attack exits nonzero inside the scenario."
       },
       "applicability": {
         "phase": "acceptance",
@@ -244,17 +244,19 @@
       "discriminatoryPower": {
         "rejects": [
           "initial materialization that includes bytes outside the logical Context Capsule read scope",
-          "missing, extra, drifted, ambiguous, escaping, symlink, unreadable, duplicate, or over-limit source entries",
-          "a Worker request that grants its own scope, successor Context, or Context Impact",
+          "missing, extra, cross-repository, drifted, ambiguous, escaping, symlink, non-regular, unreadable, duplicate, malformed, forged, serialized, manifest/blob-mismatched, or over-limit source entries or products",
+          "a Worker request or arbitrary caller that grants its own scope, successor Context, source product, materialization, or Context Impact",
+          "a forged, serialized, proxied, wrong-kind, cross-instance, stale, consumed, or delivery-product-substituted controller Session product",
           "stale, cross-execution, cross-source, replayed, broadened, partial, or impact-substituted settlement",
-          "new source-byte disclosure before the exact expansion ledger and blob state persist",
+          "new source-byte disclosure before exact process-lifetime blob state and compare-and-swap expansion lineage commit",
+          "a blob or lineage persistence failure that rotates the prior Session or mints any delivery",
           "Context lineage that changes write scope or creates capability, semantic-impact, Evidence, Knowledge Closure, Authority, or acceptance conclusions"
         ]
       },
       "residualUncertainty": [
-        "The proof establishes the local Context delivery seam, not that a same-user Worker process cannot read the repository or acquire knowledge through another channel.",
+        "The proof establishes process-local dataflow capability and Context delivery non-forgeability, not authenticated controller identity or that a same-user Worker process cannot read the repository or acquire knowledge through another channel.",
         "Raw filesystem read and write enforcement remains the worker-capability-enforcement-not-proven Gap and LGT-022 responsibility.",
-        "Real provider delivery, use of disclosed content, adapter parity, and intent-to-acceptance remain LGT-023 and LGT-024 responsibilities."
+        "Worker adoption of successor Context, real provider delivery, use of disclosed content, adapter parity, and intent-to-acceptance remain LGT-023 and LGT-024 responsibilities."
       ]
     }
   ]

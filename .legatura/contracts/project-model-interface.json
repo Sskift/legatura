@@ -25,7 +25,11 @@
     },
     {
       "id": "context-expansion-impact-is-derived-from-frozen-sources",
-      "statement": "Given a frozen Project Model, its opaque exact path-ownership product, a current Context Session projection, and requested concrete paths, Project Model derives the exact newly disclosed path owners, Contract relations, Assurance crossings, disposition references, and Context Impact digest; worker or caller supplied owner, Module, Contract, assurance, semantic-impact, or verification classifications cannot substitute those facts."
+      "statement": "Given a frozen Project Model, its opaque exact path-ownership product, an exact prior-disclosed path list and digest, requested concrete paths, and a stable repository source binding, Project Model derives the exact newly disclosed path owners, Contract relations, Assurance crossings, disposition references, and Context Impact digest; Context Session objects and worker or caller supplied owner, Module, Contract, assurance, semantic-impact, or verification classifications cannot substitute those neutral inputs or facts."
+    },
+    {
+      "id": "context-expansion-impact-proof-rejects-binding-and-classification-attacks",
+      "statement": "The fixed Context Impact proof accepts one exact neutral prior-path and requested-path compilation and rejects forged or serialized ownership products, stale Model or source bindings, duplicate, malformed, unowned, disposition-only, already-disclosed, broadened, over-limit, Context-Session-coupled, and caller-classified impact inputs."
     },
     {
       "id": "module-path-ownership-proof-rejects-coverage-and-binding-attacks",

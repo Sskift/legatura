@@ -102,7 +102,7 @@
       },
       {
         "module": "context-kernel",
-        "reason": "The materialization, disclosure, settlement, and lineage boundary is declared, but its source observer, blob store, ledger, Context Impact compiler adoption, and fixed conformance proof are not yet implemented."
+        "reason": "The materialization, process-local controller/delivery products, recorded-before-disclosure settlement, and lineage boundary is declared, but its blob state, compare-and-swap ledger, neutral Context Impact compiler adoption, and fixed conformance proof are not yet implemented."
       }
     ],
     "opaque": [
