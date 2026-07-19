@@ -600,7 +600,7 @@
     {
       "id": "LGT-020",
       "stage": "S2",
-      "status": "active",
+      "status": "achieved",
       "outcome": "A deep provider-neutral Worker Execution Interface canonically validates and records bounded Work Specifications, Context Expansion Requests, Worker Reports, and Execution Records as non-authoritative observations, with deterministic conformance and no capability, Evidence, Knowledge Closure, or acceptance authority.",
       "dependsOn": ["LGT-011", "LGT-013", "LGT-018"],
       "acceptance": {
@@ -1784,6 +1784,55 @@
       "packageRefs": [],
       "criterionAssessments": [],
       "gapDispositions": []
+    },
+    {
+      "id": "LGT-020-T2",
+      "outcomeRef": "LGT-020",
+      "from": "active",
+      "to": "achieved",
+      "rationale": "The prior sealed Worker Execution implementation and reconstruction-hardening Packages together cover all three frozen LGT-020 Criteria and close only the exact Interface conformance Gap; the repair Package is required because independent review disproved the initial serialized-record reconstruction boundary, and this Plan Amendment claims no provider execution, Context materialization, capability enforcement, identity, persistence, Evidence, or acceptance authority.",
+      "packageRefs": [
+        {
+          "changeId": "lgt020-implement-worker-execution-interface",
+          "acceptanceDigest": "sha256:9f6d4c1de5bbf54a5ea854cc515be72db5477ff97ebd6ab0f79472fbc0ca7a47"
+        },
+        {
+          "changeId": "lgt020-harden-record-reconstruction",
+          "acceptanceDigest": "sha256:f6e12b8812d03789443c174c40b11b720e7204c420cb64f56c8e13d9e9528043"
+        }
+      ],
+      "criterionAssessments": [
+        {
+          "criterionRef": "LGT-020-C1",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The initial Package directly proves closed schema-versioned and byte-bounded Work Specifications, Context Expansion Requests, Worker Reports, Worker Observations, Execution events, and Execution Records; canonical digests bind execution identity, ordered prior-record state, source references, the normalized Capability Profile projection, workspace baselines, observations, artifact references, and orthogonal terminal facts while provider, model, session, transcript, source-body, and extension payloads fail closed. The hardening Package additionally proves serialized reconstruction enforces unique event identity, exact same-execution prior-record binding for Context Expansion Requests, and the Work Specification's dynamic Report byte limit.",
+            "residualUncertainty": "Source digests remain explicit compiler inputs, and this pure protocol deliberately does not materialize Context, persist production records, or execute a provider; those are later S2 boundaries rather than hidden assurance."
+          }
+        },
+        {
+          "criterionRef": "LGT-020-C2",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The two Packages preserve one fixed deterministic conformance scenario that proves the canonical lifecycle and exact replay while rejecting malformed, over-limit, duplicate, reordered, stale, cross-execution, capability-escalating, Context-expansion-bypassing, contradictory, incomplete-stream, record-tampering, and post-terminal inputs. The hardening Package adds resealed conflicting-event-id, same-execution cross-fork Context Request, and profile-specific Report-limit attacks that independently expose and close live-versus-reconstruction asymmetry with exact fail-closed error classes and without spawning a worker.",
+            "residualUncertainty": "The proof is intentionally a pure local schema and transition protocol; real Adapter parity, execution settlement, and independently enforced capabilities remain LGT-023, LGT-013, and LGT-022 responsibilities."
+          }
+        },
+        {
+          "criterionRef": "LGT-020-C3",
+          "authorityAssessment": {
+            "conclusion": "satisfied",
+            "rationale": "The initial Package directly proves closed Report, Observation, and Record schemas reject Evidence, Knowledge Closure, Authority, waiver, Claim-satisfaction, acceptance, score, confidence, percentage, and green-light injection; every observation and record carries explicit false fact or acceptance authority, and requested capabilities, declared control modes, support, observed enforcement, process termination, and stream completeness remain separate canonical facts.",
+            "residualUncertainty": "A completed Execution Record is non-authoritative coordination state only; actual Worker-to-Kernel Evidence flow remains LGT-024, while capability enforcement and authenticated identity remain explicit open Gaps."
+          }
+        }
+      ],
+      "gapDispositions": [
+        {
+          "gapRef": "worker-execution-interface-not-proven",
+          "rationale": "The prior sealed initial and reconstruction-hardening Packages jointly cover the Gap's exact semantic-attack proof Claim, including the three independently reproduced reconstruction bypasses, while leaving worker-capability-enforcement-not-proven, authority-identity-not-authenticated, and worker-and-identity-trust-opaque open."
+        }
+      ]
     }
   ],
   "changeRules": {

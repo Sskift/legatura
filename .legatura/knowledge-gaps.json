@@ -282,14 +282,26 @@
     },
     {
       "id": "worker-execution-interface-not-proven",
-      "status": "open",
+      "status": "closed",
       "affects": ["worker-execution"],
       "owner": "governance-maintainer",
       "statement": "The provider-neutral Worker Execution values and pure append-only lifecycle are declared but do not yet have one fixed conformance proof that rejects semantic, authority, digest-chain, and resource-boundary attacks.",
       "proofClaimRefs": [
         "worker-execution-interface-proof-rejects-semantic-attacks"
       ],
-      "expansionTrigger": "Before LGT-020 can become achieved or any worker Adapter consumes the Interface."
+      "expansionTrigger": "Before LGT-020 can become achieved or any worker Adapter consumes the Interface.",
+      "resolution": "A sealed Worker Execution implementation Package plus its independently sealed reconstruction-hardening Package expose one deep provider-neutral protocol facade and one fixed deterministic conformance scenario that proves live and serialized lifecycle validation while rejecting authority injection, provider leakage, duplicate identity, cross-record binding, digest-chain, replay, scope-escalation, Context self-grant, contradiction, truncation, dynamic-limit, and resource-boundary attacks.",
+      "closedBy": [
+        {
+          "changeId": "lgt020-implement-worker-execution-interface",
+          "acceptanceDigest": "sha256:9f6d4c1de5bbf54a5ea854cc515be72db5477ff97ebd6ab0f79472fbc0ca7a47"
+        },
+        {
+          "changeId": "lgt020-harden-record-reconstruction",
+          "acceptanceDigest": "sha256:f6e12b8812d03789443c174c40b11b720e7204c420cb64f56c8e13d9e9528043"
+        }
+      ],
+      "reopenTrigger": "Reopen if live application and serialized reconstruction stop enforcing the same canonical closed value boundary, fixed semantic-attack proof, unique event identity, exact prior-record and source bindings, dynamic Capability Profile limits, digest-chain lifecycle, capability-fact separation, Context request non-grant semantics, or non-authority boundary."
     },
     {
       "id": "worker-capability-enforcement-not-proven",
