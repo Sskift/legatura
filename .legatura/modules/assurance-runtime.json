@@ -17,7 +17,12 @@
       "COMMAND_OBSERVATION_PROOF_VERSION",
       "executeCommand(runner, specification)",
       "normalizeGateCommand(value)",
-      "readGitBinding(repoPath, runner)"
+      "readGitBinding(repoPath, runner)",
+      "observeStableRepositorySource(repoPath, request, options)",
+      "projectRepositorySourceProduct(sourceProduct, expectations)",
+      "readRepositorySourceBytes(sourceProduct, pathRef)",
+      "REPOSITORY_SOURCE_PRODUCT_PROOF_VERSION",
+      "REPOSITORY_SOURCE_PRODUCT_LIMITS"
     ],
     "invariants": [
       "Observations never decide whether a Change is acceptable.",
@@ -26,7 +31,13 @@
       "Timeout and cancellation request bounded process-group termination, retain prior stream bytes, and do not return a confirmed observation until close; an unconfirmed close cannot become successful.",
       "Injected runner reports are strictly normalized and bounded; permissive ok flags, contradictory exit and signal facts, and unknown result shapes cannot synthesize success.",
       "Failed or truncated Git observations fail closed.",
-      "One repository observation emits a bounded complete canonical tracked-path set and exact digest, or reports the binding unavailable on command failure, truncation, malformed paths, duplicates, or resource-limit exhaustion."
+      "One repository observation emits a bounded complete canonical tracked-path set and exact digest, or reports the binding unavailable on command failure, truncation, malformed paths, duplicates, or resource-limit exhaustion.",
+      "Repository Source observation accepts only an ordered bounded list of canonical exact concrete paths; selector expansion and disclosure policy remain Context Kernel responsibilities.",
+      "Each source round binds the canonical real repository root, repository identity, exact Git binding and tracked-path facts, requested path set, regular-file metadata, byte lengths, and byte digests into one composite digest; only two consecutive identical digests within a bounded observation window may issue a product.",
+      "A Repository Source Product is an opaque process-local WeakMap-branded capability; a plain record, proxy, clone, serialized value, or product from another source binding cannot project a manifest or disclose bytes.",
+      "The public source projection contains exact repository, Git, inventory, path-set, manifest, and product bindings plus ordered path, byte-length, and content-digest entries, but never source bodies.",
+      "Byte reads return defensive copies captured by the stable product and never re-read the filesystem; unknown paths, mutation aliasing, missing or extra entries, drift, traversal, symlink, non-regular or unreadable files, duplicates, malformed input, and resource exhaustion fail closed.",
+      "Repository Source Products establish exact bounded local source facts only; they do not authorize scope, enforce filesystem access, infer semantic impact, settle Worker execution, create Evidence or Knowledge Closure, or decide acceptance."
     ]
   },
   "paths": {

@@ -3,7 +3,7 @@
   "id": "assurance-runtime-interface",
   "name": "Assurance Runtime Interface",
   "owner": "assurance-runtime",
-  "consumers": ["project-model", "change-kernel"],
+  "consumers": ["project-model", "change-kernel", "context-kernel"],
   "maturity": "provisional",
   "normativeSources": ["product-intent", "assurance-policy"],
   "claims": [
@@ -18,6 +18,14 @@
     {
       "id": "tracked-path-observation-is-exact",
       "statement": "One bounded Git observation returns the complete canonical set of tracked repository-relative paths and its exact digest, or reports unavailable on failure, truncation, malformed paths, duplicates, or resource-limit exhaustion."
+    },
+    {
+      "id": "repository-source-product-binds-stable-exact-bytes",
+      "statement": "One opaque process-local Repository Source Product is issued only after two consecutive identical bounded composite observations bind the canonical repository identity and root, exact Git binding and tracked-path facts, one ordered exact concrete path set, and each regular file's byte length and content digest; its projection exposes no source bodies and every byte read requires the live product, so missing, extra, cross-repository, drifted, escaping, symlink, non-regular, unreadable, duplicate, malformed, forged, serialized, or over-limit input fails closed."
+    },
+    {
+      "id": "repository-source-product-proof-rejects-binding-and-byte-attacks",
+      "statement": "The fixed Repository Source Product proof accepts identical consecutive observations and A/B/B stabilization with reproducible manifest and byte projections, and rejects A/B/C instability, repository or Git-binding substitution, tracked-inventory drift, path-set mismatch, byte drift, manifest mismatch, traversal, symlink, non-regular file, unreadable file, duplicate path, forged or serialized product, unknown byte read, mutation aliasing, and resource-exhaustion attacks."
     },
     {
       "id": "command-observation-is-explicit",
