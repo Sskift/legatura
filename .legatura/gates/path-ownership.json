@@ -98,6 +98,32 @@
       ]
     },
     {
+      "id": "context-materialization-plan-proof",
+      "appliesTo": ["project-model"],
+      "command": ["node", "--test", "test/project-model/context-materialization.test.mjs"],
+      "timeoutMs": 120000,
+      "claimRefs": ["context-materialization-plan-is-derived-from-frozen-sources"],
+      "oracle": {
+        "kind": "node-test-runner-exit",
+        "description": "The fixed Project Model Context materialization-plan compilation and attack scenario must exist and exit zero."
+      },
+      "applicability": {
+        "phase": "acceptance",
+        "purpose": "context-materialization-plan-proof"
+      },
+      "discriminatoryPower": {
+        "rejects": [
+          "initial concrete read materialization derived by a consumer parsing Module selectors or supplying owner, disposition, or Contract-surface classifications",
+          "a materialization plan with the wrong literal kind, non-canonical path order, mismatched read or write scope digest, mismatched path-set formula, forged structural facts, or a non-self-sealing materializationPlanDigest",
+          "a forged, serialized, wrong-Model, stale-path-facts, duplicate, malformed, unowned, disposition-only, selector-broadened, or over-limit input"
+        ]
+      },
+      "residualUncertainty": [
+        "The materialization plan proves canonical structural selection from tracked-path facts; Assurance Runtime separately proves the stability and exact bytes of the matching Repository Source Product.",
+        "The proof does not enforce filesystem access, infer semantic code impact, or decide Evidence, authority, or acceptance."
+      ]
+    },
+    {
       "id": "context-expansion-impact-proof",
       "appliesTo": ["project-model"],
       "command": ["node", "--test", "test/project-model/context-impact.test.mjs"],
