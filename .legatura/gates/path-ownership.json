@@ -115,7 +115,7 @@
         "rejects": [
           "initial concrete read materialization derived by a consumer parsing Module selectors or supplying owner, disposition, or Contract-surface classifications",
           "a materialization plan with the wrong literal kind, non-canonical path order, mismatched read or write scope digest, mismatched path-set formula, forged structural facts, or a non-self-sealing materializationPlanDigest",
-          "a forged, serialized, wrong-Model, stale-path-facts, duplicate, malformed, unowned, disposition-only, selector-broadened, or over-limit input"
+          "a forged, serialized, wrong-Model, stale-path-facts, duplicate, malformed, unowned, caller-classified, selector-broadened, or over-limit input"
         ]
       },
       "residualUncertainty": [
