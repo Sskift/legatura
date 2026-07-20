@@ -12,6 +12,7 @@ import { readGitBinding } from "../../src/core/git-binding.mjs";
 import {
   REPOSITORY_SOURCE_PRODUCT_LIMITS,
   REPOSITORY_SOURCE_PRODUCT_PROOF_VERSION,
+  observeRepositoryIdentity,
   observeStableRepositorySource,
   projectRepositorySourceProduct,
   readRepositorySourceBytes
@@ -112,6 +113,25 @@ test("tracked source observation binds stable exact bytes and rejects source att
 
   const expectations = { ...sourceRequest, repoPath };
   const projection = await projectRepositorySourceProduct(sourceProduct, expectations);
+  const identity = await observeRepositoryIdentity(repoPath);
+  assert.deepEqual(identity, {
+    schemaVersion: 1,
+    repositoryIdentityDigest: projection.repositoryIdentityDigest
+  });
+  assert.equal(Object.isFrozen(identity), true);
+  assert.equal(JSON.stringify(identity).includes(repoPath), false);
+
+  const aliasRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-repository-alias-"));
+  t.after(() => rm(aliasRoot, { recursive: true, force: true }));
+  const aliasPath = path.join(aliasRoot, "alias");
+  await symlink(repoPath, aliasPath, "dir");
+  assert.deepEqual(await observeRepositoryIdentity(aliasPath), identity);
+
+  const cloneRoot = await mkdtemp(path.join(os.tmpdir(), "legatura-repository-clone-"));
+  t.after(() => rm(cloneRoot, { recursive: true, force: true }));
+  await git(cloneRoot, "clone", "--quiet", repoPath, "clone");
+  const cloneIdentity = await observeRepositoryIdentity(path.join(cloneRoot, "clone"));
+  assert.notEqual(cloneIdentity.repositoryIdentityDigest, identity.repositoryIdentityDigest);
   const expectedEntries = pathRefs.map((pathRef) => {
     const bytes = Buffer.from(`${JSON.stringify(pathRef)}\n`);
     return {

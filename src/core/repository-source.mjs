@@ -38,6 +38,20 @@ const ERROR_MESSAGES = Object.freeze({
   UNSTABLE: "Repository source observations did not stabilize within the bounded window."
 });
 
+/** Observe only the canonical physical repository identity, never its private facts. */
+export async function observeRepositoryIdentity(repoPath) {
+  try {
+    const normalizedRepoPath = normalizeRepoPath(repoPath, "REPOSITORY_SOURCE_INPUT_INVALID");
+    const identity = await observePrivateRepositoryIdentity(normalizedRepoPath);
+    return deepFreeze({
+      schemaVersion: 1,
+      repositoryIdentityDigest: identity.digest
+    });
+  } catch (error) {
+    throw closedError(error, "OBSERVATION_UNAVAILABLE");
+  }
+}
+
 /**
  * Observe one exact, tracked-only source request. A live product is issued only
  * when two adjacent rounds have the same complete composite digest.
@@ -84,7 +98,7 @@ export async function projectRepositorySourceProduct(sourceProduct, expectations
       throw repositorySourceError("EXPECTATION_MISMATCH");
     }
 
-    const currentIdentity = await observeRepositoryIdentity(normalized.repoPath);
+    const currentIdentity = await observePrivateRepositoryIdentity(normalized.repoPath);
     if (currentIdentity.digest !== state.repositoryIdentityDigest) {
       throw repositorySourceError("EXPECTATION_MISMATCH");
     }
@@ -122,7 +136,7 @@ export function readRepositorySourceBytes(sourceProduct, pathRef) {
 }
 
 async function observeSourceRound(repoPath, request, { commandRunner, limits }) {
-  const identityBefore = await observeRepositoryIdentity(repoPath);
+  const identityBefore = await observePrivateRepositoryIdentity(repoPath);
   const git = await readGitBinding(identityBefore.realRoot, commandRunner);
   const binding = validateGitBinding(git);
   if (binding.gitContentDigest !== request.gitContentDigest
@@ -151,7 +165,7 @@ async function observeSourceRound(repoPath, request, { commandRunner, limits }) 
     bytesByPathRef.set(pathRef, Buffer.from(bytes));
   }
 
-  const identityAfter = await observeRepositoryIdentity(repoPath);
+  const identityAfter = await observePrivateRepositoryIdentity(repoPath);
   if (identityBefore.digest !== identityAfter.digest) {
     throw repositorySourceError("OBSERVATION_UNAVAILABLE");
   }
@@ -346,7 +360,7 @@ function normalizeRepoPath(value, errorCode) {
   return path.resolve(value);
 }
 
-async function observeRepositoryIdentity(repoPath) {
+async function observePrivateRepositoryIdentity(repoPath) {
   try {
     const realRoot = await realpath(repoPath);
     const rootMetadata = await lstat(realRoot, { bigint: true });
