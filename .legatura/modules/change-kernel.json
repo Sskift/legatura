@@ -9,8 +9,11 @@
   "interface": {
     "entrypoints": [
       "createKernel(options)",
+      "kernel.prepareContextSessionCreate({ changeId, executionId, attempt, capabilityProfile })",
+      "kernel.projectContextSessionCreateProduct(product, { repoPath, contextSessionCreateDigest })",
       "kernel.inspectArchitectureProfileWindow(request)",
       "kernel.inspectWorkbenchProjection(options)",
+      "CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION",
       "WORKBENCH_DISABLED_REASON_CODES",
       "EVIDENCE_FIELDS"
     ],
@@ -29,6 +32,7 @@
       "Project Model owns strict planRefs value semantics; Change Kernel owns presence-based planRef alias conflicts and must adapt create and patch inputs before persistence so the Store contains only canonical planRefs.",
       "Project and Change read queries fail closed unless at most three observations contain two consecutive identical source digests; a stabilized Change query observes Model, Git, and Store once per round, projects every record without writes, preserves historical state and acceptance, and returns bounded list summaries while full Evidence and package bodies remain detail-only.",
       "Each Change write lifecycle operation compiles one Project Model-owned opaque path ownership product from one stabilized exact Model and tracked-path observation; Context Capsule generation and touched or prospective path enforcement consume that same process-local product, frozen/current ownership drift fails closed, and Kernel never interprets ownership selectors or dispositions.",
+      "Context Session preparation is a read-pure Change Kernel query over one stabilized composite physical repository identity, Model, Git, and Store snapshot. Each observation brackets Model and Git reads with the Assurance Runtime repository identity seam, and only two adjacent rounds whose complete composite digests and physical identities agree may issue. Preparation selects one current unaccepted compiled Change, rederives its compiler-owned projection and current scope only from that snapshot and the frozen Governance Baseline, requires its frozen Model and Git bindings to equal the stabilized sources, derives the exact Project Model materialization plan, compilation binding, canonical Worker Work Specification, logical Capsule and closed self-digested create document itself, and returns that ordinary document beside one frozen zero-own-key process-local Context Session Create Product. The factory-bound product projector first authenticates the matching exact create digest and private repository-path expectation, then rechecks one stabilized composite snapshot against every issuer-bound repository identity, Model, Git, tracked-path, and Store digest before returning only a defensive body-free projection that omits the private path; it rejects forged, serialized, cloned, proxied, cross-instance, cross-repository, stale, or mismatched products. A successful projection is point-in-time launch authority for only that exact snapshot-bound attempt, not a lease or acceptance: mutation before projection fails stale, mutation after projection does not retroactively rewrite an in-flight attempt, the product remains reusable for downstream failure retry, and Context Kernel owns expected-empty lineage commit and successful-replay exclusion. Preparation and projection never mutate the Change Store, create Evidence, accept a Change, or authorize Context expansion.",
       "The fixed brownfield relay Change is an ordinary Kernel lifecycle subject: no adoption mode may bypass stabilized ownership, Outcome contribution, exact Contract-visible Claim routing, Gate Evidence, open Knowledge Gap projection, Knowledge Closure, authority, scope analysis, or content-addressed acceptance, and its initial compiled Context may describe dependency Contracts without claiming Worker read enforcement.",
       "An Architecture Profile query compiles one Project Model-owned Claim Gate route product covering every Contract Claim in the stabilized current Model, passes that exact process-local product into Profile compilation, and compiles at most one product per unique verified frozen Governance Baseline over the union of actually referenced non-builtin source Claims; one query-level ceiling charges each unique product's compiler-owned workUnits, routes, and totalRouteBytes plus bounded Kernel route projection work once, cache hits are not recharged, and operational observations never become assurance or Evidence.",
       "An Architecture Profile window query selects one canonical bounded Change-id window from one stabilized composite snapshot before normalizing Change facts or compiling frozen-baseline route products; each nonterminal result carries one process-authenticated opaque continuation bound to the exact snapshot, query shape, ordering policy, and last emitted Change, so unchanged-snapshot traversal is complete and duplicate-free while malformed, modified, expired, unissued, cross-process, cross-snapshot, or cross-query continuations fail closed without work outside the selected window.",
@@ -99,6 +103,16 @@
     {
       "module": "assurance-runtime",
       "via": "assurance-runtime-interface",
+      "access": "interface-only"
+    },
+    {
+      "module": "worker-execution",
+      "via": "worker-execution-interface",
+      "access": "interface-only"
+    },
+    {
+      "module": "context-kernel",
+      "via": "context-kernel-interface",
       "access": "interface-only"
     }
   ]

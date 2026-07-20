@@ -47,6 +47,7 @@ import {
 import {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
+  compileContextMaterializationPlan,
   compileModulePathOwnershipIndex,
   loadProjectModel,
   projectCompiledClaimGateRouteIndex,
@@ -58,6 +59,8 @@ import {
 import {
   inspectAcceptedPackageRecord
 } from "./outcome-transitions.mjs";
+import { observeRepositoryIdentity } from "./repository-source.mjs";
+import { compileWorkSpecification } from "../worker-execution/protocol.mjs";
 
 const CHANGE_SCHEMA_VERSION = 1;
 const OUTCOME_ALIGNMENT_SCHEMA_VERSION = 1;
@@ -79,8 +82,16 @@ const ARCHITECTURE_PROFILE_WINDOW_CURSOR_BYTE_LIMIT = 2 * 1024;
 const ARCHITECTURE_PROFILE_WINDOW_CURSOR_TTL_MS = 5 * 60 * 1000;
 const ARCHITECTURE_PROFILE_WINDOW_ORDERING = "change-id-v1";
 const ARCHITECTURE_PROFILE_WINDOW_PURPOSE = "architecture-profile-window";
+const CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS = Object.freeze({
+  arrayLength: 64,
+  depth: 16,
+  keys: 32,
+  nodes: 256,
+  stringBytes: 64 * 1024
+});
 
 export const ARCHITECTURE_PROFILE_WINDOW_PROOF_VERSION = 1;
+export const CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION = 1;
 export const WORKBENCH_ACCEPTANCE_CONFIRMATION_PROOF_VERSION = 1;
 export const WORKBENCH_PROJECTION_INTEGRITY_PROOF_VERSION = 1;
 
@@ -120,6 +131,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     secret: randomBytes(32),
     now: () => Date.parse(now())
   });
+  const contextSessionCreateProducts = new WeakMap();
   let operationQueue = Promise.resolve();
 
   function serializeOperation(operation) {
@@ -129,10 +141,14 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
   }
 
   async function observeProjectOnce() {
+    const identityBefore = await observeRepositoryIdentity(resolvedRepoPath);
     const [model, git] = await Promise.all([
       loadProjectModel(resolvedRepoPath),
       readGitBinding(resolvedRepoPath, commandRunner)
     ]);
+    const identityAfter = await observeRepositoryIdentity(resolvedRepoPath);
+    const repositoryIdentityStable = identityBefore.repositoryIdentityDigest
+      === identityAfter.repositoryIdentityDigest;
     const validation = validateProjectModel(model);
     if (!git.available) {
       validation.errors.push({
@@ -150,10 +166,20 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
       validation
     };
     return {
-      digest: canonicalDigest({
-        projectModelDigest: inspection.digest,
-        gitContentDigest: inspection.git.contentDigest
-      }),
+      stable: repositoryIdentityStable,
+      digest: repositoryIdentityStable
+        ? canonicalDigest({
+            repositoryIdentityDigest: identityAfter.repositoryIdentityDigest,
+            projectModelDigest: inspection.digest,
+            gitContentDigest: inspection.git.contentDigest
+          })
+        : canonicalDigest({
+            unstableRepositoryIdentityBefore: identityBefore.repositoryIdentityDigest,
+            unstableRepositoryIdentityAfter: identityAfter.repositoryIdentityDigest,
+            projectModelDigest: inspection.digest,
+            gitContentDigest: inspection.git.contentDigest
+          }),
+      repositoryIdentityDigest: identityAfter.repositoryIdentityDigest,
       model,
       git,
       inspection
@@ -228,17 +254,119 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return cloneJson(stable.inspection);
   }
 
+  async function prepareContextSessionCreate(input) {
+    const request = readContextSessionCreatePreparationRequest(input);
+    const snapshot = await inspectChangeQuery({ includePathOwnership: true });
+    assertValidProject(snapshot.inspection);
+    const change = requireSnapshotChange(snapshot, request.changeId);
+    if (!change.compilation
+      || !change.contextCapsule
+      || !["Submitted", "EvidenceReady"].includes(change.state)
+      || change.acceptance) {
+      throw kernelError(
+        "CONTEXT_SESSION_CREATE_CHANGE_INVALID",
+        "Context Session creation requires one current unaccepted compiled Change.",
+        409,
+        { changeId: change.id, state: change.state }
+      );
+    }
+    await assertGovernanceWatermarkCurrent(change, snapshot.records);
+    await assertCurrentGovernanceContracts(change, snapshot.inspection, {
+      records: snapshot.records
+    });
+    const frozenOwnership = compileFrozenPathOwnership(change);
+    if (!frozenOwnership) {
+      throw kernelError(
+        "CONTEXT_SESSION_CREATE_CHANGE_INVALID",
+        "Context Session creation requires a compiled frozen path ownership product.",
+        409,
+        { changeId: change.id }
+      );
+    }
+    assertContextSessionCreateSnapshotCurrent(change, snapshot);
+    await observeCurrentChangeScope(change, snapshot, frozenOwnership);
+    assertCompiledChangeCurrent(change, frozenOwnership.product);
+    let materializationPlan;
+    try {
+      materializationPlan = compileContextMaterializationPlan({
+        model: readGovernanceBaseline(change),
+        contextCapsule: change.contextCapsule,
+        trackedPathFacts: change.baseline.git.trackedPathFacts
+      }, {
+        modulePathOwnershipProduct: frozenOwnership.product
+      });
+    } catch (error) {
+      throw kernelError(
+        "CONTEXT_SESSION_CREATE_MATERIALIZATION_INVALID",
+        "The compiled Change cannot reproduce an exact Context materialization plan.",
+        409,
+        { changeId: change.id, sourceCode: readString(error?.code) ?? null }
+      );
+    }
+
+    const prepared = compileContextSessionCreateDocument(
+      change,
+      request,
+      snapshot,
+      materializationPlan
+    );
+    const contextSessionCreateProduct = Object.freeze(Object.create(null));
+    contextSessionCreateProducts.set(
+      contextSessionCreateProduct,
+      Object.freeze({
+        repoPath: resolvedRepoPath,
+        projection: deepFreezeJson(cloneJson(prepared.productProjection))
+      })
+    );
+    return {
+      createInput: deepFreezeJson(cloneJson(prepared.createInput)),
+      contextSessionCreateProduct
+    };
+  }
+
+  async function projectContextSessionCreateProduct(product, expectations) {
+    const expected = readContextSessionCreateProductExpectations(expectations);
+    if (!product
+      || typeof product !== "object"
+      || utilTypes.isProxy(product)
+      || !contextSessionCreateProducts.has(product)) {
+      throwContextSessionCreateProductInvalid("unissued-product");
+    }
+    const state = contextSessionCreateProducts.get(product);
+    const projection = state.projection;
+    if (state.repoPath !== expected.repoPath) {
+      throwContextSessionCreateProductInvalid("repository-mismatch");
+    }
+    if (projection.contextSessionCreateDigest !== expected.contextSessionCreateDigest) {
+      throwContextSessionCreateProductInvalid("create-digest-mismatch");
+    }
+    const snapshot = await inspectChangeQuery();
+    if (snapshot.digest !== projection.sourceBinding.snapshotDigest
+      || snapshot.changeStoreDigest !== projection.sourceBinding.changeStoreDigest
+      || snapshot.repositoryIdentityDigest
+        !== projection.sourceBinding.repositoryIdentityDigest
+      || snapshot.inspection.digest !== projection.sourceBinding.projectModelDigest
+      || snapshot.git.contentDigest !== projection.sourceBinding.gitContentDigest
+      || snapshot.git.trackedPathFacts.digest
+        !== projection.sourceBinding.trackedPathFactsDigest) {
+      throwContextSessionCreateProductInvalid("source-snapshot-stale");
+    }
+    return deepFreezeJson(cloneJson(projection));
+  }
+
   async function observeChangeQueryOnce() {
     const [project, changeStore] = await Promise.all([
       observeProjectOnce(),
       store.snapshot()
     ]);
     return {
+      stable: project.stable,
       digest: canonicalDigest({
         projectModelGitDigest: project.digest,
         changeStoreDigest: changeStore.digest
       }),
       changeStoreDigest: changeStore.digest,
+      repositoryIdentityDigest: project.repositoryIdentityDigest,
       model: project.model,
       git: project.git,
       inspection: project.inspection,
@@ -393,12 +521,17 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return frozenOwnership;
   }
 
-  async function deriveCurrentOutcomePlanAmendment(change, currentModel) {
+  async function deriveCurrentOutcomePlanAmendment(change, currentModel, { records } = {}) {
     const catalog = assertPriorAcceptedPackageCatalog(change.priorAcceptedPackages, {
       required: change.changeKind === "plan-amendment"
     });
+    const snapshotRecords = Array.isArray(records)
+      ? new Map(records.map((record) => [readString(record?.id), record]).filter(([id]) => id))
+      : null;
     const resolvedPackages = catalog
-      ? (await Promise.all(catalog.entries.map((entry) => store.get(entry.changeId)))).filter(Boolean)
+      ? (snapshotRecords
+          ? catalog.entries.map((entry) => snapshotRecords.get(entry.changeId)).filter(Boolean)
+          : (await Promise.all(catalog.entries.map((entry) => store.get(entry.changeId)))).filter(Boolean))
       : [];
     return compileOutcomePlanAmendment({
       change,
@@ -409,7 +542,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     });
   }
 
-  async function assertCurrentOutcomePlanAmendment(change, currentModel) {
+  async function assertCurrentOutcomePlanAmendment(change, currentModel, { records } = {}) {
     if (change.outcomePlanAmendmentSchemaVersion !== OUTCOME_PLAN_AMENDMENT_SCHEMA_VERSION
       || !change.outcomePlanAmendmentCompilation) {
       throw kernelError(
@@ -418,7 +551,7 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
         409
       );
     }
-    const expected = await deriveCurrentOutcomePlanAmendment(change, currentModel);
+    const expected = await deriveCurrentOutcomePlanAmendment(change, currentModel, { records });
     if (canonicalDigest(expected) !== canonicalDigest(change.outcomePlanAmendmentCompilation)) {
       throw kernelError(
         "OUTCOME_PLAN_AMENDMENT_COMPILATION_STALE",
@@ -433,10 +566,14 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     return expected;
   }
 
-  async function assertCurrentGovernanceContracts(change, currentModel, { modelValid = true } = {}) {
+  async function assertCurrentGovernanceContracts(
+    change,
+    currentModel,
+    { modelValid = true, records } = {}
+  ) {
     if (!modelValid) return null;
     if (change.changeKind === "plan-amendment") {
-      return assertCurrentOutcomePlanAmendment(change, currentModel);
+      return assertCurrentOutcomePlanAmendment(change, currentModel, { records });
     }
     return assertKnowledgeGapProofContractsPreserved({
       governanceBaseline: readGovernanceBaseline(change),
@@ -1113,6 +1250,12 @@ export function createKernel({ repoPath, clock, commandRunner } = {}) {
     inspectArchitectureProfileWindow: (...args) => (
       serializeOperation(() => inspectArchitectureProfileWindow(...args))
     ),
+    prepareContextSessionCreate: (...args) => (
+      serializeOperation(() => prepareContextSessionCreate(...args))
+    ),
+    projectContextSessionCreateProduct: (...args) => (
+      serializeOperation(() => projectContextSessionCreateProduct(...args))
+    ),
     listChanges: (...args) => serializeOperation(() => listChanges(...args)),
     createChange: (...args) => serializeOperation(() => createChange(...args)),
     getChange: (...args) => serializeOperation(() => getChange(...args)),
@@ -1128,7 +1271,9 @@ async function readStableObservation({ observe, code, message }) {
   for (let count = 2; count <= STABLE_OBSERVATION_LIMIT; count += 1) {
     const current = await observe();
     digests.push(current.digest);
-    if (current.digest === previous.digest) return current;
+    if (current.stable !== false
+      && previous.stable !== false
+      && current.digest === previous.digest) return current;
     previous = current;
   }
   throw kernelError(code, message, 409, {
@@ -1283,11 +1428,287 @@ function readWorkbenchProjectionRequest(request) {
   return { changeRef };
 }
 
+function readContextSessionCreatePreparationRequest(input) {
+  const fields = readStrictQueryObject(
+    input,
+    ["attempt", "capabilityProfile", "changeId", "executionId"],
+    "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+    "Context Session create preparation request"
+  );
+  const missingFields = ["attempt", "capabilityProfile", "changeId", "executionId"]
+    .filter((field) => !Object.hasOwn(fields, field));
+  const changeId = readString(fields.changeId);
+  if (missingFields.length > 0
+    || !changeId
+    || Buffer.byteLength(changeId, "utf8") > 128) {
+    throw kernelError(
+      "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+      "Context Session create preparation requires bounded changeId, executionId, attempt, and capabilityProfile fields.",
+      400,
+      { missingFields }
+    );
+  }
+  return {
+    changeId,
+    executionId: fields.executionId,
+    attempt: fields.attempt,
+    capabilityProfile: cloneContextSessionCreateCallerData(fields.capabilityProfile)
+  };
+}
+
+function cloneContextSessionCreateCallerData(value, budget = {
+  nodes: 0,
+  stringBytes: 0
+}, depth = 0) {
+  budget.nodes += 1;
+  if (budget.nodes > CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS.nodes
+    || depth > CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS.depth) {
+    throwContextSessionCreateInputInvalid("caller-data-limit-exceeded");
+  }
+  if (value === null || typeof value === "boolean" || typeof value === "number") return value;
+  if (typeof value === "string") {
+    budget.stringBytes += Buffer.byteLength(value, "utf8");
+    if (budget.stringBytes > CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS.stringBytes) {
+      throwContextSessionCreateInputInvalid("caller-data-limit-exceeded");
+    }
+    return value;
+  }
+  if (!value || typeof value !== "object" || utilTypes.isProxy(value)) {
+    throwContextSessionCreateInputInvalid("caller-data-not-plain");
+  }
+
+  let prototype;
+  let descriptors;
+  try {
+    prototype = Object.getPrototypeOf(value);
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    throwContextSessionCreateInputInvalid("caller-data-not-inspectable");
+  }
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.some((key) => typeof key !== "string")) {
+    throwContextSessionCreateInputInvalid("caller-data-symbol-key");
+  }
+
+  if (Array.isArray(value)) {
+    const length = descriptors.length?.value;
+    const elementKeys = keys.filter((key) => key !== "length");
+    if (prototype !== Array.prototype
+      || !Number.isSafeInteger(length)
+      || length < 0
+      || length > CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS.arrayLength
+      || elementKeys.length !== length
+      || elementKeys.some((key, index) => key !== String(index))) {
+      throwContextSessionCreateInputInvalid("caller-array-invalid");
+    }
+    return elementKeys.map((key) => {
+      const descriptor = descriptors[key];
+      if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+        throwContextSessionCreateInputInvalid("caller-data-accessor");
+      }
+      return cloneContextSessionCreateCallerData(descriptor.value, budget, depth + 1);
+    });
+  }
+
+  if ((prototype !== Object.prototype && prototype !== null)
+    || keys.length > CONTEXT_SESSION_CREATE_CALLER_DATA_LIMITS.keys) {
+    throwContextSessionCreateInputInvalid("caller-object-invalid");
+  }
+  const result = Object.create(null);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.enumerable !== true) {
+      throwContextSessionCreateInputInvalid("caller-data-accessor");
+    }
+    result[key] = cloneContextSessionCreateCallerData(descriptor.value, budget, depth + 1);
+  }
+  return result;
+}
+
+function throwContextSessionCreateInputInvalid(reason) {
+  throw kernelError(
+    "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+    "Context Session create caller data must be bounded finite plain data without proxies or accessors.",
+    400,
+    { reason }
+  );
+}
+
+function readContextSessionCreateProductExpectations(input) {
+  const fields = readStrictQueryObject(
+    input,
+    ["contextSessionCreateDigest", "repoPath"],
+    "CONTEXT_SESSION_CREATE_PRODUCT_INVALID",
+    "Context Session Create Product expectations"
+  );
+  const repoPath = readString(fields.repoPath);
+  const contextSessionCreateDigest = readString(fields.contextSessionCreateDigest);
+  if (Object.keys(fields).length !== 2
+    || !DIGEST_PATTERN.test(contextSessionCreateDigest ?? "")
+    || !repoPath
+    || Buffer.byteLength(repoPath, "utf8") > 4_096) {
+    throwContextSessionCreateProductInvalid("expectations-invalid");
+  }
+  return {
+    contextSessionCreateDigest,
+    repoPath: path.resolve(repoPath)
+  };
+}
+
+function assertContextSessionCreateSnapshotCurrent(change, snapshot) {
+  const governanceBaselineDigest = readString(change.governanceBaseline?.digest);
+  const frozenModelDigest = readString(change.governanceBaseline?.modelDigest);
+  const baselineGitContentDigest = readString(change.baseline?.git?.contentDigest);
+  const compiledProjectModelDigest = readString(change.projectModelDigest);
+  const compiledGitContentDigest = readString(change.currentGit?.contentDigest);
+  const currentProjectModelDigest = readString(snapshot.inspection?.digest);
+  const currentGitContentDigest = readString(snapshot.git?.contentDigest);
+  const mismatchedFields = [
+    ...(!DIGEST_PATTERN.test(governanceBaselineDigest ?? "")
+      || canonicalDigest(withoutDigest(change.governanceBaseline)) !== governanceBaselineDigest
+      ? ["governanceBaseline.digest"] : []),
+    ...(frozenModelDigest !== currentProjectModelDigest ? ["projectModel.digest"] : []),
+    ...(compiledProjectModelDigest !== currentProjectModelDigest ? ["change.projectModelDigest"] : []),
+    ...(baselineGitContentDigest !== currentGitContentDigest ? ["baseline.git.contentDigest"] : []),
+    ...(compiledGitContentDigest !== currentGitContentDigest ? ["change.currentGit.contentDigest"] : [])
+  ];
+  if (mismatchedFields.length > 0) {
+    throw kernelError(
+      "CONTEXT_SESSION_CREATE_SNAPSHOT_STALE",
+      "Compiled Change bindings do not match the stabilized Context Session creation snapshot.",
+      409,
+      { changeId: change.id, mismatchedFields }
+    );
+  }
+}
+
+function compileContextSessionCreateDocument(change, request, snapshot, materializationPlan) {
+  const governanceBaselineDigest = change.governanceBaseline.digest;
+  const baselineGitContentDigest = change.baseline.git.contentDigest;
+  const compilerProjectionDigest = canonicalDigest(compiledChangeProjection(change));
+  const subjectDigest = verificationSubjectDigest(change);
+  const compilationDigest = canonicalDigest({
+    schemaVersion: 1,
+    kind: "change-compilation-binding",
+    changeId: change.id,
+    governanceBaselineDigest,
+    verificationSubjectDigest: subjectDigest,
+    compilerProjectionDigest
+  });
+  const contextCapsule = cloneJson(change.contextCapsule);
+  const contextCapsuleDigest = canonicalDigest(contextCapsule);
+  const readScopeDigest = canonicalDigest(contextCapsule.scope.read);
+  const writeScopeDigest = canonicalDigest(contextCapsule.scope.write);
+  const changeBinding = {
+    id: change.id,
+    primaryModuleRef: change.primaryModule,
+    changeKind: change.changeKind,
+    planRefs: cloneJson(change.planRefs ?? []),
+    claimRefs: (change.claims ?? []).map((claim) => claim.id),
+    governanceBaselineDigest,
+    baselineGitContentDigest,
+    compilationDigest
+  };
+  let workSpecification;
+  try {
+    workSpecification = compileWorkSpecification({
+      executionId: request.executionId,
+      attempt: request.attempt,
+      change: changeBinding,
+      intent: {
+        title: change.intent.title,
+        request: change.intent.request,
+        nonGoals: cloneJson(change.intent.nonGoals ?? [])
+      },
+      context: {
+        capsuleDigest: contextCapsuleDigest,
+        readScopeDigest,
+        writeScopeDigest
+      },
+      capabilityProfile: request.capabilityProfile
+    });
+  } catch (error) {
+    throw kernelError(
+      "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+      "Context Session create preparation could not compile the canonical Worker Work Specification.",
+      422,
+      { sourceCode: readString(error?.code) ?? null }
+    );
+  }
+  const createContent = {
+    schemaVersion: 1,
+    kind: "context-session-create",
+    change: cloneJson(workSpecification.change),
+    contextCapsule,
+    workSpecification: cloneJson(workSpecification)
+  };
+  const contextSessionCreateDigest = canonicalDigest(createContent);
+  const createInput = { ...createContent, contextSessionCreateDigest };
+  const projectionContent = {
+    schemaVersion: 1,
+    proofVersion: CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION,
+    kind: "context-session-create-product-projection",
+    sourceBinding: {
+      snapshotDigest: snapshot.digest,
+      repositoryIdentityDigest: snapshot.repositoryIdentityDigest,
+      projectModelDigest: snapshot.inspection.digest,
+      gitContentDigest: snapshot.git.contentDigest,
+      trackedPathFactsDigest: snapshot.git.trackedPathFacts.digest,
+      changeStoreDigest: snapshot.changeStoreDigest
+    },
+    executionBinding: {
+      executionRef: workSpecification.executionId,
+      workSpecificationDigest: workSpecification.workSpecificationDigest
+    },
+    changeBinding: {
+      changeId: change.id,
+      primaryModuleRef: change.primaryModule,
+      compilationDigest,
+      governanceBaselineDigest
+    },
+    contextBinding: {
+      contextCapsuleDigest,
+      readScopeDigest,
+      writeScopeDigest,
+      materializationPlanDigest: materializationPlan.materializationPlanDigest
+    },
+    contextSessionCreateDigest
+  };
+  return {
+    createInput,
+    productProjection: {
+      ...projectionContent,
+      productDigest: canonicalDigest(projectionContent)
+    }
+  };
+}
+
+function withoutDigest(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const { digest, ...content } = value;
+  return content;
+}
+
+function deepFreezeJson(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const entry of Object.values(value)) deepFreezeJson(entry);
+  return Object.freeze(value);
+}
+
+function throwContextSessionCreateProductInvalid(reason) {
+  throw kernelError(
+    "CONTEXT_SESSION_CREATE_PRODUCT_INVALID",
+    "Context Session Create Product is unissued, mismatched, or cannot be projected safely.",
+    403,
+    { reason }
+  );
+}
+
 function readStrictQueryObject(value, allowedFields, code, label) {
   if (!value
     || typeof value !== "object"
-    || Array.isArray(value)
     || utilTypes.isProxy(value)
+    || Array.isArray(value)
     || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) {
     throw kernelError(code, `${label} must be a strict plain object.`, 400);
   }

@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
-import { createKernel, EVIDENCE_FIELDS } from "../../src/core/index.mjs";
+import {
+  CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION,
+  createKernel,
+  EVIDENCE_FIELDS
+} from "../../src/core/index.mjs";
 import { canonicalDigest } from "../../src/core/canonical.mjs";
+import {
+  compileContextMaterializationPlan,
+  compileModulePathOwnershipIndex
+} from "../../src/core/project-model.mjs";
+import { observeRepositoryIdentity } from "../../src/core/repository-source.mjs";
 import { readExpectedAuthorities } from "../../src/core/evidence.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -27,6 +36,318 @@ test("inspectProject exposes validated Project Model and repository state", asyn
   assert.equal(inspection.git.available, true);
   assert.equal(inspection.git.dirty, true);
   assert.equal(inspection.modules[0].status, "governed");
+});
+
+test("Context Session create products bind one current compiled Change without Store writes", async () => {
+  assert.equal(CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION, 1);
+  const fixture = await createFixture();
+  await enableFixturePathGovernance(fixture.repoPath);
+  const kernel = createKernel({ repoPath: fixture.repoPath });
+  const candidate = await kernel.createChange({
+    title: "Prepare exact bounded worker context",
+    primaryModule: "core",
+    claims: [{ id: "behavior-correct", statement: "The governed behavior remains correct." }]
+  });
+  const compiled = await kernel.compileChange(candidate.id);
+  const recordPath = path.join(
+    fixture.repoPath,
+    ".legatura/runtime/changes",
+    `${candidate.id}.json`
+  );
+  const storePath = path.dirname(recordPath);
+  const storedBefore = await readStoreSnapshot(storePath);
+  const capabilityProfile = {
+    ref: "fixture-observed-capabilities",
+    sourceDigest: canonicalDigest({ schemaVersion: 1, source: "fixture-controller" }),
+    requested: ["filesystem-read", "filesystem-write", "process"],
+    controls: {
+      filesystemRead: "observed-only",
+      filesystemWrite: "observed-only",
+      network: "unsupported",
+      process: "observed-only",
+      secrets: "unsupported"
+    },
+    limits: {
+      wallTimeMs: 30_000,
+      expansionRequests: 2,
+      artifactRefs: 4,
+      reportBytes: 16_384
+    }
+  };
+  const preparationRequest = {
+    changeId: compiled.id,
+    executionId: "fixture-execution-1",
+    attempt: 1,
+    capabilityProfile
+  };
+  const revokedPreparation = Proxy.revocable({}, {});
+  revokedPreparation.revoke();
+  await assert.rejects(
+    kernel.prepareContextSessionCreate(revokedPreparation.proxy),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_INPUT_INVALID"
+  );
+  for (const [label, wrap] of [
+    ["capability profile proxy", (handler) => new Proxy(capabilityProfile, handler)],
+    ["controls proxy", (handler) => ({
+      ...capabilityProfile,
+      controls: new Proxy(capabilityProfile.controls, handler)
+    })],
+    ["limits proxy", (handler) => ({
+      ...capabilityProfile,
+      limits: new Proxy(capabilityProfile.limits, handler)
+    })]
+  ]) {
+    let trapCount = 0;
+    const handler = {
+      get(target, key, receiver) {
+        trapCount += 1;
+        return Reflect.get(target, key, receiver);
+      },
+      getOwnPropertyDescriptor(target, key) {
+        trapCount += 1;
+        return Reflect.getOwnPropertyDescriptor(target, key);
+      },
+      getPrototypeOf(target) {
+        trapCount += 1;
+        return Reflect.getPrototypeOf(target);
+      },
+      ownKeys(target) {
+        trapCount += 1;
+        return Reflect.ownKeys(target);
+      }
+    };
+    await assert.rejects(
+      kernel.prepareContextSessionCreate({
+        ...preparationRequest,
+        capabilityProfile: wrap(handler)
+      }),
+      (error) => error.code === "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+      label
+    );
+    assert.equal(trapCount, 0, `${label} must reject without invoking caller code`);
+  }
+  for (const forbiddenField of ["change", "contextCapsule", "workSpecification"]) {
+    await assert.rejects(
+      kernel.prepareContextSessionCreate({
+        ...preparationRequest,
+        [forbiddenField]: { callerDerived: true }
+      }),
+      (error) => error.code === "CONTEXT_SESSION_CREATE_INPUT_INVALID",
+      `caller cannot submit ${forbiddenField}`
+    );
+  }
+
+  const prepared = await kernel.prepareContextSessionCreate(preparationRequest);
+  const createInput = prepared.createInput;
+  assert.equal(createInput.kind, "context-session-create");
+  assert.equal(Object.isFrozen(createInput), true);
+  assert.deepEqual(createInput.change, createInput.workSpecification.change);
+  assert.equal(
+    createInput.contextSessionCreateDigest,
+    canonicalDigest({
+      schemaVersion: createInput.schemaVersion,
+      kind: createInput.kind,
+      change: createInput.change,
+      contextCapsule: createInput.contextCapsule,
+      workSpecification: createInput.workSpecification
+    })
+  );
+  assert.equal(
+    createInput.workSpecification.context.capsuleDigest,
+    canonicalDigest(createInput.contextCapsule)
+  );
+  assert.equal(
+    createInput.workSpecification.context.readScopeDigest,
+    canonicalDigest(createInput.contextCapsule.scope.read)
+  );
+  assert.equal(
+    createInput.workSpecification.context.writeScopeDigest,
+    canonicalDigest(createInput.contextCapsule.scope.write)
+  );
+
+  const product = prepared.contextSessionCreateProduct;
+  assert.equal(Object.getPrototypeOf(product), null);
+  assert.equal(Object.isFrozen(product), true);
+  assert.deepEqual(Reflect.ownKeys(product), []);
+  assert.equal(JSON.stringify(product), "{}");
+  const projection = await kernel.projectContextSessionCreateProduct(product, {
+    repoPath: fixture.repoPath,
+    contextSessionCreateDigest: createInput.contextSessionCreateDigest
+  });
+  assert.equal(Object.isFrozen(projection), true);
+  assert.deepEqual(Object.keys(projection), [
+    "schemaVersion",
+    "proofVersion",
+    "kind",
+    "sourceBinding",
+    "executionBinding",
+    "changeBinding",
+    "contextBinding",
+    "contextSessionCreateDigest",
+    "productDigest"
+  ]);
+  assert.equal(projection.proofVersion, CONTEXT_SESSION_CREATE_PRODUCT_PROOF_VERSION);
+  assert.equal(Object.hasOwn(projection, "acceptance"), false);
+  assert.equal(Object.hasOwn(projection, "authority"), false);
+  assert.equal(Object.hasOwn(projection, "evidence"), false);
+  assert.equal(Object.hasOwn(projection, "expansion"), false);
+  assert.equal(
+    projection.sourceBinding.repositoryIdentityDigest,
+    (await observeRepositoryIdentity(fixture.repoPath)).repositoryIdentityDigest
+  );
+  assert.equal(
+    projection.executionBinding.workSpecificationDigest,
+    createInput.workSpecification.workSpecificationDigest
+  );
+  assert.equal(
+    projection.changeBinding.compilationDigest,
+    createInput.change.compilationDigest
+  );
+  assert.equal(
+    projection.contextBinding.contextCapsuleDigest,
+    createInput.workSpecification.context.capsuleDigest
+  );
+  const independentlyCompiledPlan = compileContextMaterializationPlan({
+    model: compiled.governanceBaseline,
+    contextCapsule: createInput.contextCapsule,
+    trackedPathFacts: compiled.baseline.git.trackedPathFacts
+  }, {
+    modulePathOwnershipProduct: compileModulePathOwnershipIndex(
+      compiled.governanceBaseline,
+      compiled.baseline.git.trackedPathFacts
+    )
+  });
+  assert.equal(
+    projection.contextBinding.materializationPlanDigest,
+    independentlyCompiledPlan.materializationPlanDigest
+  );
+  const { productDigest, ...projectionContent } = projection;
+  assert.equal(productDigest, canonicalDigest(projectionContent));
+  assert.deepEqual(await readStoreSnapshot(storePath), storedBefore);
+
+  const revokedExpectations = Proxy.revocable({}, {});
+  revokedExpectations.revoke();
+  await assert.rejects(
+    kernel.projectContextSessionCreateProduct(product, revokedExpectations.proxy),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID"
+  );
+
+  let digestTrapCount = 0;
+  const coercingDigest = new Proxy({}, {
+    get() {
+      digestTrapCount += 1;
+      return () => createInput.contextSessionCreateDigest;
+    }
+  });
+  await assert.rejects(
+    kernel.projectContextSessionCreateProduct(product, {
+      repoPath: fixture.repoPath,
+      contextSessionCreateDigest: coercingDigest
+    }),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID"
+      && error.details.reason === "expectations-invalid"
+  );
+  assert.equal(digestTrapCount, 0, "digest validation must not coerce caller objects");
+
+  const forgedInput = structuredClone(createInput);
+  forgedInput.change.id = "forged-change";
+  const { contextSessionCreateDigest: ignoredDigest, ...forgedContent } = forgedInput;
+  const attacks = [
+    {
+      label: "mismatched ordinary create document",
+      kernel,
+      product,
+      digest: canonicalDigest(forgedContent)
+    },
+    {
+      label: "serialized product",
+      kernel,
+      product: JSON.parse(JSON.stringify(product)),
+      digest: createInput.contextSessionCreateDigest
+    },
+    {
+      label: "structured clone",
+      kernel,
+      product: structuredClone(product),
+      digest: createInput.contextSessionCreateDigest
+    },
+    {
+      label: "proxy",
+      kernel,
+      product: new Proxy(product, {}),
+      digest: createInput.contextSessionCreateDigest
+    },
+    {
+      label: "cross-instance product",
+      kernel: createKernel({ repoPath: fixture.repoPath }),
+      product,
+      digest: createInput.contextSessionCreateDigest
+    }
+  ];
+  for (const attack of attacks) {
+    await assert.rejects(
+      attack.kernel.projectContextSessionCreateProduct(attack.product, {
+        repoPath: fixture.repoPath,
+        contextSessionCreateDigest: attack.digest
+      }),
+      (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID",
+      attack.label
+    );
+  }
+
+  await assert.rejects(
+    kernel.projectContextSessionCreateProduct(product, {
+      repoPath: path.join(fixture.repoPath, "other-repository"),
+      contextSessionCreateDigest: createInput.contextSessionCreateDigest
+    }),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID"
+      && error.details.reason === "repository-mismatch"
+  );
+
+  const gitDriftPrepared = await kernel.prepareContextSessionCreate({
+    ...preparationRequest,
+    executionId: "fixture-execution-git-drift"
+  });
+  const readmePath = path.join(fixture.repoPath, "README.md");
+  const readmeBytes = await readFile(readmePath);
+  await writeFile(readmePath, Buffer.concat([readmeBytes, Buffer.from("\nsource drift\n")]));
+  await assert.rejects(
+    kernel.projectContextSessionCreateProduct(
+      gitDriftPrepared.contextSessionCreateProduct,
+      {
+        repoPath: fixture.repoPath,
+        contextSessionCreateDigest:
+          gitDriftPrepared.createInput.contextSessionCreateDigest
+      }
+    ),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID"
+      && error.details.reason === "source-snapshot-stale"
+  );
+  await writeFile(readmePath, readmeBytes);
+  await assert.doesNotReject(
+    kernel.projectContextSessionCreateProduct(
+      gitDriftPrepared.contextSessionCreateProduct,
+      {
+        repoPath: fixture.repoPath,
+        contextSessionCreateDigest:
+          gitDriftPrepared.createInput.contextSessionCreateDigest
+      }
+    )
+  );
+
+  await kernel.createChange({
+    id: "later-store-change",
+    title: "Invalidate the prior launch snapshot",
+    primaryModule: "core"
+  });
+  await assert.rejects(
+    kernel.projectContextSessionCreateProduct(product, {
+      repoPath: fixture.repoPath,
+      contextSessionCreateDigest: createInput.contextSessionCreateDigest
+    }),
+    (error) => error.code === "CONTEXT_SESSION_CREATE_PRODUCT_INVALID"
+      && error.details.reason === "source-snapshot-stale"
+  );
 });
 
 test("plan alignment injects only an active Outcome into bounded Context", async () => {
@@ -937,6 +1258,40 @@ async function createFixture() {
   await git(repoPath, "add", ".");
   await git(repoPath, "commit", "-qm", "fixture");
   return { repoPath };
+}
+
+async function enableFixturePathGovernance(repoPath) {
+  const projectPath = path.join(repoPath, ".legatura/project.json");
+  const project = JSON.parse(await readFile(projectPath, "utf8"));
+  project.pathGovernance = {
+    schemaVersion: 1,
+    selectorGrammar: "exact-or-recursive-prefix",
+    effectiveMatch: "include-minus-exclude",
+    overlapPolicy: "reject-latent-and-concrete",
+    conflictResolution: "none",
+    dispositionPolicy: {
+      allowedKinds: ["ungoverned"],
+      requiredFields: ["id", "kind", "paths.include", "paths.exclude", "rationale"],
+      minimumRationaleCharacters: 12,
+      grantsWriteAuthority: false
+    },
+    dispositions: []
+  };
+  await writeJson(projectPath, project);
+  const modulePath = path.join(repoPath, ".legatura/modules/core.json");
+  const module = JSON.parse(await readFile(modulePath, "utf8"));
+  module.paths.include = [".legatura/**", "README.md", "src/**"];
+  await writeJson(modulePath, module);
+  await git(repoPath, "add", ".legatura/project.json", ".legatura/modules/core.json");
+  await git(repoPath, "commit", "-qm", "enable exact fixture path governance");
+}
+
+async function readStoreSnapshot(storePath) {
+  const names = (await readdir(storePath)).sort();
+  return Promise.all(names.map(async (name) => [
+    name,
+    (await readFile(path.join(storePath, name))).toString("base64")
+  ]));
 }
 
 async function enablePlanPolicy(repoPath) {
