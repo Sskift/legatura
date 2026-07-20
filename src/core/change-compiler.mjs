@@ -2,7 +2,10 @@ import { Buffer } from "node:buffer";
 import { types as utilTypes } from "node:util";
 
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
-import { projectCompiledModulePathOwnershipIndex } from "./path-ownership.mjs";
+import {
+  pathSelectorWithin,
+  projectCompiledModulePathOwnershipIndex
+} from "./path-ownership.mjs";
 
 export const INTEGRITY_CHANGE_KINDS = Object.freeze([
   "regression-repair",
@@ -2136,21 +2139,31 @@ function compileIntegrityTarget(change) {
   };
 }
 
-function compileContextCapsule({
+export function projectCompiledContextCapsuleModelBinding(
   governanceBaseline,
-  primaryModule,
-  planOutcomes,
-  outcomeAlignment,
-  assurance,
-  pathOwnership,
-  pathOwnershipScopeBinding,
-  supplied
-}) {
-  validateContextSupplement(supplied);
-  const contractsById = new Map(governanceBaseline.contracts.map((contract) => [contract.id, contract]));
-  const modulesById = new Map(governanceBaseline.modules.map((module) => [module.id, module]));
-  const publicContractIds = unique(asArray(primaryModule.publicContracts).map(readReference).filter(Boolean));
-  const publicContracts = publicContractIds.map((id) => contractsById.get(id)).filter(Boolean);
+  primaryModuleRef
+) {
+  const primaryModule = asArray(governanceBaseline?.modules)
+    .find((module) => readString(module?.id) === readString(primaryModuleRef));
+  if (!primaryModule) {
+    throw compilerError(
+      "CONTEXT_CAPSULE_MODEL_BINDING_INVALID",
+      "Context Capsule model binding requires a primary Module in the frozen Governance Baseline.",
+      { primaryModuleRef: readString(primaryModuleRef) ?? null }
+    );
+  }
+  const contractsById = new Map(asArray(governanceBaseline.contracts)
+    .map((contract) => [readString(contract?.id), contract])
+    .filter(([id]) => id));
+  const modulesById = new Map(asArray(governanceBaseline.modules)
+    .map((module) => [readString(module?.id), module])
+    .filter(([id]) => id));
+  const publicContractIds = unique(asArray(primaryModule.publicContracts)
+    .map(readReference)
+    .filter(Boolean));
+  const publicContracts = publicContractIds
+    .map((id) => contractsById.get(id))
+    .filter(Boolean);
   const dependencies = asArray(primaryModule.dependencies).map((dependency) => {
     const moduleId = readReference(dependency, ["module", "moduleId", "target", "id"]);
     const interfaceRef = readReference(dependency, ["via", "contract", "contractId"]);
@@ -2166,21 +2179,158 @@ function compileContextCapsule({
     .filter((id) => contractsById.has(id)));
   const dependencyContracts = dependencyContractIds.map((id) => contractsById.get(id));
   const selectedContracts = [...publicContracts, ...dependencyContracts];
-  const normativeSourceIds = unique(selectedContracts
-    .flatMap((contract) => asArray(contract.normativeSources).map(readReference).filter(Boolean)));
+  const normativeSourceIds = new Set();
+  for (const contract of selectedContracts) {
+    for (const source of asArray(contract.normativeSources)) {
+      const sourceRef = readReference(source);
+      if (sourceRef) normativeSourceIds.add(sourceRef);
+    }
+  }
   const normativeSources = asArray(governanceBaseline.projectDocument?.normativeSources)
-    .filter((source) => normativeSourceIds.includes(readReference(source)))
+    .filter((source) => normativeSourceIds.has(readReference(source)))
     .map(cloneJson);
-  const projectedPlanOutcomes = projectOutcomeContext(planOutcomes, outcomeAlignment);
-  const outcomeGapRefs = new Set(projectedPlanOutcomes
+  const projectModelFiles = relevantModelDocumentPaths(
+    governanceBaseline.files,
+    primaryModule.id,
+    [...publicContractIds, ...dependencyContractIds]
+  );
+  const normativePaths = normalizePaths(
+    normativeSources.map((source) => readString(source.path)).filter(Boolean)
+  );
+  const focusedTestPaths = asArray(primaryModule.focusedTests)
+    .flatMap((test) => normalizePaths(typeof test === "string" ? test : test?.path ?? test?.paths));
+  const generatedReadScope = {
+    include: unique([
+      ...normalizePaths(primaryModule.paths?.include ?? primaryModule.paths),
+      ...projectModelFiles,
+      ...normativePaths,
+      ...focusedTestPaths
+    ]),
+    exclude: normalizePaths(primaryModule.paths?.exclude)
+  };
+  const invalidGeneratedSelectors = [
+    ...generatedReadScope.include,
+    ...generatedReadScope.exclude
+  ].filter((selector) => !pathSelectorWithin(selector, selector));
+  const pathGovernanceDeclared = Object.hasOwn(
+    governanceBaseline.projectDocument ?? {},
+    "pathGovernance"
+  );
+  if (pathGovernanceDeclared && invalidGeneratedSelectors.length > 0) {
+    throw compilerError(
+      "CONTEXT_CAPSULE_MODEL_BINDING_INVALID",
+      "Context Capsule generated read scope uses a selector outside the exact-or-recursive-prefix grammar.",
+      { invalidSelectors: invalidGeneratedSelectors }
+    );
+  }
+  return cloneJson({
+    schemaVersion: 1,
+    governanceBaselineDigest: governanceBaseline.digest,
+    primaryModuleRef: primaryModule.id,
+    projectModelFiles,
+    module: pickModuleContext(primaryModule),
+    publicContracts: publicContracts.map(pickContractContext),
+    dependencyContracts: dependencyContracts.map(pickContractContext),
+    dependencies,
+    normativeSources,
+    generatedReadScope,
+    contextExpansionPolicy: {
+      mode: readString(governanceBaseline.projectDocument?.changePolicy?.contextExpansion)
+        ?? "recorded",
+      requirement: "Record the requested paths, reason, expected knowledge, and resulting model disposition before using context outside read.include.",
+      implementationBoundary: "Consume another Module through its Contract; do not load its implementation by default."
+    }
+  });
+}
+
+export function projectCompiledContextCapsulePlanBinding(
+  governanceBaseline,
+  primaryModuleRef,
+  selectedOutcomeRefs,
+  outcomeAlignment
+) {
+  const budget = { nodes: 0, totalBytes: 0 };
+  assertBoundedPlainContextValue(
+    { selectedOutcomeRefs, outcomeAlignment },
+    "contextCapsulePlanBinding",
+    budget
+  );
+  if (!Array.isArray(selectedOutcomeRefs)
+    || selectedOutcomeRefs.some((ref) => readString(ref) !== ref)
+    || new Set(selectedOutcomeRefs).size !== selectedOutcomeRefs.length) {
+    throw compilerError(
+      "CONTEXT_CAPSULE_PLAN_BINDING_INVALID",
+      "Context Capsule selected Outcome references must be exact and duplicate-free."
+    );
+  }
+  const primaryModule = asArray(governanceBaseline?.modules)
+    .find((module) => readString(module?.id) === readString(primaryModuleRef));
+  if (!primaryModule) {
+    throw compilerError(
+      "CONTEXT_CAPSULE_PLAN_BINDING_INVALID",
+      "Context Capsule plan binding requires a primary Module in the frozen Governance Baseline."
+    );
+  }
+  const outcomesById = new Map(asArray(governanceBaseline.plan?.outcomes)
+    .map((outcome) => [readString(outcome?.id), outcome])
+    .filter(([id]) => id));
+  const sourceOutcomes = selectedOutcomeRefs.map((outcomeRef) => {
+    const outcome = outcomesById.get(outcomeRef);
+    if (!outcome || outcome.status !== "active") {
+      throw compilerError(
+        "CONTEXT_CAPSULE_PLAN_BINDING_INVALID",
+        "Context Capsule selected Outcomes must be active in the frozen Governance Baseline.",
+        { outcomeRef, status: outcome?.status ?? null }
+      );
+    }
+    return { ...cloneJson(outcome), id: outcomeRef };
+  });
+  const configuredMode = readString(
+    governanceBaseline.projectDocument?.changePolicy?.outcomeAlignmentMode
+  ) ?? null;
+  if ((configuredMode === null) !== (outcomeAlignment === null)
+    || (outcomeAlignment !== null && outcomeAlignment.mode !== configuredMode)) {
+    throw compilerError(
+      "CONTEXT_CAPSULE_PLAN_BINDING_INVALID",
+      "Context Capsule Outcome alignment must reproduce the frozen Governance Baseline mode.",
+      { configuredMode, observedMode: outcomeAlignment?.mode ?? null }
+    );
+  }
+  if (outcomeAlignment !== null) {
+    if (!outcomeAlignment
+      || typeof outcomeAlignment !== "object"
+      || Array.isArray(outcomeAlignment)
+      || outcomeAlignment.schemaVersion !== 1
+      || !["declared", "enforced"].includes(outcomeAlignment.mode)
+      || !["not-applicable", "unresolved", "pending-authority", "complete"]
+        .includes(outcomeAlignment.status)
+      || !Array.isArray(outcomeAlignment.selectedOutcomeRefs)
+      || canonicalDigest(outcomeAlignment.selectedOutcomeRefs)
+        !== canonicalDigest(selectedOutcomeRefs)
+      || !Array.isArray(outcomeAlignment.contributions)
+      || !Array.isArray(outcomeAlignment.exceptions)
+      || !Array.isArray(outcomeAlignment.unresolved)) {
+      throw compilerError(
+        "CONTEXT_CAPSULE_PLAN_BINDING_INVALID",
+        "Context Capsule Outcome alignment is not a complete binding for its selected Outcomes."
+      );
+    }
+  }
+  const planOutcomes = projectOutcomeContext(sourceOutcomes, outcomeAlignment);
+  const outcomeGapRefs = new Set(planOutcomes
     .flatMap((outcome) => normalizeStringList(outcome?.acceptance?.gapRefs)));
   const relatedRefs = new Set([
     primaryModule.id,
-    ...dependencies.map((dependency) => dependency.module),
-    ...publicContractIds,
-    ...dependencyContractIds
+    ...asArray(primaryModule.dependencies)
+      .map((dependency) => readReference(
+        dependency,
+        ["module", "moduleId", "target", "id"]
+      )),
+    ...asArray(primaryModule.publicContracts).map(readReference),
+    ...asArray(primaryModule.dependencies)
+      .map((dependency) => readReference(dependency, ["via", "contract", "contractId"]))
   ].filter(Boolean));
-  const knowledgeGaps = governanceBaseline.knowledgeGaps
+  const knowledgeGaps = asArray(governanceBaseline.knowledgeGaps)
     .filter((gap) => outcomeGapRefs.has(readString(gap?.id))
       || asArray(gap.affects).map(readReference).some((ref) => relatedRefs.has(ref)))
     .map(cloneJson);
@@ -2192,15 +2342,32 @@ function compileContextCapsule({
       source: "Module.modelGaps"
     });
   }
+  return cloneJson({ schemaVersion: 1, planOutcomes, knowledgeGaps });
+}
 
-  const modelDocumentPaths = relevantModelDocumentPaths(
-    governanceBaseline.files,
-    primaryModule.id,
-    [...publicContractIds, ...dependencyContractIds]
+function compileContextCapsule({
+  governanceBaseline,
+  primaryModule,
+  planOutcomes,
+  outcomeAlignment,
+  assurance,
+  pathOwnership,
+  pathOwnershipScopeBinding,
+  supplied
+}) {
+  validateContextSupplement(supplied);
+  const modelBinding = projectCompiledContextCapsuleModelBinding(
+    governanceBaseline,
+    primaryModule.id
   );
-  const normativePaths = normativeSources.map((source) => readString(source.path)).filter(Boolean);
-  const focusedTestPaths = asArray(primaryModule.focusedTests)
-    .flatMap((test) => normalizePaths(typeof test === "string" ? test : test?.path ?? test?.paths));
+  const dependencies = modelBinding.dependencies;
+  const planBinding = projectCompiledContextCapsulePlanBinding(
+    governanceBaseline,
+    primaryModule.id,
+    planOutcomes.map((outcome) => outcome.id),
+    outcomeAlignment
+  );
+
   const projectedWriteScope = pathOwnership?.writeScopesByModule?.get(primaryModule.id);
   if (pathOwnership && !projectedWriteScope) {
     throw compilerError(
@@ -2227,15 +2394,7 @@ function compileContextCapsule({
         include: normalizePaths(primaryModule.paths?.include ?? primaryModule.paths),
         exclude: normalizePaths(primaryModule.paths?.exclude)
       };
-  const generatedRead = {
-    include: unique([
-      ...normalizePaths(primaryModule.paths?.include ?? primaryModule.paths),
-      ...modelDocumentPaths,
-      ...normativePaths,
-      ...focusedTestPaths
-    ]),
-    exclude: normalizePaths(primaryModule.paths?.exclude)
-  };
+  const generatedRead = modelBinding.generatedReadScope;
   const suppliedScope = supplied?.scope ?? supplied?.allowedScope ?? {};
   const scope = {
     write: pathOwnershipScopeBinding
@@ -2254,7 +2413,7 @@ function compileContextCapsule({
     schemaVersion: 1,
     compiledFrom: {
       governanceBaselineDigest: governanceBaseline.digest,
-      projectModelFiles: modelDocumentPaths,
+      projectModelFiles: modelBinding.projectModelFiles,
       ...(pathOwnership ? {
         pathOwnership: {
           ...cloneJson(pathOwnership.sourceBinding),
@@ -2264,20 +2423,16 @@ function compileContextCapsule({
       } : {})
     },
     primaryModule: primaryModule.id,
-    module: pickModuleContext(primaryModule),
-    planOutcomes: projectedPlanOutcomes,
+    module: modelBinding.module,
+    planOutcomes: planBinding.planOutcomes,
     outcomeAlignment: cloneJson(outcomeAlignment),
-    publicContracts: publicContracts.map(pickContractContext),
-    dependencyContracts: dependencyContracts.map(pickContractContext),
+    publicContracts: modelBinding.publicContracts,
+    dependencyContracts: modelBinding.dependencyContracts,
     dependencies,
-    normativeSources,
-    knowledgeGaps,
+    normativeSources: modelBinding.normativeSources,
+    knowledgeGaps: planBinding.knowledgeGaps,
     scope,
-    contextExpansionPolicy: {
-      mode: readString(governanceBaseline.projectDocument?.changePolicy?.contextExpansion) ?? "recorded",
-      requirement: "Record the requested paths, reason, expected knowledge, and resulting model disposition before using context outside read.include.",
-      implementationBoundary: "Consume another Module through its Contract; do not load its implementation by default."
-    },
+    contextExpansionPolicy: modelBinding.contextExpansionPolicy,
     assurance,
     ...copySupplementalContext(supplied)
   };
@@ -3438,7 +3593,9 @@ function assertBoundedPlainContextValue(value, location, budget, depth = 0) {
     throw contextSupplementDataError(location);
   }
   const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) {
+  if (Array.isArray(value)
+    ? prototype !== Array.prototype
+    : prototype !== Object.prototype && prototype !== null) {
     throw contextSupplementDataError(location);
   }
   const descriptors = Object.getOwnPropertyDescriptors(value);
@@ -3527,37 +3684,7 @@ function assertWithinScope(candidates, allowed, label) {
 }
 
 function scopePatternWithin(candidate, parent) {
-  if (!candidate || candidate.startsWith("/") || candidate.split("/").includes("..")) return false;
-  if (candidate === parent || parent === "**" || parent === "**/*") return true;
-  const candidateHasWildcard = /[?*[\]]/u.test(candidate);
-  if (!candidateHasWildcard) return concretePathMatchesPattern(candidate, parent);
-
-  // Pattern subset reasoning is intentionally conservative. A child glob is
-  // only accepted beneath a literal recursive root; arbitrary shared prefixes
-  // (for example src/*.js vs src/evil/**) do not establish containment.
-  if (parent.endsWith("/**")) {
-    const root = parent.slice(0, -3).replace(/\/$/u, "");
-    return root.length === 0 || candidate.startsWith(`${root}/`);
-  }
-  return false;
-}
-
-function concretePathMatchesPattern(filePath, pattern) {
-  let expression = "";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index];
-    if (character === "*" && pattern[index + 1] === "*") {
-      expression += ".*";
-      index += 1;
-    } else if (character === "*") {
-      expression += "[^/]*";
-    } else if (character === "?") {
-      expression += "[^/]";
-    } else {
-      expression += character.replace(/[|\\{}()[\]^$+?.]/gu, "\\$&");
-    }
-  }
-  return new RegExp(`^${expression}$`, "u").test(filePath);
+  return pathSelectorWithin(candidate, parent);
 }
 
 function relevantModelDocumentPaths(files, moduleId, contractIds) {

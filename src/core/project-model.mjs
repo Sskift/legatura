@@ -3,6 +3,11 @@ import path from "node:path";
 import { types as utilTypes } from "node:util";
 import { canonicalDigest, cloneJson } from "./canonical.mjs";
 import {
+  compileContextExpansionImpact,
+  compileContextMaterializationPlan,
+  CONTEXT_COMPILER_LIMITS
+} from "./context-impact.mjs";
+import {
   compileClaimGateRouteIndex,
   INTEGRITY_CHANGE_KINDS,
   projectCompiledClaimGateRouteIndex,
@@ -29,6 +34,9 @@ export {
   assertKnowledgeGapProofContractsPreserved,
   compileClaimGateRouteIndex,
   compileClaimGateRoutes,
+  compileContextExpansionImpact,
+  compileContextMaterializationPlan,
+  CONTEXT_COMPILER_LIMITS,
   compileOutcomePlanAmendment,
   compileModulePathOwnershipIndex,
   projectCompiledClaimGateRouteIndex,
