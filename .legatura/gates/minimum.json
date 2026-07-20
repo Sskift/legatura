@@ -129,11 +129,12 @@
       "claimRefs": [
         "change-lifecycle-requires-preconditions",
         "evidence-cannot-self-ratify",
-        "accepted-package-binds-exact-content"
+        "accepted-package-binds-exact-content",
+        "context-materialization-binds-exact-authorized-bytes"
       ],
       "oracle": {
         "kind": "node-test-runner-exit",
-        "description": "Acceptance lifecycle and adversarial integrity tests must exit zero."
+        "description": "Acceptance lifecycle, adversarial integrity, and the fixed Context Session Create Product issuer scenario must exit zero."
       },
       "applicability": {
         "phase": "acceptance"
@@ -142,11 +143,15 @@
         "rejects": [
           "self-ratifying or forged Evidence",
           "stale or content-altered acceptance",
-          "out-of-scope and unclosed knowledge changes"
+          "out-of-scope and unclosed knowledge changes",
+          "caller-self-consistent Change, Work Specification, or Context Capsule values substituted for Change Kernel launch authority",
+          "forged, serialized, cloned, proxied, cross-instance, stale, wrong-snapshot, or digest-mismatched Context Session Create Products",
+          "Context Session preparation or product projection that mutates the Change Store or creates Evidence, acceptance, or expansion authority"
         ]
       },
       "residualUncertainty": [
-        "Integration assurance and cross-Module HTTP behavior remain full-Gate concerns."
+        "Integration assurance and cross-Module HTTP behavior remain full-Gate concerns.",
+        "The issuer scenario proves only Change Kernel preparation and process-local product projection; source-byte materialization, Session lineage, controller settlement, and delivery remain the separate Context Kernel proof."
       ]
     },
     {
